@@ -389,18 +389,25 @@ void Game::tick(float dt) {
                 float rate = rules_.corruptionRate * d * d * (1.f + 0.1f * static_cast<float>(level_ - 1));
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 if (u(rng_) < rate * dt) {
-                    int row = corruptionTargetRow();
-                    if (row >= 0) {
-                        std::vector<int> cols;
-                        for (int c = 0; c < kBoardW; ++c)
-                            if (grid_[row][c].kind == CellKind::Normal && grid_[row][c].corrupt <= 0.f) cols.push_back(c);
-                        int maxN = 1 + static_cast<int>(d * static_cast<float>(rules_.corruptionBurst));
-                        int n = 1 + static_cast<int>(u(rng_) * static_cast<float>(maxN));   // 1..maxN
-                        std::shuffle(cols.begin(), cols.end(), rng_);
-                        for (int i = 0; i < n && i < static_cast<int>(cols.size()); ++i) {
-                            grid_[row][cols[static_cast<size_t>(i)]].corrupt = rules_.corruptionTime;
-                            push(EventType::CellCorrupting, cols[static_cast<size_t>(i)], row);
+                    int maxN = 1 + static_cast<int>(d * static_cast<float>(rules_.corruptionBurst));
+                    int n = 1 + static_cast<int>(u(rng_) * static_cast<float>(maxN));   // 1..maxN
+                    std::vector<std::pair<int, int>> targets;
+                    // Prefer closing a red surround around a hole in an almost-full row.
+                    if (u(rng_) < rules_.corruptionHoleBias) targets = holeSurroundTargets();
+                    if (targets.empty()) {
+                        int row = corruptionTargetRow();
+                        if (row >= 0) {
+                            std::vector<int> cols;
+                            for (int c = 0; c < kBoardW; ++c)
+                                if (grid_[row][c].kind == CellKind::Normal && grid_[row][c].corrupt <= 0.f) cols.push_back(c);
+                            std::shuffle(cols.begin(), cols.end(), rng_);
+                            for (int c : cols) targets.push_back({c, row});
                         }
+                    }
+                    for (int i = 0; i < n && i < static_cast<int>(targets.size()); ++i) {
+                        auto [c, r] = targets[static_cast<size_t>(i)];
+                        grid_[r][c].corrupt = rules_.corruptionTime;
+                        push(EventType::CellCorrupting, c, r);
                     }
                 }
             }
@@ -523,6 +530,44 @@ int Game::corruptionTargetRow() const {
         }
     }
     return best;
+}
+
+// Normal cells that would help box in a hole of an almost-full row: for the
+// best hole (most red in its row, then lowest) the cells above and below come
+// first, then left and right; further holes follow. Only holes with something
+// solid above are worth surrounding (evil never spawns under open sky).
+std::vector<std::pair<int, int>> Game::holeSurroundTargets() const {
+    struct Hole { int c, r, red; };
+    std::vector<Hole> holes;
+    for (int r = 0; r < kBoardH; ++r) {
+        int empties = 0, red = 0;
+        for (int c = 0; c < kBoardW; ++c) {
+            if (grid_[r][c].empty()) ++empties;
+            else if (grid_[r][c].red() || grid_[r][c].corrupting()) ++red;
+        }
+        if (empties == 0 || empties > rules_.corruptionHoleMaxEmpties) continue;
+        for (int c = 0; c < kBoardW; ++c) {
+            if (!grid_[r][c].empty() || grid_[r][c].spawning()) continue;
+            if (r == 0 || grid_[r - 1][c].empty()) continue;   // nothing above to turn
+            holes.push_back({c, r, red});
+        }
+    }
+    std::sort(holes.begin(), holes.end(), [](const Hole& a, const Hole& b) { return a.red != b.red ? a.red > b.red : a.r > b.r; });
+    std::vector<std::pair<int, int>> out;
+    auto add = [&](int c, int r) {
+        if (c < 0 || c >= kBoardW || r < 0 || r >= kBoardH) return;
+        const Cell& cell = grid_[r][c];
+        if (cell.kind != CellKind::Normal || cell.corrupt > 0.f) return;
+        for (auto& o : out) if (o.first == c && o.second == r) return;
+        out.push_back({c, r});
+    };
+    for (const Hole& h : holes) {
+        add(h.c, h.r - 1);
+        add(h.c, h.r + 1);
+        add(h.c - 1, h.r);
+        add(h.c + 1, h.r);
+    }
+    return out;
 }
 
 // Holes evil may fill: empty cells (not already spawning) whose four

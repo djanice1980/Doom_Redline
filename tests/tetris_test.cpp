@@ -466,7 +466,43 @@ static void testEvilSpawn() {
     CHECK(m.evilSpawnCandidates().size() == 1 && m.evilSpawnCandidates()[0].first == 4 && m.evilSpawnCandidates()[0].second == 10);
 }
 
+static void testCorruptionBuildsSurround() {
+    Rules r = fastRules();
+    r.corruptionRate = 50.f;
+    r.corruptionTime = 5.f;
+    r.corruptionHoleBias = 1.f;    // always take the hole path when one exists
+    r.evilSpawnRate = 0.f;
+    Game g(21, r);
+    for (int row = 12; row < 20; ++row) fill(g, row, CellKind::Normal);    // 8 full rows (danger 0)
+    for (int row = 15; row < 20; ++row) fill(g, row, CellKind::Normal);
+    g.setCell(4, 17, Cell{});                                               // one hole in an otherwise full row, block above it
+    auto targets = g.holeSurroundTargets();
+    CHECK(targets.size() == 4);
+    CHECK(targets[0] == std::make_pair(4, 16) && targets[1] == std::make_pair(4, 18));   // above, below first
+    CHECK(targets[2] == std::make_pair(3, 17) && targets[3] == std::make_pair(5, 17));   // then beside
+    // No danger yet (8 rows): raise the stack so corruption runs, then the first event must hit above/below the hole.
+    for (int row = 6; row < 12; ++row) fill(g, row, CellKind::Normal, 0);
+    CHECK(g.danger() > 0.f);
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    std::pair<int, int> first{-1, -1};
+    for (int i = 0; i < 40 && first.first < 0 && g.phase() == Phase::Falling; ++i) {
+        g.tick(0.02f);
+        for (const Event& e : g.drainEvents()) if (e.type == EventType::CellCorrupting && first.first < 0) first = {e.a, e.b};
+    }
+    CHECK(first == std::make_pair(4, 16));
+    // Once the surround is red, the hole is a spawn candidate.
+    for (auto [c, row] : std::vector<std::pair<int, int>>{{4, 16}, {4, 18}, {3, 17}, {5, 17}}) g.setCell(c, row, Cell{CellKind::Red, 0});
+    auto holes = g.evilSpawnCandidates();
+    CHECK(holes.size() == 1 && holes[0] == std::make_pair(4, 17));
+    // A hole under open sky is not worth surrounding.
+    Game h(21, r);
+    fill(h, 19, CellKind::Normal, 4);
+    CHECK(h.holeSurroundTargets().empty());
+}
+
 int main() {
+    testCorruptionBuildsSurround();
     testEvilSpawn();
     testRotationKicksOnFloor();
     testScoring();

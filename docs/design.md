@@ -27,9 +27,12 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
 - **Corruption.** `danger()` = clamp((stackRows - corruptionStartRows) /
   (20 - corruptionStartRows)). While a piece is falling, corruption events
   fire at `corruptionRate * danger^2 * (1 + 0.1 (level-1))` per second. Each
-  one hits `corruptionTargetRow()` (most red or turning cells, then most
-  filled, then lowest, skipping rows with nothing left to turn) and starts
-  `1 .. 1 + danger * corruptionBurst` random normal cells in it;
+  one turns `1 .. 1 + danger * corruptionBurst` cells. With probability
+  `corruptionHoleBias` they come from `holeSurroundTargets()` (for each hole
+  of a row with <= `corruptionHoleMaxEmpties` empties and a block above, best
+  hole first: above, below, left, right), otherwise from
+  `corruptionTargetRow()` (most red or turning cells, then most filled, then
+  lowest, skipping rows with nothing left to turn);
   `Cell::corrupt` counts down `corruptionTime` seconds (the
   renderer flickers it faster as it approaches zero), then the cell becomes
   Red and `CellTurnedRed` fires. A red row formed this way triggers the red

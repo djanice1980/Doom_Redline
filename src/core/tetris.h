@@ -69,6 +69,13 @@ struct Rules {
     float corruptionRate = 0.7f;
     float corruptionTime = 1.6f;      // seconds of flashing before the switch
     int corruptionBurst = 4;          // extra blocks per event at full danger
+    // Corruption prefers to build a red surround around a hole in an almost
+    // full row (<= corruptionHoleMaxEmpties empties): with probability
+    // corruptionHoleBias an event turns the blocks above/below (then beside)
+    // such a hole instead of hitting the reddest row, so a change sets up an
+    // evil spawn a few seconds later.
+    float corruptionHoleBias = 0.65f;
+    int corruptionHoleMaxEmpties = 2;
     // Evil spawn: an empty cell fully surrounded by red gets filled by a new
     // red block. All four neighbours (left, right, above, below) must be red or
     // turning; on the bottom row the floor stands in for "below", and the side
@@ -166,6 +173,10 @@ public:
     float danger() const;                         // 0..1 corruption pressure
     int corruptionTargetRow() const;              // row the next corruption hits, -1 if none
     std::vector<std::pair<int, int>> evilSpawnCandidates() const;   // empty cells evil can fill
+    // Normal cells next to a hole in an almost-full row, ordered above/below
+    // first, then beside, best hole first (most red in its row). Used by the
+    // corruption to build spawn surrounds.
+    std::vector<std::pair<int, int>> holeSurroundTargets() const;
     int lines() const { return lines_; }
     int redLineCount() const { return redLineEvents_; }
     // Rows currently flashing (only during Clearing).

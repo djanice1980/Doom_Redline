@@ -87,9 +87,13 @@ Up/Down or W/S to pick, Enter or click to confirm.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
 - **Corruption.** Once the stack is 9 rows high, normal blocks start turning
-  evil. Each corruption event picks the row closest to going all red (most red
-  blocks, then fullest, then lowest) and turns a random number of its blocks,
-  from one up to five when the stack is at the top. A chosen block flickers
+  evil. Two thirds of the time an event goes after a hole in an almost-full
+  row (two empties or fewer, something solid above it): the blocks above and
+  below the hole turn first, then the ones beside it, so a change builds the
+  surround for an evil spawn a few seconds later. Otherwise it picks the row
+  closest to going all red (most red blocks, then fullest, then lowest). An
+  event turns a random number of blocks, from one up to five when the stack
+  is at the top. A chosen block flickers
   between its colour and red (faster and faster) for 1.6 s, then becomes a red
   block. Events come more often the higher the stack (square of the height
   above the threshold, plus 10 % per level). A high stack is therefore pushed
