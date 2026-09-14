@@ -26,8 +26,23 @@ const std::array<std::array<C4, 4>, static_cast<size_t>(Shape::Count)> kShapes =
     {{{{{2, 0}, {0, 1}, {1, 1}, {2, 1}}}, {{{1, 0}, {1, 1}, {1, 2}, {2, 2}}}, {{{0, 1}, {1, 1}, {2, 1}, {0, 2}}}, {{{0, 0}, {1, 0}, {1, 1}, {1, 2}}}}},
 }};
 
-// Wall kicks tried in order when a rotation collides.
-constexpr std::array<std::pair<int, int>, 5> kKicks = {{{0, 0}, {-1, 0}, {1, 0}, {-2, 0}, {2, 0}}};
+// SRS wall kicks, tried in order when a rotation collides. Indexed by the
+// rotation being left (0..3) and the direction (0 = CW, 1 = CCW). Offsets are
+// (dx, dy) in board space (dy > 0 is down), i.e. the standard tables with y
+// negated. Upward kicks are what let a piece rotate while resting on the floor.
+using Kicks = std::array<std::pair<int, int>, 5>;
+const Kicks kKicksJLSTZ[4][2] = {
+    {{{{0, 0}, {-1, 0}, {-1, -1}, {0, 2}, {-1, 2}}},  {{{0, 0}, {1, 0}, {1, -1}, {0, 2}, {1, 2}}}},     // from 0: CW (0->1), CCW (0->3)
+    {{{{0, 0}, {1, 0}, {1, 1}, {0, -2}, {1, -2}}},    {{{0, 0}, {1, 0}, {1, 1}, {0, -2}, {1, -2}}}},     // from 1: CW (1->2), CCW (1->0)
+    {{{{0, 0}, {1, 0}, {1, -1}, {0, 2}, {1, 2}}},     {{{0, 0}, {-1, 0}, {-1, -1}, {0, 2}, {-1, 2}}}},   // from 2: CW (2->3), CCW (2->1)
+    {{{{0, 0}, {-1, 0}, {-1, 1}, {0, -2}, {-1, -2}}}, {{{0, 0}, {-1, 0}, {-1, 1}, {0, -2}, {-1, -2}}}},  // from 3: CW (3->0), CCW (3->2)
+};
+const Kicks kKicksI[4][2] = {
+    {{{{0, 0}, {-2, 0}, {1, 0}, {-2, 1}, {1, -2}}},   {{{0, 0}, {-1, 0}, {2, 0}, {-1, -2}, {2, 1}}}},    // from 0: CW (0->1), CCW (0->3)
+    {{{{0, 0}, {-1, 0}, {2, 0}, {-1, -2}, {2, 1}}},   {{{0, 0}, {2, 0}, {-1, 0}, {2, -1}, {-1, 2}}}},    // from 1: CW (1->2), CCW (1->0)
+    {{{{0, 0}, {2, 0}, {-1, 0}, {2, -1}, {-1, 2}}},   {{{0, 0}, {1, 0}, {-2, 0}, {1, 2}, {-2, -1}}}},    // from 2: CW (2->3), CCW (2->1)
+    {{{{0, 0}, {1, 0}, {-2, 0}, {1, 2}, {-2, -1}}},   {{{0, 0}, {-2, 0}, {1, 0}, {-2, 1}, {1, -2}}}},    // from 3: CW (3->0), CCW (3->2)
+};
 
 }  // namespace
 
@@ -133,9 +148,12 @@ bool Game::tryMove(int dx, int dy) {
 
 bool Game::tryRotate(int dir) {
     if (!active_) return false;
+    if (active_->shape == Shape::O) return true;   // symmetric: nothing to do, still counts as a rotate
     Piece p = *active_;
+    int from = p.rot & 3;
     p.rot = (p.rot + dir + 4) & 3;
-    for (auto [kx, ky] : kKicks) {
+    const Kicks& kicks = (p.shape == Shape::I ? kKicksI : kKicksJLSTZ)[from][dir > 0 ? 0 : 1];
+    for (auto [kx, ky] : kicks) {
         Piece q = p;
         q.x += kx;
         q.y += ky;
@@ -345,14 +363,18 @@ void Game::tick(float dt) {
                 float rate = rules_.corruptionRate * d * d * (1.f + 0.1f * static_cast<float>(level_ - 1));
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 if (u(rng_) < rate * dt) {
-                    std::vector<std::pair<int, int>> candidates;
-                    for (int r = 0; r < kBoardH; ++r)
+                    int row = corruptionTargetRow();
+                    if (row >= 0) {
+                        std::vector<int> cols;
                         for (int c = 0; c < kBoardW; ++c)
-                            if (grid_[r][c].kind == CellKind::Normal && grid_[r][c].corrupt <= 0.f) candidates.push_back({c, r});
-                    if (!candidates.empty()) {
-                        auto [c, r] = candidates[static_cast<size_t>(u(rng_) * static_cast<float>(candidates.size())) % candidates.size()];
-                        grid_[r][c].corrupt = rules_.corruptionTime;
-                        push(EventType::CellCorrupting, c, r);
+                            if (grid_[row][c].kind == CellKind::Normal && grid_[row][c].corrupt <= 0.f) cols.push_back(c);
+                        int maxN = 1 + static_cast<int>(d * static_cast<float>(rules_.corruptionBurst));
+                        int n = 1 + static_cast<int>(u(rng_) * static_cast<float>(maxN));   // 1..maxN
+                        std::shuffle(cols.begin(), cols.end(), rng_);
+                        for (int i = 0; i < n && i < static_cast<int>(cols.size()); ++i) {
+                            grid_[row][cols[static_cast<size_t>(i)]].corrupt = rules_.corruptionTime;
+                            push(EventType::CellCorrupting, cols[static_cast<size_t>(i)], row);
+                        }
                     }
                 }
             }
@@ -451,6 +473,30 @@ float Game::danger() const {
     int span = kBoardH - rules_.corruptionStartRows;
     if (rows <= rules_.corruptionStartRows || span <= 0) return 0.f;
     return std::min(1.f, static_cast<float>(rows - rules_.corruptionStartRows) / static_cast<float>(span));
+}
+
+// The row corruption goes after: the one with the most red cells, then the
+// fullest (only a full row can become all red), then the lowest. Rows without
+// an uncorrupted normal cell are skipped.
+int Game::corruptionTargetRow() const {
+    int best = -1, bestRed = -1, bestFilled = -1;
+    for (int r = 0; r < kBoardH; ++r) {
+        int red = 0, filled = 0, turnable = 0;
+        for (int c = 0; c < kBoardW; ++c) {
+            const Cell& cell = grid_[r][c];
+            if (cell.empty()) continue;
+            ++filled;
+            if (cell.red() || cell.corrupting()) ++red;
+            else if (cell.kind == CellKind::Normal) ++turnable;
+        }
+        if (turnable == 0) continue;
+        if (red > bestRed || (red == bestRed && filled > bestFilled) || (red == bestRed && filled == bestFilled && r > best)) {
+            best = r;
+            bestRed = red;
+            bestFilled = filled;
+        }
+    }
+    return best;
 }
 
 void Game::clearAllRed() {

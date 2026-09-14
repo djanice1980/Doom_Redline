@@ -86,11 +86,16 @@ Up/Down or W/S to pick, Enter or click to confirm.
   clears beneath them or when the board collapses after a fight.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
-- **Corruption.** Once the stack is 10 rows high, normal blocks start turning
-  evil: one flickers between its colour and red (faster and faster) for 1.6 s,
-  then becomes a red block. The rate grows with the square of how close the
-  stack is to the top, plus 10 % per level. If a turned block completes a red
-  row, the fight starts right away and the piece in the air resumes afterwards.
+- **Corruption.** Once the stack is 9 rows high, normal blocks start turning
+  evil. Each corruption event picks the row closest to going all red (most red
+  blocks, then fullest, then lowest) and turns a random number of its blocks,
+  from one up to five when the stack is at the top. A chosen block flickers
+  between its colour and red (faster and faster) for 1.6 s, then becomes a red
+  block. Events come more often the higher the stack (square of the height
+  above the threshold, plus 10 % per level). A high stack is therefore pushed
+  towards a fight rather than merely sprinkled with red. If a turned block
+  completes a red row, the fight starts right away and the piece in the air
+  resumes afterwards.
 - A row that is entirely red never clears. It triggers the first-person phase.
 - In that phase **every** 4-connected red cluster on the board becomes one
   monster; its class depends on the cluster size (1: zombieman, 2-3: imp, 4-6:

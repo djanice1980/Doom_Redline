@@ -327,10 +327,104 @@ static void testCorruption() {
     CHECK(h.danger() == 0.f);
 }
 
+static void testCorruptionTargetsReddestRow() {
+    Rules r = fastRules();
+    r.corruptionRate = 50.f;
+    r.corruptionTime = 5.f;   // long flicker so the count is observable
+    Game g(9, r);
+    for (int row = 6; row < 20; ++row) fill(g, row, CellKind::Normal, 0);   // 14 rows, column 0 empty
+    fill(g, 15, CellKind::Normal);                                          // row 15 is full ...
+    g.setCell(2, 15, Cell{CellKind::Red, 0});                               // ... and has the most red
+    g.setCell(7, 15, Cell{CellKind::Red, 0});
+    g.setCell(4, 11, Cell{CellKind::Red, 0});                               // a lone red elsewhere
+    CHECK(g.corruptionTargetRow() == 15);
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    int firstRow = -1, count = 0;
+    for (int i = 0; i < 40 && firstRow < 0 && g.phase() == Phase::Falling; ++i) {
+        g.tick(0.02f);
+        for (const Event& e : g.drainEvents())
+            if (e.type == EventType::CellCorrupting) { if (firstRow < 0) firstRow = e.b; if (e.b == firstRow) ++count; }
+    }
+    CHECK(firstRow == 15);
+    CHECK(count >= 1 && count <= 1 + static_cast<int>(g.danger() * 4.f));
+    // Once row 15 is all red/turning, the next target is the row with the lone red.
+    for (int c = 0; c < 10; ++c) { Cell cell = g.at(c, 15); if (cell.kind == CellKind::Normal) { cell.corrupt = 5.f; g.setCell(c, 15, cell); } }
+    CHECK(g.corruptionTargetRow() == 11);
+}
+
+static Rules floorRules() {
+    Rules r = fastRules();
+    r.lockDelay = 100.f;     // sit on the floor without locking
+    r.gravityBase = 0.01f;   // reach it quickly
+    return r;
+}
+
+static bool touchesFloor(const Game& g) {
+    for (auto [c, r] : g.active()->cells()) if (r == 19) return true;
+    return false;
+}
+
+static void dropToFloor(Game& g) {
+    for (int i = 0; i < 400 && g.phase() == Phase::Falling && !touchesFloor(g); ++i) g.tick(0.02f);
+}
+
+static void testRotationKicksOnFloor() {
+    // A flat I resting on the floor must rotate both ways (SRS kicks lift it),
+    // and keep cycling in either direction without ever sticking.
+    for (int dir : {1, -1}) {
+        Game g(1, floorRules());
+        g.forcePiece(Shape::I, {});
+        g.spawnNow();
+        dropToFloor(g);
+        CHECK(g.phase() == Phase::Falling && touchesFloor(g));
+        if (dir > 0) g.rotateCW(); else g.rotateCCW();
+        int minRow = 99, maxRow = -1, col0 = g.active()->cells()[0].first;
+        bool vertical = true;
+        for (auto [c, r] : g.active()->cells()) { minRow = std::min(minRow, r); maxRow = std::max(maxRow, r); vertical = vertical && c == col0; }
+        CHECK(vertical);
+        CHECK(maxRow == 19 && minRow == 16);
+        for (int i = 0; i < 8; ++i) {
+            int before = g.active()->rot;
+            if (dir > 0) g.rotateCW(); else g.rotateCCW();
+            CHECK(g.active()->rot != before);
+        }
+    }
+    // A T flat on the floor rotates both ways too.
+    {
+        Game g(1, floorRules());
+        g.forcePiece(Shape::T, {});
+        g.spawnNow();
+        dropToFloor(g);
+        CHECK(g.phase() == Phase::Falling && touchesFloor(g));
+        int rot = g.active()->rot;
+        g.rotateCW();
+        CHECK(g.active()->rot == (rot + 1) % 4);
+        g.rotateCCW();
+        g.rotateCCW();
+        CHECK(g.active()->rot == (rot + 3) % 4);
+    }
+    // Against the left wall a vertical I still rotates flat (kicked right).
+    {
+        Game g(1, floorRules());
+        g.forcePiece(Shape::I, {});
+        g.spawnNow();
+        g.rotateCW();
+        for (int i = 0; i < 6; ++i) g.moveLeft();
+        CHECK(g.active()->cells()[0].first == 0);
+        g.rotateCW();
+        int minCol = 99;
+        for (auto [c, r] : g.active()->cells()) minCol = std::min(minCol, c);
+        CHECK(minCol >= 0 && g.active()->rot == 2);
+    }
+}
+
 int main() {
+    testRotationKicksOnFloor();
     testScoring();
     testCascadeChain();
     testCorruption();
+    testCorruptionTargetsReddestRow();
     testRedRegions();
     testShapesCover();
     testClassicLineClear();

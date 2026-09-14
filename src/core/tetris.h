@@ -59,11 +59,15 @@ struct Rules {
     float settleStepTime = 0.05f;     // seconds per one-row red-cell fall
     int linesPerLevel = 10;
     // Corruption: as the stack climbs, normal blocks turn evil. danger() ramps
-    // from 0 at `corruptionStartRows` filled rows to 1 at the top; the rate of
-    // new corruptions is corruptionRate * danger^2 per second (plus 10 %/level).
-    int corruptionStartRows = 9;
+    // from 0 at `corruptionStartRows` filled rows to 1 at the top; corruption
+    // events fire at corruptionRate * danger^2 per second (plus 10 %/level).
+    // Each event picks the row closest to becoming all red (most red cells,
+    // then fullest, then lowest) and turns 1..(1 + danger * corruptionBurst)
+    // random normal blocks in it, so the stack is pushed towards a fight.
+    int corruptionStartRows = 8;
     float corruptionRate = 0.7f;
     float corruptionTime = 1.6f;      // seconds of flashing before the switch
+    int corruptionBurst = 4;          // extra blocks per event at full danger
     // Scoring
     int lineScore[5] = {0, 100, 300, 600, 1000};   // x level x combo/chain multipliers
     float comboStep = 0.5f;           // +50 % per consecutive clearing piece
@@ -148,6 +152,7 @@ public:
     int lastClearPoints() const { return lastClearPoints_; }
     int stackRows() const;                        // filled height of the stack in rows
     float danger() const;                         // 0..1 corruption pressure
+    int corruptionTargetRow() const;              // row the next corruption hits, -1 if none
     int lines() const { return lines_; }
     int redLineCount() const { return redLineEvents_; }
     // Rows currently flashing (only during Clearing).
