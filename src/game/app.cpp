@@ -56,6 +56,9 @@ App::App(Options opts) : opts_(std::move(opts)) {
 }
 
 App::~App() {
+    // Order matters: the audio device and streams must go before SDL_Quit
+    // (they are members, so they would otherwise be destroyed after it).
+    audio_.shutdown();
     renderer_.reset();
     ctx_.reset();
     if (window_) SDL_DestroyWindow(window_);

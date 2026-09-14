@@ -7,9 +7,14 @@
 
 namespace rl::audio {
 
-Audio::~Audio() {
+Audio::~Audio() { shutdown(); }
+
+void Audio::shutdown() {
     for (SDL_AudioStream* s : active_) SDL_DestroyAudioStream(s);
+    active_.clear();
     if (device_) SDL_CloseAudioDevice(device_);
+    device_ = 0;
+    ok_ = false;
 }
 
 bool Audio::init() {

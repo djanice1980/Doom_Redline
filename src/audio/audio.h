@@ -18,6 +18,7 @@ public:
     Audio& operator=(const Audio&) = delete;
 
     bool init();   // false = no audio device; play() becomes a no-op
+    void shutdown();   // close streams and the device; must run before SDL_Quit
     void addSound(const std::string& name, int sampleRate, std::vector<float> monoSamples);
     bool has(const std::string& name) const { return sounds_.count(name) != 0; }
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f);
