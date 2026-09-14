@@ -34,8 +34,9 @@ struct Options {
     int level = 1;                     // starting level (scenarios)
     float absorbPeriod = 20.f;         // seconds before a monster may absorb blocks and grow
     bool god = false;                  // no damage to the player (testing)
-    std::string keys;                  // letters to type at frame keysFrame (testing), e.g. "BFG"
+    std::string keys;                  // letters to hold from frame keysFrame (testing), e.g. "BFG"
     int keysFrame = 30;
+    int keysHoldFrames = 150;          // released this many frames later
     int stackRows = 0;                 // pre-fill this many holey rows of normal blocks (blocks scenario)
 };
 
@@ -123,7 +124,8 @@ private:
     int countdownLast_ = -1;
     struct Announcement { std::string text; glm::vec4 color; float scale; float t; };
     std::vector<Announcement> announcements_;
-    std::string keyBuffer_;      // last few letters typed (secret codes)
+    bool keyB_ = false, keyF_ = false, keyG_ = false;   // the secret chord
+    float bfgHoldT_ = 0.f;       // seconds B+F+G have been held together
     bool bfgUsed_ = false;       // the BFG9000 fires once per playthrough
     float bfgFlash_ = 0.f;
 };

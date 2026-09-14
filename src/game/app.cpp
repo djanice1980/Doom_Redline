@@ -75,7 +75,8 @@ void App::newGame() {
     diedInFps_ = false;
     bfgUsed_ = false;
     bfgFlash_ = 0.f;
-    keyBuffer_.clear();
+    bfgHoldT_ = 0.f;
+    keyB_ = keyF_ = keyG_ = false;
     keys_ = {};
     fpsIn_ = {};
     enterMode(opts_.scenario == "title" ? Mode::Title : Mode::Blocks);
@@ -210,14 +211,13 @@ int App::run() {
         if (opts_.frames > 0) dt = 1.f / 60.f;   // deterministic when scripted
         time_ += dt;
 
-        if (!opts_.keys.empty() && frameCount_ == opts_.keysFrame) {
-            // Scripted typing: synthesise key presses for the letters given.
+        if (!opts_.keys.empty() && (frameCount_ == opts_.keysFrame || frameCount_ == opts_.keysFrame + opts_.keysHoldFrames)) {
+            // Scripted chord: press the letters at one frame, release them later.
+            bool down = frameCount_ == opts_.keysFrame;
             for (char ch : opts_.keys) {
                 SDL_Event ev{};
-                ev.type = SDL_EVENT_KEY_DOWN;
+                ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
                 ev.key.key = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
-                SDL_PushEvent(&ev);
-                ev.type = SDL_EVENT_KEY_UP;
                 SDL_PushEvent(&ev);
             }
         }
@@ -297,23 +297,9 @@ void App::handleEvents() {
                 break;
             }
             if (!menu_.items.empty() && !e.key.repeat) { menuKey(k); break; }
-            if (mode_ == Mode::Blocks && !e.key.repeat && k >= SDLK_A && k <= SDLK_Z) {
-                // Secret codes are typed as plain letters while stacking.
-                keyBuffer_.push_back(static_cast<char>('A' + (k - SDLK_A)));
-                if (keyBuffer_.size() > 8) keyBuffer_.erase(0, keyBuffer_.size() - 8);
-                if (!bfgUsed_ && keyBuffer_.size() >= 3 && keyBuffer_.compare(keyBuffer_.size() - 3, 3, "BFG") == 0) {
-                    int removed = game_->purgeRed();
-                    bfgUsed_ = true;
-                    bfgFlash_ = 1.f;
-                    shakeT_ = 0.6f;
-                    play("bfg", 1.f);
-                    play("explode", 0.8f, 0.7f);
-                    announce("BFG9000", glm::vec4(0.5f, 1.f, 0.5f, 1.f), 2.2f);
-                    announce(std::to_string(removed) + " RED BLOCKS ERASED", glm::vec4(0.7f, 1.f, 0.7f, 1.f), 1.1f);
-                    std::fprintf(stderr, "[app] BFG9000 fired: %d red blocks erased\n", removed);
-                    break;
-                }
-            }
+            if (k == SDLK_B) keyB_ = true;
+            if (k == SDLK_F) keyF_ = true;
+            if (k == SDLK_G) keyG_ = true;
             if (mode_ == Mode::Blocks && !e.key.repeat) {
                 switch (k) {
                 case SDLK_LEFT: case SDLK_A: keys_.left = true; keys_.dasDir = -1; keys_.dasT = 0.f; keys_.dasActive = false; game_->moveLeft(); break;
@@ -353,6 +339,9 @@ void App::handleEvents() {
             case SDLK_UP: case SDLK_W: fpsIn_.fwd = false; break;
             case SDLK_SPACE: case SDLK_LCTRL: fpsIn_.fire = false; break;
             case SDLK_LSHIFT: case SDLK_RSHIFT: fpsIn_.run = false; break;
+            case SDLK_B: keyB_ = false; break;
+            case SDLK_F: keyF_ = false; break;
+            case SDLK_G: keyG_ = false; break;
             default: break;
             }
             break;
@@ -451,6 +440,25 @@ void App::update(float dt) {
     modeT_ += dt;
     for (Announcement& a : announcements_) a.t += dt;
     bfgFlash_ = std::max(0.f, bfgFlash_ - dt * 1.2f);
+    // The secret chord: B, F and G held together for two seconds while stacking.
+    if (mode_ == Mode::Blocks && !bfgUsed_ && keyB_ && keyF_ && keyG_) {
+        if (bfgHoldT_ == 0.f) play("bfg", 1.f);   // the charge-up whine starts with the hold
+        bfgHoldT_ += dt;
+        if (bfgHoldT_ >= 2.f) {
+            int removed = game_->purgeRed();
+            bfgUsed_ = true;
+            bfgFlash_ = 1.f;
+            bfgHoldT_ = 0.f;
+            shakeT_ = 0.6f;
+            play("rocket_hit", 1.f, 0.8f);   // the blast
+            play("explode", 0.8f, 0.7f);
+            announce("BFG9000", glm::vec4(0.5f, 1.f, 0.5f, 1.f), 2.2f);
+            announce(std::to_string(removed) + " RED BLOCKS ERASED", glm::vec4(0.7f, 1.f, 0.7f, 1.f), 1.1f);
+            std::fprintf(stderr, "[app] BFG9000 fired: %d red blocks erased\n", removed);
+        }
+    } else {
+        bfgHoldT_ = 0.f;
+    }
     announcements_.erase(std::remove_if(announcements_.begin(), announcements_.end(), [](const Announcement& a) { return a.t > 2.f; }), announcements_.end());
     shakeT_ = std::max(0.f, shakeT_ - dt);
     muzzleLight_ = std::max(0.f, muzzleLight_ - dt * 8.f);
@@ -1048,6 +1056,10 @@ void App::addHud() {
         }
     }
 
+    if (bfgHoldT_ > 0.f) {   // charging: a green glow that builds over the two seconds
+        float c = std::min(1.f, bfgHoldT_ / 2.f);
+        panel(0.f, 0.f, W, H, glm::vec4(0.4f, 1.f, 0.4f, 0.25f * c * c));
+    }
     if (bfgFlash_ > 0.f) panel(0.f, 0.f, W, H, glm::vec4(0.6f, 1.f, 0.6f, 0.5f * bfgFlash_));
     if (bfgUsed_ && !inFps && mode_ != Mode::Title) text(24.f, H - lh * 1.2f, "BFG SPENT", s * 0.7f, glm::vec4(0.5f, 0.8f, 0.5f, 0.8f));
 

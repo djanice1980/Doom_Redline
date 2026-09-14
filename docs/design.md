@@ -44,8 +44,10 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   stack about to overflow.
 - **Levels.** `linesPerLevel` defaults to 0: only `resumeAfterRedLine` raises
   the level.
-- **Secret: BFG9000.** Typing the letters B, F, G while stacking (once per
-  playthrough, tracked in `App::bfgUsed_`) calls `Game::purgeRed()`: every red
+- **Secret: BFG9000.** Holding B, F and G together for two seconds while
+  stacking (`App::bfgHoldT_`, once per playthrough via `bfgUsed_`; a green
+  glow builds while charging and resets if a key is released) calls
+  `Game::purgeRed()`: every red
   block is erased, all flickering and spawning stops, and the red minos of the
   falling and next pieces become normal. Green flash, DSBFG, "BFG SPENT" in
   the side panel afterwards. Not mentioned in the README or in-game hints.
