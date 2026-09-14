@@ -72,6 +72,11 @@ void Game::forcePiece(Shape s, std::array<bool, 4> red) {
     next_.x = 3;
     next_.y = 0;
     next_.red = red;
+    if (active_ && phase_ == Phase::Falling) {   // test helper: also swap the piece in the air
+        *active_ = next_;
+        gravityAcc_ = 0.f;
+        lockAcc_ = 0.f;
+    }
 }
 
 float Game::gravityInterval() const {
@@ -92,8 +97,10 @@ bool Game::fits(const Piece& p) const {
 
 // ---------------------------------------------------------------------------
 void Game::spawn() {
-    active_ = next_;
-    next_ = makePiece();
+    if (!active_) {   // a piece interrupted by a red line resumes instead
+        active_ = next_;
+        next_ = makePiece();
+    }
     gravityAcc_ = 0.f;
     lockAcc_ = 0.f;
     if (!fits(*active_)) {
@@ -195,6 +202,8 @@ void Game::lock() {
         push(EventType::GameOver);
         return;
     }
+    clearFromSettle_ = false;
+    chain_ = 0;
     beginClearOrSettle();
 }
 
@@ -236,6 +245,7 @@ void Game::beginClearOrSettle() {
         phase_ = Phase::Clearing;
         return;
     }
+    if (!clearFromSettle_) combo_ = 0;   // a piece that clears nothing ends the combo
     if (checkRedLine()) return;
     phase_ = Phase::Settling;
 }
@@ -257,10 +267,14 @@ void Game::finishClear() {
         ++cleared;
     }
     clearing_.clear();
-    static const int kScore[5] = {0, 100, 300, 500, 800};
-    score_ += kScore[std::min(cleared, 4)] * level_;
+    // Score: bigger clears pay disproportionately; consecutive clearing pieces
+    // build a combo; clears caused by a collapse (cascade) chain on top.
+    if (clearFromSettle_) ++chain_; else combo_ += 1;
+    float mult = (1.f + rules_.comboStep * static_cast<float>(std::max(0, combo_ - 1))) * (1.f + rules_.chainStep * static_cast<float>(chain_));
+    lastClearPoints_ = static_cast<int>(static_cast<float>(rules_.lineScore[std::min(cleared, 4)] * level_) * mult);
+    score_ += lastClearPoints_;
     lines_ += cleared;
-    push(EventType::LinesCleared, cleared);
+    push(EventType::LinesCleared, cleared, lastClearPoints_);
     int newLevel = 1 + lines_ / rules_.linesPerLevel;
     if (newLevel != level_) {
         level_ = newLevel;
@@ -310,6 +324,40 @@ void Game::tick(float dt) {
                 break;
             }
         }
+        // Corruption: flashing blocks count down and turn red; new ones start
+        // at a rate that grows with the height of the stack.
+        {
+            bool turned = false;
+            for (int r = 0; r < kBoardH; ++r)
+                for (int c = 0; c < kBoardW; ++c) {
+                    Cell& cell = grid_[r][c];
+                    if (!cell.corrupting()) continue;
+                    cell.corrupt -= dt;
+                    if (cell.corrupt <= 0.f) {
+                        cell.corrupt = 0.f;
+                        cell.kind = CellKind::Red;
+                        push(EventType::CellTurnedRed, c, r);
+                        turned = true;
+                    }
+                }
+            float d = danger();
+            if (d > 0.f) {
+                float rate = rules_.corruptionRate * d * d * (1.f + 0.1f * static_cast<float>(level_ - 1));
+                std::uniform_real_distribution<float> u(0.f, 1.f);
+                if (u(rng_) < rate * dt) {
+                    std::vector<std::pair<int, int>> candidates;
+                    for (int r = 0; r < kBoardH; ++r)
+                        for (int c = 0; c < kBoardW; ++c)
+                            if (grid_[r][c].kind == CellKind::Normal && grid_[r][c].corrupt <= 0.f) candidates.push_back({c, r});
+                    if (!candidates.empty()) {
+                        auto [c, r] = candidates[static_cast<size_t>(u(rng_) * static_cast<float>(candidates.size())) % candidates.size()];
+                        grid_[r][c].corrupt = rules_.corruptionTime;
+                        push(EventType::CellCorrupting, c, r);
+                    }
+                }
+            }
+            if (turned && checkRedLine()) break;   // the piece in the air resumes after the fight
+        }
         // Lock delay: resting on something for a while locks the piece.
         Piece below = *active_;
         below.y += 1;
@@ -334,7 +382,7 @@ void Game::tick(float dt) {
                 // gap) so re-run the clear check before spawning.
                 bool anyFull = false;
                 for (int r = 0; r < kBoardH; ++r) if (rowFull(r) && !rowAllRed(r)) anyFull = true;
-                if (anyFull) { beginClearOrSettle(); break; }
+                if (anyFull) { clearFromSettle_ = true; beginClearOrSettle(); break; }
                 if (checkRedLine()) break;
                 phase_ = Phase::Spawning;
             }
@@ -374,7 +422,6 @@ int Game::explodeAt(int col, int row, float radius) {
             }
         }
     }
-    score_ += 50 + 25 * destroyed;
     return destroyed;
 }
 
@@ -390,6 +437,20 @@ void Game::resumeAfterRedLine() {
     collapseAll_ = true;
     phase_ = Phase::Settling;
     phaseAcc_ = 0.f;
+}
+
+int Game::stackRows() const {
+    for (int r = 0; r < kBoardH; ++r)
+        for (int c = 0; c < kBoardW; ++c)
+            if (!grid_[r][c].empty()) return kBoardH - r;
+    return 0;
+}
+
+float Game::danger() const {
+    int rows = stackRows();
+    int span = kBoardH - rules_.corruptionStartRows;
+    if (rows <= rules_.corruptionStartRows || span <= 0) return 0.f;
+    return std::min(1.f, static_cast<float>(rows - rules_.corruptionStartRows) / static_cast<float>(span));
 }
 
 void Game::clearAllRed() {

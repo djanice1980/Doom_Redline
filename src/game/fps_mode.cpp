@@ -400,6 +400,11 @@ void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
     float blast = 2.0f + 0.5f * static_cast<float>(e.tier);
     if (dist < blast) hurtPlayer((10.f + 6.f * static_cast<float>(e.tier)) * (1.f - dist / blast), e.pos);
     push(FpsEvent::Type::Explosion, ex.pos, e.tier, destroyed);
+    // Harder monsters pay more, scaled by level, plus a bounty per block they took with them.
+    const EnemyStats& st = enemyStats(e.tier);
+    int points = static_cast<int>(static_cast<float>(st.scoreValue) * (1.f + 0.1f * static_cast<float>(level_ - 1))) + 25 * destroyed;
+    game.addScore(points);
+    push(FpsEvent::Type::Score, e.pos + glm::vec3(0.f, 1.5f, 0.f), e.tier, points);
 }
 
 // ---------------------------------------------------------------------------

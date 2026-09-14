@@ -242,7 +242,95 @@ static void testRedRegions() {
     CHECK(g.level() == before + 1);                  // each fight raises the level
 }
 
+static int dropIInColumn0(Game& g) {
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    g.rotateCW();
+    for (int i = 0; i < 6; ++i) g.moveLeft();
+    int before = g.score();
+    g.hardDrop();
+    runUntil(g, Phase::Falling);
+    return g.score() - before - 2 * 0;   // hard-drop bonus is included, same for every call
+}
+
+static void testScoring() {
+    // 4 lines pay more than 3 + 1, and a second clearing piece in a row pays a combo.
+    Game a(1, fastRules());
+    for (int r = 16; r < 20; ++r) fill(a, r, CellKind::Normal, 0);
+    int four = dropIInColumn0(a);
+    Game b(1, fastRules());
+    for (int r = 17; r < 20; ++r) fill(b, r, CellKind::Normal, 0);
+    int three = dropIInColumn0(b);
+    CHECK(four > three);
+    CHECK(four >= 1000);
+    CHECK(three >= 600 && three < 1000);
+    CHECK(a.combo() == 1);
+    // Combo: clear again immediately with the next piece -> x1.5.
+    for (int r = 16; r < 20; ++r) fill(a, r, CellKind::Normal, 0);
+    int fourAgain = dropIInColumn0(a);
+    CHECK(a.combo() == 2);
+    CHECK(fourAgain > four);
+    // A piece that clears nothing ends the combo.
+    a.forcePiece(Shape::O, {});
+    a.spawnNow();
+    a.hardDrop();
+    runUntil(a, Phase::Falling);
+    CHECK(a.combo() == 0);
+}
+
+static void testCascadeChain() {
+    // After a fight the collapse completes a row: that clear counts as a chain step.
+    Game g(1, fastRules());
+    fill(g, 19, CellKind::Red);
+    fill(g, 17, CellKind::Normal, 3);              // row 17 full except column 3
+    g.setCell(3, 15, Cell{CellKind::Normal, 0});   // will fall into the gap when everything collapses
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    for (int i = 0; i < 200 && g.phase() == Phase::Falling; ++i) g.tick(0.02f);
+    runUntil(g, Phase::RedLine);
+    CHECK(g.phase() == Phase::RedLine);
+    g.clearAllRed();
+    int before = g.score();
+    g.resumeAfterRedLine();
+    runUntil(g, Phase::Falling);
+    CHECK(g.lines() >= 1);
+    CHECK(g.chain() >= 1);
+    CHECK(g.score() - before >= 1000 + 2 * 100 * 2);   // 1000 x level bonus + at least one chained single (x2, level 2)
+}
+
+static void testCorruption() {
+    Rules r = fastRules();
+    r.corruptionRate = 50.f;      // make it near-certain within a few ticks
+    r.corruptionTime = 0.05f;
+    Game g(3, r);
+    for (int row = 4; row < 20; ++row) fill(g, row, CellKind::Normal, 0);   // 16 rows: danger ~0.64
+    CHECK(g.stackRows() == 16);
+    CHECK(g.danger() > 0.5f && g.danger() < 0.7f);
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    bool sawCorrupting = false, sawTurned = false;
+    for (int i = 0; i < 20 && g.phase() == Phase::Falling; ++i) {
+        g.tick(0.02f);
+        for (const Event& e : g.drainEvents()) {
+            if (e.type == EventType::CellCorrupting) sawCorrupting = true;
+            if (e.type == EventType::CellTurnedRed) sawTurned = true;
+        }
+    }
+    CHECK(sawCorrupting);
+    CHECK(sawTurned);
+    int reds = 0;
+    for (int row = 0; row < 20; ++row) for (int c = 0; c < 10; ++c) reds += g.at(c, row).red();
+    CHECK(reds > 0);
+    // A low stack never corrupts.
+    Game h(3, r);
+    fill(h, 19, CellKind::Normal, 0);
+    CHECK(h.danger() == 0.f);
+}
+
 int main() {
+    testScoring();
+    testCascadeChain();
+    testCorruption();
     testRedRegions();
     testShapesCover();
     testClassicLineClear();

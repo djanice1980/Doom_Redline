@@ -75,6 +75,7 @@ private:
     void billboard(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip);
     void cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive = {}, float emissiveStrength = 0.f, float flags = 0.f, float phase = 0.f, float rotX = 0.f);
     void panel(float x, float y, float w, float h, glm::vec4 color);
+    void announce(const std::string& text, glm::vec4 color, float scale = 1.2f);
     const std::string& animFrame(const SpriteAnim& a, float t, bool loop, bool* flip = nullptr) const;
     void play(const char* name, float gain = 1.f, float pitch = 1.f);
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f) { play(name.c_str(), gain, pitch); }
@@ -117,6 +118,8 @@ private:
     float botBlockedT_ = 0.f;
     float botSide_ = 1.f;
     int countdownLast_ = -1;
+    struct Announcement { std::string text; glm::vec4 color; float scale; float t; };
+    std::vector<Announcement> announcements_;
 };
 
 }  // namespace rl::game

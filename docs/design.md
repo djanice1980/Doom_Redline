@@ -21,6 +21,19 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   variant where loose red cells fall after every lock. When nothing moves, the
   clear check runs again (a collapse can complete a row), then the red-line
   check, then the next piece spawns.
+- **Corruption.** `danger()` = clamp((stackRows - corruptionStartRows) /
+  (20 - corruptionStartRows)). While a piece is falling, new corruptions start
+  at `corruptionRate * danger^2 * (1 + 0.1 (level-1))` per second on a random
+  normal cell; `Cell::corrupt` counts down `corruptionTime` seconds (the
+  renderer flickers it faster as it approaches zero), then the cell becomes
+  Red and `CellTurnedRed` fires. A red row formed this way triggers the red
+  line immediately; `spawn()` keeps the interrupted active piece so it resumes
+  after the fight.
+- **Scoring.** `lineScore[n] * level * (1 + comboStep (combo-1)) * (1 +
+  chainStep * chain)`. `combo_` counts consecutive clearing pieces (reset by a
+  piece that clears nothing); `chain_` counts clears produced by a collapse
+  (`clearFromSettle_`) after the last lock. Kills are scored in
+  `FpsMode::explodeEnemy`: `scoreValue * (1 + 0.1 (level-1)) + 25 * destroyed`.
 - **Red line.** Any row where all ten cells are red sets `Phase::RedLine` and
   emits `EventType::RedLine`. The engine then idles until the FPS phase calls
   `explodeAt()` for each kill and `resumeAfterRedLine()` at the end.

@@ -16,7 +16,7 @@ void usage() {
         "  --fullscreen\n"
         "  --igpu               Prefer the integrated GPU (or set REDLINE_GPU=<index>)\n"
         "  --seed <n>           Deterministic piece sequence\n"
-        "  --scenario <name>    title | blocks | redline | fps\n"
+        "  --scenario <name>    title | blocks | redline | fps | corrupt\n"
         "  --screenshot <png>   Save a screenshot after --frames frames and exit\n"
         "  --frames <n>         Frame count for --screenshot (fixed 60 Hz step)\n"
         "  --bot                Auto-aim and fire in FPS mode (smoke testing)\n"

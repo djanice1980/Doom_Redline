@@ -148,7 +148,7 @@ struct FpsInput {
 
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
-                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb } type;
+                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score } type;
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)

@@ -86,6 +86,11 @@ Up/Down or W/S to pick, Enter or click to confirm.
   clears beneath them or when the board collapses after a fight.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
+- **Corruption.** Once the stack is 10 rows high, normal blocks start turning
+  evil: one flickers between its colour and red (faster and faster) for 1.6 s,
+  then becomes a red block. The rate grows with the square of how close the
+  stack is to the top, plus 10 % per level. If a turned block completes a red
+  row, the fight starts right away and the piece in the air resumes afterwards.
 - A row that is entirely red never clears. It triggers the first-person phase.
 - In that phase **every** 4-connected red cluster on the board becomes one
   monster; its class depends on the cluster size (1: zombieman, 2-3: imp, 4-6:
@@ -118,9 +123,13 @@ Up/Down or W/S to pick, Enter or click to confirm.
 - The shotgun never runs out. The chaingun is fast hitscan, the plasma rifle
   fires fast bolts, and rockets have splash damage that also blasts the blocks
   around the impact (and you, if you are too close).
-- Surviving the phase pays 1000 x level and raises the level by one (faster
-  gravity, more red minos, tougher monsters next time). Each kill pays 50 + 25
-  per block destroyed.
+- **Scoring.** Line clears pay 100 / 300 / 600 / 1000 for 1 / 2 / 3 / 4 lines,
+  times the level. Consecutive clearing pieces build a combo (+50 % per
+  step); a clear caused by a collapse after a fight is a chain (+100 % per
+  cascade step). Kills pay by class (zombie 100 ... baron 1200, cyberdemon
+  2500, spider 3000) scaled +10 % per level, plus 25 per block the death
+  blast destroyed. Surviving the phase pays 1000 x level and raises the level
+  by one (faster gravity, more red minos, tougher monsters next time).
 - When the board stands back up, every remaining block falls to the floor
   (column by column, animated), so the holes the explosions left collapse.
 - Reaching zero health ends the game.
@@ -136,7 +145,9 @@ Up/Down or W/S to pick, Enter or click to confirm.
 
 `--scenario redline` starts with a nearly complete red row plus a few red
 clusters of different sizes and drops the last red piece for you; `--scenario
-fps` skips straight to the fight (`--level N` sets the level for it). `--bot` makes
+fps` skips straight to the fight (`--level N` sets the level for it; 8+ adds a
+cyberdemon-sized slab); `--scenario corrupt` starts with a tall holey stack so
+you can watch blocks turn. `--bot` makes
 the player auto-aim and fire, which together with `--frames`/`--screenshot`
 gives a headless-ish smoke test of the whole loop:
 

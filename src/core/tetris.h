@@ -18,8 +18,10 @@ enum class CellKind : uint8_t { Empty = 0, Normal = 1, Red = 2 };
 struct Cell {
     CellKind kind = CellKind::Empty;
     uint8_t color = 0;   // tetromino colour index 0..6 for Normal cells
+    float corrupt = 0.f; // > 0: seconds left before this Normal cell turns Red (it flashes meanwhile)
     bool empty() const { return kind == CellKind::Empty; }
     bool red() const { return kind == CellKind::Red; }
+    bool corrupting() const { return kind == CellKind::Normal && corrupt > 0.f; }
 };
 
 enum class Shape : uint8_t { I, O, T, S, Z, J, L, Count };
@@ -56,6 +58,16 @@ struct Rules {
     float clearAnimTime = 0.30f;      // seconds the cleared row flashes
     float settleStepTime = 0.05f;     // seconds per one-row red-cell fall
     int linesPerLevel = 10;
+    // Corruption: as the stack climbs, normal blocks turn evil. danger() ramps
+    // from 0 at `corruptionStartRows` filled rows to 1 at the top; the rate of
+    // new corruptions is corruptionRate * danger^2 per second (plus 10 %/level).
+    int corruptionStartRows = 9;
+    float corruptionRate = 0.7f;
+    float corruptionTime = 1.6f;      // seconds of flashing before the switch
+    // Scoring
+    int lineScore[5] = {0, 100, 300, 600, 1000};   // x level x combo/chain multipliers
+    float comboStep = 0.5f;           // +50 % per consecutive clearing piece
+    float chainStep = 1.0f;           // +100 % per cascade step (clear caused by a collapse)
 };
 
 enum class Phase : uint8_t {
@@ -78,6 +90,8 @@ enum class EventType : uint8_t {
     LevelUp,           // a = new level
     GameOver,
     HardDrop,          // a = rows dropped
+    CellCorrupting,    // a = column, b = row: a normal block started turning red
+    CellTurnedRed,     // a = column, b = row
 };
 
 struct Event {
@@ -127,7 +141,13 @@ public:
     // Ghost piece landing row for the active piece (same x/rot).
     std::optional<Piece> ghost() const;
     int score() const { return score_; }
+    void addScore(int points) { score_ += points; }
     int level() const { return level_; }
+    int combo() const { return combo_; }          // consecutive clearing pieces (0 = none active)
+    int chain() const { return chain_; }          // cascade depth of the last clear
+    int lastClearPoints() const { return lastClearPoints_; }
+    int stackRows() const;                        // filled height of the stack in rows
+    float danger() const;                         // 0..1 corruption pressure
     int lines() const { return lines_; }
     int redLineCount() const { return redLineEvents_; }
     // Rows currently flashing (only during Clearing).
@@ -140,7 +160,7 @@ public:
 
     // Debug/test helpers
     void setCell(int col, int row, Cell c) { grid_[row][col] = c; }
-    void forcePiece(Shape s, std::array<bool, 4> red);   // replaces the *next* piece
+    void forcePiece(Shape s, std::array<bool, 4> red);   // replaces the next piece (and the active one, if falling)
     void spawnNow();                                     // spawn immediately (phase must be Spawning)
     void setLevel(int level) { level_ = level < 1 ? 1 : level; }
     bool rowFull(int row) const;
@@ -178,6 +198,10 @@ private:
     int lines_ = 0;
     int redLineEvents_ = 0;
     bool collapseAll_ = false;   // settle phase moves every cell, not only red ones
+    int combo_ = 0;
+    int chain_ = 0;
+    bool clearFromSettle_ = false;   // the pending clear was produced by a collapse, not a lock
+    int lastClearPoints_ = 0;
     std::vector<Shape> bag_;
 };
 

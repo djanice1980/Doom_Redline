@@ -76,6 +76,19 @@ void App::newGame() {
 }
 
 void App::applyScenario() {
+    if (opts_.scenario == "corrupt") {
+        // A tall, holey stack so corruption pressure is high from the start,
+        // with a few blocks already mid-flicker.
+        for (int r = 7; r < core::kBoardH; ++r)
+            for (int c = 0; c < core::kBoardW; ++c)
+                if ((c * 7 + r * 3) % 5 != 0) game_->setCell(c, r, core::Cell{core::CellKind::Normal, static_cast<uint8_t>((c + r) % 7)});
+        game_->setLevel(std::max(opts_.level, 4));
+        const int pre[4][2] = {{2, 12}, {6, 15}, {8, 9}, {4, 18}};
+        for (auto& pc : pre) {
+            core::Cell cell = game_->at(pc[0], pc[1]);
+            if (cell.kind == core::CellKind::Normal) { cell.corrupt = 0.4f + 0.5f * static_cast<float>(pc[0] % 3); game_->setCell(pc[0], pc[1], cell); }
+        }
+    }
     if (opts_.scenario == "redline" || opts_.scenario == "fps") {
         // A nearly complete red floor row plus assorted red regions of
         // different sizes (one enemy of each class) and normal blocks around
@@ -326,9 +339,20 @@ void App::handleGameEvents() {
         case core::EventType::PieceRotated: play("rotate", 0.6f); break;
         case core::EventType::PieceLocked: play("lock", 0.8f); break;
         case core::EventType::HardDrop: shakeT_ = 0.15f; break;
-        case core::EventType::LinesCleared: play("clear", 0.9f, ev.a >= 4 ? 1.3f : 1.f); break;
+        case core::EventType::LinesCleared: {
+            play("clear", 0.9f, ev.a >= 4 ? 1.3f : 1.f);
+            static const char* names[5] = {"", "SINGLE", "DOUBLE", "TRIPLE", "TETRIS"};
+            std::string label = names[std::clamp(ev.a, 0, 4)];
+            if (game_->chain() > 0) label = "CHAIN X" + std::to_string(game_->chain() + 1) + "  " + label;
+            else if (game_->combo() > 1) label = "COMBO X" + std::to_string(game_->combo()) + "  " + label;
+            glm::vec4 col = ev.a >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : (game_->chain() > 0 ? glm::vec4(1.f, 0.5f, 0.2f, 1.f) : glm::vec4(1.f));
+            announce(label + "  +" + std::to_string(ev.b), col, ev.a >= 4 || game_->chain() > 0 ? 1.6f : 1.2f);
+            break;
+        }
         case core::EventType::RedCellFell: play("lock", 0.4f, 1.6f); break;
-        case core::EventType::LevelUp: play("levelup", 1.f); break;
+        case core::EventType::LevelUp: play("levelup", 1.f); announce("LEVEL " + std::to_string(ev.a), glm::vec4(0.6f, 0.9f, 1.f, 1.f), 1.4f); break;
+        case core::EventType::CellCorrupting: play("redline", 0.35f, 1.6f); break;
+        case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f); shakeT_ = std::max(shakeT_, 0.1f); break;
         default: break;
         }
     }
@@ -348,6 +372,7 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
         case FpsEvent::Type::RocketBlast: std::fprintf(stderr, "[fps] rocket blast destroyed %d blocks\n", ev.a); play("rocket_hit", 1.f); shakeT_ = 0.35f; break;
         case FpsEvent::Type::BlockBroken: play("lock", 0.7f, 0.8f); shakeT_ = std::max(shakeT_, 0.08f); break;
+        case FpsEvent::Type::Score: announce(art.name + "  +" + std::to_string(ev.a), ev.tier >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : glm::vec4(1.f), ev.tier >= 4 ? 1.5f : 1.1f); break;
         case FpsEvent::Type::Absorb:
             std::fprintf(stderr, "[fps] a monster absorbed %d blocks and became a %s\n", ev.a, art.name.c_str());
             play(art.sightSound, 1.f, 0.8f);
@@ -374,6 +399,8 @@ void App::handleFpsEvents() {
 
 void App::update(float dt) {
     modeT_ += dt;
+    for (Announcement& a : announcements_) a.t += dt;
+    announcements_.erase(std::remove_if(announcements_.begin(), announcements_.end(), [](const Announcement& a) { return a.t > 2.f; }), announcements_.end());
     shakeT_ = std::max(0.f, shakeT_ - dt);
     muzzleLight_ = std::max(0.f, muzzleLight_ - dt * 8.f);
 
@@ -632,6 +659,13 @@ void App::addBoard() {
             glm::vec3 pos = boardPos(static_cast<float>(c), static_cast<float>(r));
             if (cell.red()) {
                 redCube(pos, rowRed ? 0.9f * alertFlash : 0.f, static_cast<float>(c) * 0.7f + r);
+            } else if (cell.corrupting()) {
+                // Flickers between its own colour and red, faster as the switch approaches.
+                float left = cell.corrupt / std::max(0.01f, g.rules().corruptionTime);   // 1 -> 0
+                float freq = 8.f + 30.f * (1.f - left);
+                bool redNow = std::sin(time_ * freq + c * 1.3f) > 0.f;
+                glm::vec3 col = redNow ? glm::vec3(1.f, 0.55f, 0.55f) : kPieceColors[cell.color % 7];
+                cube(pos, 0.96f, glm::vec4(col, 1.f), redNow ? assets_.redBlock : assets_.block, glm::vec3(1.f, 0.12f, 0.05f), redNow ? 0.9f : 0.f, 0.f, 0.f, rotX);
             } else {
                 glm::vec3 col = kPieceColors[cell.color % 7];
                 if (rowClearing) col = glm::mix(col, glm::vec3(1.f), flash);
@@ -755,10 +789,10 @@ void App::addLights() {
     glm::vec3 cam = frame_.cameraPos;
     struct Cand { float score; render::PointLight l; };
     std::vector<Cand> cands;
-    // Every red cell glows.
+    // Every red (or turning) cell glows.
     for (int r = 0; r < core::kBoardH; ++r)
         for (int c = 0; c < core::kBoardW; ++c)
-            if (game_->at(c, r).red()) {
+            if (game_->at(c, r).red() || game_->at(c, r).corrupting()) {
                 glm::vec3 p = boardPos(static_cast<float>(c), static_cast<float>(r)) + glm::vec3(0.f, 0.f, 0.8f);
                 float pulse = 0.8f + 0.2f * std::sin(time_ * 6.f + c * 0.7f + r);
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});
@@ -803,6 +837,11 @@ void App::screenSprite(const std::string& key, float x, float y, float scale, gl
     screenQuads_.push_back(q);
 }
 
+void App::announce(const std::string& text, glm::vec4 color, float scale) {
+    announcements_.push_back({text, color, scale, 0.f});
+    if (announcements_.size() > 4) announcements_.erase(announcements_.begin());
+}
+
 void App::panel(float x, float y, float w, float h, glm::vec4 color) {
     const render::AtlasRegion& r = assets_.region(assets_.white);
     render::QuadInstance q;
@@ -844,7 +883,9 @@ void App::addHud() {
         text(x, y, std::to_string(game_->score()), s, white); y += lh * 1.4f;
         text(x, y, "LEVEL " + std::to_string(game_->level()), s, dim); y += lh;
         text(x, y, "LINES " + std::to_string(game_->lines()), s, dim); y += lh;
-        text(x, y, "RED LINES " + std::to_string(redLinesSurvived_), s, red); y += lh * 1.4f;
+        text(x, y, "RED LINES " + std::to_string(redLinesSurvived_), s, red); y += lh;
+        if (game_->combo() > 1) { text(x, y, "COMBO X" + std::to_string(game_->combo()), s, yellow); }
+        y += lh * 1.4f;
         text(x, y, "NEXT", s, dim); y += lh;
         const core::Piece& n = game_->next();
         float cellPx = 12.f * s;
@@ -865,6 +906,14 @@ void App::addHud() {
         text(W - 24.f, 24.f + lh, "RED BLOCKS REFUSE TO CLEAR.", s * 0.6f, dim, 2);
         text(W - 24.f, 24.f + lh * 2.f, "A FULL RED ROW TIPS THE BOARD OVER.", s * 0.6f, dim, 2);
         text(W - 24.f, 24.f + lh * 3.f, "ESC MENU  F12 SCREENSHOT", s * 0.6f, dim, 2);
+    }
+    if (mode_ == Mode::Blocks && game_->danger() > 0.f) {
+        // The stack is high enough for blocks to turn evil: a creeping red edge and a warning.
+        float d = game_->danger();
+        float f = 0.5f + 0.5f * std::sin(time_ * (3.f + 6.f * d));
+        panel(0.f, 0.f, W, lh * 0.5f, glm::vec4(1.f, 0.1f, 0.05f, 0.35f * d * f));
+        panel(0.f, H - lh * 0.5f, W, lh * 0.5f, glm::vec4(1.f, 0.1f, 0.05f, 0.35f * d * f));
+        text(W * 0.5f, lh * 0.9f, d < 0.5f ? "THE STACK IS TURNING EVIL" : "EVIL RISING", s * 0.9f, glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 0.4f + 0.6f * d), 1);
     }
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 16.f);
@@ -933,6 +982,19 @@ void App::addHud() {
                 float f = 0.5f + 0.5f * std::sin(time_ * 12.f);
                 text(W * 0.5f, H * 0.2f, "A DEMON IS ABOUT TO GROW", s * 0.9f, glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 1.f), 1);
             }
+        }
+    }
+
+    // Announcements: rise and fade from just above the centre.
+    {
+        float y = H * 0.24f;
+        for (Announcement& a : announcements_) {
+            float alpha = a.t < 1.2f ? 1.f : std::max(0.f, 1.f - (a.t - 1.2f) / 0.8f);
+            float rise = 30.f * s * std::min(1.f, a.t / 2.f);
+            glm::vec4 col = a.color;
+            col.a *= alpha;
+            text(W * 0.5f, y - rise, a.text, s * a.scale, col, 1);
+            y += lh * a.scale;
         }
     }
 
