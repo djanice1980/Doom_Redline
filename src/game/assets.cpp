@@ -14,7 +14,7 @@ namespace rl::game {
 namespace fs = std::filesystem;
 
 namespace {
-const char* kTierNames[kEnemyTiers] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON"};
+const char* kTierNames[kEnemyTiers] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON", "CYBERDEMON", "SPIDER MASTERMIND"};
 }
 
 std::optional<fs::path> Assets::findWad(const std::optional<fs::path>& explicitPath) {
@@ -95,8 +95,8 @@ void Assets::loadProcedural(audio::Audio& audio) {
         }
     };
     // One procedural monster, scaled and tinted per tier.
-    const glm::vec4 tints[kEnemyTiers] = {{0.7f, 0.7f, 0.8f, 1.f}, {1.f, 1.f, 1.f, 1.f}, {1.f, 0.6f, 0.6f, 1.f}, {1.f, 0.4f, 0.4f, 1.f}, {0.5f, 1.f, 0.5f, 1.f}};
-    const float sizes[kEnemyTiers] = {0.026f, 0.031f, 0.034f, 0.045f, 0.055f};
+    const glm::vec4 tints[kEnemyTiers] = {{0.7f, 0.7f, 0.8f, 1.f}, {1.f, 1.f, 1.f, 1.f}, {1.f, 0.6f, 0.6f, 1.f}, {1.f, 0.4f, 0.4f, 1.f}, {0.5f, 1.f, 0.5f, 1.f}, {0.6f, 0.6f, 0.6f, 1.f}, {0.9f, 0.9f, 0.5f, 1.f}};
+    const float sizes[kEnemyTiers] = {0.026f, 0.031f, 0.034f, 0.045f, 0.055f, 0.07f, 0.075f};
     for (int t = 0; t < kEnemyTiers; ++t) {
         EnemyArt& e = enemies[t];
         e.name = kTierNames[t];
@@ -240,11 +240,13 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         {"SARG", "ABCD", "EFG", "H", "IJKLMN", 0.031f},    // demon: melee
         {"HEAD", "A", "BCD", "E", "FGHIJK", 0.034f},       // cacodemon: floats, fast fireball
         {"BOSS", "ABCD", "EFG", "H", "IJKLMNO", 0.033f},   // baron: green fireball, tanky
+        {"CYBR", "ABCD", "EF", "G", "HIJKLMNOP", 0.030f},  // cyberdemon: rockets
+        {"SPID", "ABCDEF", "GH", "I", "JKLMNOPQRS", 0.030f}, // spider mastermind: chaingun
     };
-    const char* sightSnd[kEnemyTiers] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT"};
-    const char* painSnd[kEnemyTiers] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN"};
-    const char* deathSnd[kEnemyTiers] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH"};
-    const char* attackSnd[kEnemyTiers] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT"};
+    const char* sightSnd[kEnemyTiers] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT", "DSCYBSIT", "DSSPISIT"};
+    const char* painSnd[kEnemyTiers] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN"};
+    const char* deathSnd[kEnemyTiers] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH", "DSCYBDTH", "DSSPIDTH"};
+    const char* attackSnd[kEnemyTiers] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT", "DSRLAUNC", "DSPISTOL"};
     for (int t = 0; t < kEnemyTiers; ++t) {
         EnemyArt& e = enemies[t];
         e.name = kTierNames[t];

@@ -92,6 +92,12 @@ void App::applyScenario() {
         normal(7, H - 8); normal(9, H - 8); normal(8, H - 9);
         red(4, H - 10); red(5, H - 10); red(4, H - 11); red(5, H - 11); red(6, H - 11);   // 5-region -> demon
         normal(3, H - 10); normal(6, H - 10); normal(3, H - 11); normal(7, H - 11);
+        if (opts_.scenario == "fps" && opts_.level >= 8) {
+            // Big fights: a 20-cell red slab -> cyberdemon, plus cover to eat.
+            for (int r = H - 16; r < H - 12; ++r) for (int c = 2; c < 7; ++c) red(c, r);
+            for (int c = 0; c < 2; ++c) normal(c, H - 13);
+            for (int c = 7; c < 10; ++c) normal(c, H - 14);
+        }
         game_->forcePiece(core::Shape::I, {true, true, true, true});
         game_->spawnNow();
         game_->rotateCW();
@@ -707,7 +713,7 @@ void App::addFpsActors() {
         case Enemy::State::Dying: anim = &art.death; loop = false; t = e.stateT; break;
         case Enemy::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
         }
-        if (e.alive() && e.absorbTimer < 4.f) {   // warning: pulsing red as it gets ready to absorb
+        if (e.alive() && e.absorbTimer < 4.f && e.tier < kMaxTier) {   // warning: pulsing red as it gets ready to absorb
             float f = 0.5f + 0.5f * std::sin(time_ * (10.f + (4.f - e.absorbTimer) * 4.f));
             tint = glm::mix(tint, glm::vec4(1.f, 0.2f, 0.2f, 1.f), 0.6f * f);
         }
@@ -761,7 +767,7 @@ void App::addLights() {
     if (inFps) {
         for (const Enemy& e : fps_.enemies()) {
             if (e.state == Enemy::State::Dead) continue;
-            float glow = (e.tier == 4) ? 1.4f : 0.9f;
+            float glow = (e.tier >= 4) ? 1.4f : 0.9f;
             glm::vec3 col = (e.tier == 4) ? glm::vec3(0.3f, 1.f, 0.3f) : glm::vec3(1.f, 0.2f, 0.05f);
             cands.push_back({glm::length(e.pos - cam) - 5.f, {e.pos + glm::vec3(0.f, 1.f, 0.f), 4.f + e.tier, col, glow}});
             if (e.flashT > 0.f) cands.push_back({-150.f, {e.pos + glm::vec3(0.f, 1.2f, 0.f), 5.f, {1.f, 0.85f, 0.5f}, 2.5f * e.flashT}});
@@ -922,7 +928,7 @@ void App::addHud() {
         }
         if (mode_ == Mode::Fps) {
             bool warning = false;
-            for (const Enemy& e : fps_.enemies()) if (e.alive() && e.absorbTimer < 4.f) warning = true;
+            for (const Enemy& e : fps_.enemies()) if (e.alive() && e.absorbTimer < 4.f && e.tier < kMaxTier) warning = true;
             if (warning) {
                 float f = 0.5f + 0.5f * std::sin(time_ * 12.f);
                 text(W * 0.5f, H * 0.2f, "A DEMON IS ABOUT TO GROW", s * 0.9f, glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 1.f), 1);

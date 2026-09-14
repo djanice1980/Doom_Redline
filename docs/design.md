@@ -14,10 +14,13 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   per-column shift: for each cleared row and column, if the cell is red nothing
   moves in that column; otherwise the column above it drops by one. Cleared rows
   are processed top to bottom so the row indices stay valid.
-- **Settle.** While `redCellsSettle` is on, every red cell with an empty cell
-  below moves down one row per `settleStepTime`, bottom-up so stacks move
-  together. When nothing moves, the clear check runs again (a settling red cell
-  can complete a row), then the red-line check, then the next piece spawns.
+- **Settle.** Red minos stay with the piece they landed in; they only move
+  when a line clear beneath them (per-column collapse) or the post-fight
+  collapse (`collapseAll_`, every cell falls one row per `settleStepTime`)
+  drops them. `Rules::redCellsSettle` (off by default) is the opt-in "sand"
+  variant where loose red cells fall after every lock. When nothing moves, the
+  clear check runs again (a collapse can complete a row), then the red-line
+  check, then the next piece spawns.
 - **Red line.** Any row where all ten cells are red sets `Phase::RedLine` and
   emits `EventType::RedLine`. The engine then idles until the FPS phase calls
   `explodeAt()` for each kill and `resumeAfterRedLine()` at the end.
@@ -61,8 +64,10 @@ instanced draw.
 
 - `FpsMode::begin` runs `core::findRedRegions` (4-connected flood fill) and
   turns **every** region into one `Enemy`. Tier by size: 1 zombie, 2-3 imp,
-  4-6 demon, 7-11 cacodemon, 12+ baron; a level-scaled roll can bump a tier up
-  (8 % per level, max 50 %) or down. The region's red cells are removed from
+  4-6 demon, 7-11 cacodemon, 12-17 baron, 18-24 cyberdemon (rockets with 2 m
+  splash that also break blocks), 25+ spider mastermind (chaingun hitscan);
+  a level-scaled roll can bump a tier up (8 % per level, max 50 %) or down.
+  `kMaxTier = 6` caps both spawning and absorbing. The region's red cells are removed from
   the grid (the monster is standing in the pocket) and remembered on the enemy.
 - Stats table in `fps_mode.cpp` (`kStats`): hp, hit cylinder, attack kind
   (hitscan / projectile type / melee), speed, flies, cadence, damage, score.
@@ -131,7 +136,8 @@ instanced draw.
 ## Assets (`src/game/assets.cpp`)
 
 Logical names only. From a Doom IWAD: monsters `POSS` (zombieman), `TROO`
-(imp), `SARG` (demon), `HEAD` (cacodemon), `BOSS` (baron) with walk / attack /
+(imp), `SARG` (demon), `HEAD` (cacodemon), `BOSS` (baron), `CYBR` (cyberdemon),
+`SPID` (spider mastermind) with walk / attack /
 pain / death frame runs per the Doom state tables, weapons `SHTG`/`SHTF`,
 `CHGG`/`CHGF`, `MISG`/`MISF`, `PLSG`/`PLSF`, pickups `STIM`, `MEDI`, `CLIP`,
 `ROCK`, `CELL`, `MGUN`, `LAUN`, `PLAS`, rocket `MISL` (A flight, B-D blast),

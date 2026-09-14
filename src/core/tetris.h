@@ -42,9 +42,11 @@ struct Rules {
     float redChanceMax = 0.45f;
     // Max red minos in a single piece.
     int maxRedPerPiece = 2;
-    // Red cells are loose: after locking / clearing they fall through empty
-    // space until supported ("refuse" to be part of the structure).
-    bool redCellsSettle = true;
+    // If true, red cells are loose sand that falls through empty space after
+    // every lock. Off by default: a red mino stays part of the piece it landed
+    // in and only moves when a line clear beneath it (per-column collapse) or
+    // the post-fight collapse drops it.
+    bool redCellsSettle = false;
     // Gravity interval at level 1 (seconds per row) and scaling.
     float gravityBase = 0.80f;
     float gravityPerLevel = 0.85f;   // multiplicative per level

@@ -85,22 +85,12 @@ static void testRedCellSurvivesClear() {
     CHECK(g.at(1, 19).empty());
 }
 
-static void testRedCellsSettleAfterLock() {
+static void testRedCellsStayInPiece() {
+    // An O piece with its right column red lands with that column hanging over
+    // empty space. The red minos must stay with the piece, not fall away.
     Game g(1, fastRules());
-    // T piece with the top mino red, dropped onto the empty floor: the red
-    // mino lands at row 18 above the stem, has nothing below it? No - the T's
-    // top mino sits on the middle mino. Use an L with its tip red so the tip
-    // hangs over empty space? The L tip sits on row 19 too. Use a vertical I
-    // with the top mino red placed over a hole: after locking, the red is
-    // supported. So instead build a step: red cell at row 17 over a hole.
     g.setCell(3, 19, Cell{CellKind::Normal, 0});
     g.setCell(3, 18, Cell{CellKind::Normal, 0});
-    // Piece: O with left column red, positioned with x=3 so cells at (4,·),(5,·):
-    // O occupies (1,0),(2,0),(1,1),(2,1) -> x=3 gives columns 4,5. Column 4 sits at
-    // rows 18,19 (floor). Make (1,0) red -> (4,18) red on top of (4,19) normal. Supported.
-    // Instead make the O land on the 2-high column 3: move it left by one so it
-    // occupies columns 3,4: column 3 rests on the stack (rows 16,17), column 4 hangs
-    // over empty rows 18,19 -> the red minos in column 4 must fall to the floor.
     g.forcePiece(Shape::O, {false, true, false, true});   // minos (2,0) and (2,1) red -> column x+2
     g.spawnNow();
     g.moveLeft();   // x=2 -> columns 3 and 4
@@ -108,10 +98,22 @@ static void testRedCellsSettleAfterLock() {
     runUntil(g, Phase::Falling);
     CHECK(g.at(3, 17).kind == CellKind::Normal);
     CHECK(g.at(3, 16).kind == CellKind::Normal);
-    CHECK(g.at(4, 19).red());
-    CHECK(g.at(4, 18).red());
-    CHECK(g.at(4, 17).empty());
-    CHECK(g.at(4, 16).empty());
+    CHECK(g.at(4, 17).red());
+    CHECK(g.at(4, 16).red());
+    CHECK(g.at(4, 18).empty());
+    CHECK(g.at(4, 19).empty());
+    // The opt-in sand rule still works when asked for.
+    Rules sand = fastRules();
+    sand.redCellsSettle = true;
+    Game h(1, sand);
+    h.setCell(3, 19, Cell{CellKind::Normal, 0});
+    h.setCell(3, 18, Cell{CellKind::Normal, 0});
+    h.forcePiece(Shape::O, {false, true, false, true});
+    h.spawnNow();
+    h.moveLeft();
+    h.hardDrop();
+    runUntil(h, Phase::Falling);
+    CHECK(h.at(4, 19).red() && h.at(4, 18).red());
 }
 
 static void testRedLineTrigger() {
@@ -245,7 +247,7 @@ int main() {
     testShapesCover();
     testClassicLineClear();
     testRedCellSurvivesClear();
-    testRedCellsSettleAfterLock();
+    testRedCellsStayInPiece();
     testRedLineTrigger();
     testRedRowDoesNotClear();
     testGameOver();

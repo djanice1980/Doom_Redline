@@ -31,7 +31,7 @@ struct EnemyArt {
     std::string sightSound, painSound, deathSound, attackSound;   // logical sound names
 };
 
-constexpr int kEnemyTiers = 5;
+constexpr int kEnemyTiers = 7;
 constexpr int kProjectileTypes = 5;   // imp / cacodemon / baron fireballs, rocket, plasma
 constexpr int kWeaponArt = 4;         // shotgun, chaingun, rocket launcher, plasma rifle
 constexpr int kPickupArt = 8;         // stim, medikit, bullets, rockets, cells, chaingun, launcher, plasma gun

@@ -44,7 +44,9 @@ struct EnemyStats {
     int scoreValue;
     float breakInterval;   // seconds between block-destroying acts (cover erodes faster for big monsters)
     int breakRadius;       // 0 = one block, 1 = the block and its neighbours
+    float projBlast;       // splash radius of its projectile (enemy rockets), 0 = none
 };
+constexpr int kMaxTier = 6;   // zombie, imp, demon, cacodemon, baron, cyberdemon, spider mastermind
 const EnemyStats& enemyStats(int tier);
 
 // Projectile types index Assets::projectile / projectileHit.
@@ -213,6 +215,7 @@ private:
     void tryAbsorb(Enemy& e, core::Game& game);
     void breakCell(int c, int r, core::Game& game);
     void rocketBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
+    void enemyBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
     void moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, const core::Game& game) const;
     bool lineOfSight(glm::vec3 a, glm::vec3 b, const core::Game& game) const;
     void hurtPlayer(float dmg, glm::vec3 from);

@@ -13,13 +13,15 @@ constexpr float kPlayerRadius = 0.3f;
 constexpr float kExplosionRadius = 1.5f;   // cells, around every cell of the region
 constexpr float kBlockTop = 1.0f;          // blocks are unit cubes on the floor
 
-//               name         hp     r      h     attack                 proj        speed flies interval dmg   pspd  score break r
+//               name          hp     r      h     attack                 proj         speed flies interval dmg   pspd  score break r  blast
 const EnemyStats kStats[] = {
-    {"ZOMBIE",     20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1,         0.f,  false, 2.2f, 5.f,  0.f,  100,  11.f, 0},
-    {"IMP",        60.f, 0.40f, 1.7f, AttackKind::Projectile, kProjImp,   0.f,  false, 2.6f, 10.f, 8.f,  200,  7.5f, 0},
-    {"DEMON",     150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,         3.6f, false, 1.0f, 14.f, 0.f,  350,  5.f,  0},
-    {"CACODEMON", 400.f, 0.65f, 1.8f, AttackKind::Projectile, kProjCaco,  1.8f, true,  2.4f, 16.f, 10.f, 600,  3.5f, 0},
-    {"BARON",    1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron, 1.2f, false, 2.8f, 28.f, 10.f, 1200, 2.5f, 1},
+    {"ZOMBIE",      20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1,          0.f,  false, 2.2f, 5.f,  0.f,  100,  11.f, 0, 0.f},
+    {"IMP",         60.f, 0.40f, 1.7f, AttackKind::Projectile, kProjImp,    0.f,  false, 2.6f, 10.f, 8.f,  200,  7.5f, 0, 0.f},
+    {"DEMON",      150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,          3.6f, false, 1.0f, 14.f, 0.f,  350,  5.f,  0, 0.f},
+    {"CACODEMON",  400.f, 0.65f, 1.8f, AttackKind::Projectile, kProjCaco,   1.8f, true,  2.4f, 16.f, 10.f, 600,  3.5f, 0, 0.f},
+    {"BARON",     1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron,  1.2f, false, 2.8f, 28.f, 10.f, 1200, 2.5f, 1, 0.f},
+    {"CYBERDEMON",2200.f, 0.90f, 3.3f, AttackKind::Projectile, kProjRocket, 1.6f, false, 3.0f, 40.f, 14.f, 2500, 2.0f, 1, 2.0f},
+    {"SPIDER",    2600.f, 1.20f, 3.0f, AttackKind::Hitscan,    -1,          1.4f, false, 0.9f, 8.f,  0.f,  3000, 1.5f, 1, 0.f},
 };
 
 float absorbPeriodForLevel(float base, int level) { return std::max(8.f, base - 1.f * static_cast<float>(level - 1)); }
@@ -37,11 +39,13 @@ int tierForRegion(int size) {
     if (size <= 3) return 1;
     if (size <= 6) return 2;
     if (size <= 11) return 3;
-    return 4;
+    if (size <= 17) return 4;
+    if (size <= 24) return 5;
+    return 6;
 }
 }  // namespace
 
-const EnemyStats& enemyStats(int tier) { return kStats[std::clamp(tier, 0, 4)]; }
+const EnemyStats& enemyStats(int tier) { return kStats[std::clamp(tier, 0, kMaxTier)]; }
 const WeaponDef& weaponDef(int id) { return kWeapons[std::clamp(id, 0, kWeaponCount - 1)]; }
 
 FpsMode::FpsMode() : rng_(12345) {}
@@ -98,7 +102,7 @@ void FpsMode::begin(core::Game& game, int level) {
         Enemy e;
         int tier = tierForRegion(region.size());
         float roll = u(rng_);
-        if (roll < upgradeChance && tier < 4) ++tier;                      // random nastier
+        if (roll < upgradeChance && tier < kMaxTier) ++tier;               // random nastier
         else if (roll > 0.85f && tier > 0 && region.size() > 1) --tier;    // random lucky break
         e.tier = tier;
         const EnemyStats& st = enemyStats(tier);
@@ -344,6 +348,30 @@ void FpsMode::rocketBlast(glm::vec3 pos, float radius, float damage, core::Game&
     push(FpsEvent::Type::RocketBlast, pos, 0, destroyed);
 }
 
+// A monster's rocket: hurts the player in range and blows the cover apart.
+void FpsMode::enemyBlast(glm::vec3 pos, float radius, float damage, core::Game& game) {
+    float pd = glm::length((playerPos_ + glm::vec3(0.f, 0.6f, 0.f)) - pos);
+    if (pd < radius) hurtPlayer(damage * (1.f - pd / radius), pos);
+    int destroyed = 0;
+    int c, r;
+    if (flatToCell(glm::vec3(pos.x, 0.5f, pos.z), c, r)) {
+        for (int y = r - 1; y <= r + 1; ++y)
+            for (int x = c - 1; x <= c + 1; ++x) {
+                if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
+                if (game.at(x, y).kind != core::CellKind::Normal) continue;
+                if (glm::length(flatCellCentre(x, y) - pos) > radius * 0.75f) continue;
+                breakCell(x, y, game);
+                ++destroyed;
+            }
+    }
+    Explosion ex;
+    ex.pos = pos;
+    ex.radius = radius;
+    ex.duration = 0.5f;
+    explosions_.push_back(ex);
+    push(FpsEvent::Type::RocketBlast, pos, 0, destroyed);
+}
+
 void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
     if (e.exploded) return;
     e.exploded = true;
@@ -471,7 +499,7 @@ void FpsMode::breakBlock(Enemy& e, core::Game& game) {
 void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     std::uniform_real_distribution<float> u(0.f, 1.f);
     e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level_) * (0.9f + 0.2f * u(rng_));
-    if (e.tier >= 4 || u(rng_) > 0.75f) return;
+    if (e.tier >= kMaxTier || u(rng_) > 0.75f) return;
     int ec, er;
     if (!flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er)) return;
     std::vector<std::pair<int, int>> food;
@@ -648,6 +676,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                     p.vel = glm::normalize(playerCentre - p.pos) * st.projSpeed;
                     p.type = st.projectile;
                     p.damage = st.damage;
+                    p.blast = st.projBlast;
                     projectiles_.push_back(p);
                     break;
                 }
@@ -699,6 +728,8 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         if (remove) {
             if (p.fromPlayer && p.blast > 0.f) {
                 rocketBlast(prev, p.blast, p.damage, game);
+            } else if (!p.fromPlayer && p.blast > 0.f) {
+                enemyBlast(prev, p.blast, p.damage, game);
             } else {
                 Explosion ex;
                 ex.pos = prev;

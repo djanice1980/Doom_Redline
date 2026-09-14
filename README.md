@@ -82,15 +82,16 @@ Up/Down or W/S to pick, Enter or click to confirm.
 ## Rules that differ from classic
 
 - Each mino has a chance of spawning red (grows with level, max two per piece).
-- Red cells are loose: after a piece locks or a row clears, any red cell with
-  empty space below it falls until it lands.
+- Red minos stay part of the piece they land in. They only sink when a row
+  clears beneath them or when the board collapses after a fight.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
 - A row that is entirely red never clears. It triggers the first-person phase.
 - In that phase **every** 4-connected red cluster on the board becomes one
   monster; its class depends on the cluster size (1: zombieman, 2-3: imp, 4-6:
-  demon, 7-11: cacodemon, 12+: baron) with a level-dependent chance of being
-  bumped up a class. Monster health scales with the level (x0.45 at level 1,
+  demon, 7-11: cacodemon, 12-17: baron, 18-24: cyberdemon, 25+: spider
+  mastermind) with a level-dependent chance of being bumped up a class.
+  Cyberdemon rockets have splash damage and blow up the blocks they hit. Monster health scales with the level (x0.45 at level 1,
   +0.15 per level, capped at x2.5), and so does their attack cadence.
 - Killing a monster explodes every cell of its cluster, destroying the *normal*
   cells within 1.5 cells of each. Standing next to it hurts you too.
@@ -105,8 +106,9 @@ Up/Down or W/S to pick, Enter or click to confirm.
   cover for a limited time only.
 - Leave a monster alive too long (about 20 s at level 1, one second less per
   level, floor 8 s) and there is a 75 % chance it absorbs every normal block
-  within 2.5 cells and comes back one class bigger at full health. It pulses
-  red for the last four seconds and the HUD warns you.
+  within 2.5 cells and comes back one class bigger at full health, all the way
+  up to spider mastermind. It pulses red for the last four seconds and the HUD
+  warns you (a top-tier monster never warns, because it cannot grow).
 - Wounded monsters sometimes (12 %, at most once per 2.5 s each) shed ammo
   for the gun you are holding.
 - Dying monsters drop loot: stimpacks and medikits, ammo, and weapons
