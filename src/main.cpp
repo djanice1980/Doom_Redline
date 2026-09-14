@@ -20,6 +20,7 @@ void usage() {
         "  --screenshot <png>   Save a screenshot after --frames frames and exit\n"
         "  --frames <n>         Frame count for --screenshot (fixed 60 Hz step)\n"
         "  --bot                Auto-aim and fire in FPS mode (smoke testing)\n"
+        "  --level <n>          Starting level for --scenario fps (enemy health scaling)\n"
         "  --mute\n"
         "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1\n");
 }
@@ -40,6 +41,7 @@ int main(int argc, char** argv) {
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--frames") o.frames = std::atoi(next());
         else if (a == "--bot") o.bot = true;
+        else if (a == "--level") o.level = std::atoi(next());
         else if (a == "--mute") o.mute = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }

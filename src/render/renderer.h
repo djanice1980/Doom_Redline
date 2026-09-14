@@ -24,6 +24,7 @@ struct CubeInstance {
     glm::vec4 emissive;   // rgb, w strength
     glm::vec4 uvRect;     // u0 v0 u1 v1
     glm::vec4 params;     // roughness, metallic, anim phase, flags (bit0 pulse)
+    glm::vec4 rot;        // x = rotation about X, y = about Y (radians); applied Y then X
 };
 
 struct QuadInstance {

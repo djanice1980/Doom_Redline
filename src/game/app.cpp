@@ -16,9 +16,8 @@ namespace rl::game {
 namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kAlertTime = 1.4f;
-constexpr float kFlyInTime = 1.8f;
-constexpr float kFlyOutTime = 1.4f;
-constexpr float kSpritePx = 0.031f;   // metres per Doom sprite pixel (imp = 57px ~ 1.75 m)
+constexpr float kFlyInTime = 2.2f;
+constexpr float kFlyOutTime = 1.6f;
 
 const glm::vec3 kPieceColors[7] = {
     {0.25f, 0.85f, 0.95f},   // I cyan
@@ -69,18 +68,29 @@ void App::newGame() {
     game_ = std::make_unique<core::Game>(seed);
     fps_ = FpsMode();
     redLinesSurvived_ = 0;
+    diedInFps_ = false;
     keys_ = {};
+    fpsIn_ = {};
     enterMode(opts_.scenario == "title" ? Mode::Title : Mode::Blocks);
 }
 
 void App::applyScenario() {
     if (opts_.scenario == "redline" || opts_.scenario == "fps") {
-        // Nine red cells on the floor, an all-red I piece dropped into the gap,
-        // and a few normal blocks stacked nearby so the explosions have victims.
-        for (int c = 1; c < core::kBoardW; ++c) game_->setCell(c, core::kBoardH - 1, core::Cell{core::CellKind::Red, 0});
-        for (int c = 2; c < 8; ++c) game_->setCell(c, core::kBoardH - 2, core::Cell{core::CellKind::Normal, static_cast<uint8_t>(c % 7)});
-        for (int c = 3; c < 7; ++c) game_->setCell(c, core::kBoardH - 3, core::Cell{core::CellKind::Normal, static_cast<uint8_t>((c + 2) % 7)});
-        game_->setCell(4, core::kBoardH - 4, core::Cell{core::CellKind::Red, 0});
+        // A nearly complete red floor row plus assorted red regions of
+        // different sizes (one enemy of each class) and normal blocks around
+        // them so the explosions have something to destroy.
+        const int H = core::kBoardH;
+        auto red = [&](int c, int r) { game_->setCell(c, r, core::Cell{core::CellKind::Red, 0}); };
+        auto normal = [&](int c, int r) { game_->setCell(c, r, core::Cell{core::CellKind::Normal, static_cast<uint8_t>((c * 3 + r) % 7)}); };
+        for (int c = 1; c < core::kBoardW; ++c) red(c, H - 1);            // floor row (10 with the dropped piece)
+        for (int c = 2; c < 8; ++c) normal(c, H - 2);
+        for (int c = 3; c < 7; ++c) normal(c, H - 3);
+        red(1, H - 5); red(2, H - 5); red(1, H - 6);                        // 3-region -> imp
+        normal(3, H - 5); normal(3, H - 6);
+        red(8, H - 8);                                                      // single -> zombie
+        normal(7, H - 8); normal(9, H - 8); normal(8, H - 9);
+        red(4, H - 10); red(5, H - 10); red(4, H - 11); red(5, H - 11); red(6, H - 11);   // 5-region -> demon
+        normal(3, H - 10); normal(6, H - 10); normal(3, H - 11); normal(7, H - 11);
         game_->forcePiece(core::Shape::I, {true, true, true, true});
         game_->spawnNow();
         game_->rotateCW();
@@ -88,8 +98,8 @@ void App::applyScenario() {
         game_->hardDrop();
         for (int i = 0; i < 200 && game_->phase() != core::Phase::RedLine; ++i) game_->tick(0.05f);
         if (opts_.scenario == "fps") {
-            // Skip the alert and the fly-in.
-            fps_.begin(*game_, game_->redRows());
+            game_->setLevel(opts_.level);
+            fps_.begin(*game_, opts_.level);
             enterMode(Mode::Fps);
         }
     }
@@ -97,7 +107,8 @@ void App::applyScenario() {
 
 void App::enterMode(Mode m) {
     static const char* names[] = {"Title", "Blocks", "Alert", "FlyIn", "Fps", "FlyOut", "GameOver", "Paused"};
-    std::fprintf(stderr, "[app] mode %s -> %s (frame %d, score %d)\n", names[static_cast<int>(mode_)], names[static_cast<int>(m)], frameCount_, game_ ? game_->score() : 0);
+    std::fprintf(stderr, "[app] mode %s -> %s (frame %d, score %d, level %d)\n", names[static_cast<int>(mode_)], names[static_cast<int>(m)], frameCount_,
+                 game_ ? game_->score() : 0, game_ ? game_->level() : 0);
     modeT_ = 0.f;
     Mode prev = mode_;
     mode_ = m;
@@ -106,17 +117,20 @@ void App::enterMode(Mode m) {
         SDL_SetWindowRelativeMouseMode(window_, wantMouse);
         mouseCaptured_ = wantMouse;
     }
+    menu_ = {};
     switch (m) {
+    case Mode::Title:
+        menu_.items = {"START", "QUIT"};
+        break;
     case Mode::Alert:
         play("redline", 1.f);
         break;
     case Mode::FlyIn:
         flyFrom_ = blocksCamera();
-        fps_.begin(*game_, game_->redRows());
+        fps_.begin(*game_, game_->level());
         flyTo_ = fpsCamera();
         break;
     case Mode::Fps:
-        play("enemy_sight", 0.9f);
         fpsIn_ = {};
         break;
     case Mode::FlyOut:
@@ -131,6 +145,11 @@ void App::enterMode(Mode m) {
         play("gameover", 1.f);
         gameOverT_ = 0.f;
         highScore_ = std::max(highScore_, game_->score());
+        menu_.items = {"RESTART", "QUIT"};
+        if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
+        break;
+    case Mode::Paused:
+        menu_.items = {"RESUME", "RESTART", "QUIT"};
         break;
     default:
         break;
@@ -166,6 +185,22 @@ int App::run() {
     return 0;
 }
 
+void App::menuKey(int key) {
+    int n = static_cast<int>(menu_.items.size());
+    if (n == 0) return;
+    if (key == SDLK_UP || key == SDLK_W) { menu_.index = (menu_.index + n - 1) % n; play("menu", 0.6f); }
+    else if (key == SDLK_DOWN || key == SDLK_S) { menu_.index = (menu_.index + 1) % n; play("menu", 0.6f); }
+    else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) { play("menu_select", 0.7f); menuSelect(); }
+}
+
+void App::menuSelect() {
+    const std::string& item = menu_.items[static_cast<size_t>(menu_.index)];
+    if (item == "QUIT") running_ = false;
+    else if (item == "START") enterMode(Mode::Blocks);
+    else if (item == "RESUME") enterMode(pausedFrom_);
+    else if (item == "RESTART") { newGame(); enterMode(Mode::Blocks); }
+}
+
 void App::handleEvents() {
     SDL_Event e;
     fpsIn_.dx = fpsIn_.dy = 0.f;
@@ -184,7 +219,7 @@ void App::handleEvents() {
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (e.button.button == SDL_BUTTON_LEFT) {
                 if (mode_ == Mode::Fps) fpsIn_.fire = true;
-                else if (mode_ == Mode::Title) enterMode(Mode::Blocks);
+                else if (!menu_.items.empty()) { play("menu_select", 0.7f); menuSelect(); }
             }
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -200,11 +235,9 @@ void App::handleEvents() {
                 if (mode_ == Mode::Blocks || mode_ == Mode::Fps) { pausedFrom_ = mode_; enterMode(Mode::Paused); }
                 else if (mode_ == Mode::Paused) enterMode(pausedFrom_);
                 else if (mode_ == Mode::Title) running_ = false;
-                else if (mode_ == Mode::GameOver) newGame();
                 break;
             }
-            if (mode_ == Mode::Title && (k == SDLK_RETURN || k == SDLK_SPACE)) { enterMode(Mode::Blocks); break; }
-            if (mode_ == Mode::GameOver && (k == SDLK_RETURN || k == SDLK_SPACE)) { newGame(); enterMode(Mode::Blocks); break; }
+            if (!menu_.items.empty() && !e.key.repeat) { menuKey(k); break; }
             if (mode_ == Mode::Blocks && !e.key.repeat) {
                 switch (k) {
                 case SDLK_LEFT: case SDLK_A: keys_.left = true; keys_.dasDir = -1; keys_.dasT = 0.f; keys_.dasActive = false; game_->moveLeft(); break;
@@ -270,8 +303,6 @@ void App::handleGameEvents() {
         case core::EventType::LinesCleared: play("clear", 0.9f, ev.a >= 4 ? 1.3f : 1.f); break;
         case core::EventType::RedCellFell: play("lock", 0.4f, 1.6f); break;
         case core::EventType::LevelUp: play("levelup", 1.f); break;
-        case core::EventType::RedLine: break;   // handled by the mode switch
-        case core::EventType::GameOver: break;
         default: break;
         }
     }
@@ -279,17 +310,22 @@ void App::handleGameEvents() {
 
 void App::handleFpsEvents() {
     for (const FpsEvent& ev : fps_.drainEvents()) {
+        const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
         switch (ev.type) {
         case FpsEvent::Type::Shoot: play("shoot", 1.f); muzzleLight_ = 1.f; shakeT_ = 0.12f; break;
-        case FpsEvent::Type::EnemyHit: play("enemy_pain", 0.8f); break;
-        case FpsEvent::Type::EnemyDied: play("enemy_die", 1.f); break;
-        case FpsEvent::Type::Explosion: play("explode", 1.f); shakeT_ = 0.35f; break;
+        case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f); break;
+        case FpsEvent::Type::EnemyDied: play(art.deathSound, 1.f); break;
+        case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
+        case FpsEvent::Type::Explosion: play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; break;
         case FpsEvent::Type::PlayerHit: play("pain", 1.f); shakeT_ = 0.25f; break;
-        case FpsEvent::Type::FireballLaunched: play("fireball", 0.7f); break;
-        case FpsEvent::Type::FireballHit: play("fireball_hit", 0.6f); break;
+        case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f); break;
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
-        case FpsEvent::Type::PlayerDead: break;
-        case FpsEvent::Type::EnemySight: break;
+        case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
+        case FpsEvent::Type::EnemySight: {
+            // Announce the biggest monster in the room.
+            play(art.sightSound, 0.9f);
+            break;
+        }
         }
     }
 }
@@ -323,23 +359,36 @@ void App::update(float dt) {
         in.lookDY = fpsIn_.dy;
         in.fire = fpsIn_.fire;
         if (opts_.bot) {
-            // Aim at the nearest living enemy's chest and fire when the gun is ready.
+            // Aim at the nearest living enemy's chest; advance when it is far or hidden.
             const Enemy* target = nullptr;
             float best = 1e9f;
             for (const Enemy& en : fps_.enemies()) {
-                if (en.state == Enemy::State::Dead || en.state == Enemy::State::Dying) continue;
+                if (!en.alive()) continue;
                 float d = glm::length(en.pos - fps_.eye());
                 if (d < best) { best = d; target = &en; }
             }
             if (target) {
-                glm::vec3 to = (target->pos + glm::vec3(0.f, 0.9f, 0.f)) - fps_.eye();
+                glm::vec3 chest = target->pos + glm::vec3(0.f, target->height * 0.7f, 0.f);
+                glm::vec3 to = chest - fps_.eye();
                 float wantYaw = std::atan2(to.x, to.z);
                 float wantPitch = std::atan2(to.y, std::sqrt(to.x * to.x + to.z * to.z));
                 float dyaw = std::remainder(wantYaw - fps_.yaw(), 2.f * kPi);
                 in.lookDX = -dyaw / 0.0022f;
                 in.lookDY = -(wantPitch - fps_.pitch()) / 0.0022f;
-                in.fire = std::fabs(dyaw) < 0.03f;
-                in.moveX = std::sin(time_ * 1.7f);   // strafe to dodge fireballs
+                float len = glm::length(to);
+                bool clear = fps_.rayBlockDistance(fps_.eye(), to / len, len, *game_) >= len - 0.01f;
+                in.fire = std::fabs(dyaw) < 0.03f && clear;
+                if (clear) {
+                    botBlockedT_ = 0.f;
+                    in.moveZ = len > 7.f ? 1.f : 0.f;
+                    in.moveX = std::sin(time_ * 1.7f) * 0.6f;
+                } else {
+                    // Shot blocked by a block: sidestep, flipping direction every so often.
+                    botBlockedT_ += dt;
+                    if (botBlockedT_ > 1.5f) { botSide_ = -botSide_; botBlockedT_ = 0.f; }
+                    in.moveX = botSide_;
+                    in.moveZ = 0.4f;
+                }
             }
         }
         fps_.update(dt, in, *game_);
@@ -363,6 +412,28 @@ void App::update(float dt) {
 }
 
 // ---------------------------------------------------------------------------
+// Board geometry: a hinge along the board's bottom edge tips the whole wall
+// forward onto the floor for the first-person phase.
+float App::boardTilt() const {
+    switch (mode_) {
+    case Mode::FlyIn: return smoothstep(modeT_ / kFlyInTime);
+    case Mode::Fps: return 1.f;
+    case Mode::FlyOut: return 1.f - smoothstep(modeT_ / kFlyOutTime);
+    case Mode::GameOver: return diedInFps_ ? 1.f : 0.f;
+    case Mode::Paused: return pausedFrom_ == Mode::Fps ? 1.f : 0.f;
+    default: return 0.f;
+    }
+}
+
+glm::vec3 App::boardPosH(float x, float h) const {
+    float th = boardTilt() * kPi * 0.5f;
+    return {x, h * std::cos(th) + 0.5f * std::sin(th), h * std::sin(th)};
+}
+
+glm::vec3 App::boardPos(float col, float row) const {
+    return boardPosH(col - core::kBoardW * 0.5f + 0.5f, static_cast<float>(core::kBoardH - 1) - row + 0.5f);
+}
+
 App::Camera App::blocksCamera() const {
     Camera c;
     c.eye = {0.f, 11.0f, 20.5f};
@@ -380,28 +451,33 @@ App::Camera App::fpsCamera() const {
 }
 
 App::Camera App::currentCamera() const {
-    switch (mode_) {
-    case Mode::Fps: return fpsCamera();
-    case Mode::FlyIn: {
-        float t = smoothstep(modeT_ / kFlyInTime);
+    auto lerpCam = [&](float t) {
         Camera c;
         c.eye = glm::mix(flyFrom_.eye, flyTo_.eye, t);
         c.target = glm::mix(flyFrom_.target, flyTo_.target, t);
         c.fov = glm::mix(flyFrom_.fov, flyTo_.fov, t);
+        return c;
+    };
+    switch (mode_) {
+    case Mode::Fps: return fpsCamera();
+    case Mode::FlyIn: {
+        // Swing high over the tipping board, then settle to eye level.
+        float t = smoothstep(modeT_ / kFlyInTime);
+        Camera c = lerpCam(t);
+        c.eye.y += 6.f * std::sin(t * kPi);
         return c;
     }
     case Mode::FlyOut: {
         float t = smoothstep(modeT_ / kFlyOutTime);
-        Camera c;
-        c.eye = glm::mix(flyFrom_.eye, flyTo_.eye, t);
-        c.target = glm::mix(flyFrom_.target, flyTo_.target, t);
-        c.fov = glm::mix(flyFrom_.fov, flyTo_.fov, t);
+        Camera c = lerpCam(t);
+        c.eye.y += 6.f * std::sin(t * kPi);
         return c;
     }
     case Mode::Paused:
         return pausedFrom_ == Mode::Fps ? fpsCamera() : blocksCamera();
+    case Mode::GameOver:
+        return diedInFps_ ? fpsCamera() : blocksCamera();
     case Mode::Alert: {
-        // Slow push-in towards the red row.
         Camera c = blocksCamera();
         float t = smoothstep(modeT_ / kAlertTime);
         c.eye = glm::mix(c.eye, glm::vec3(0.f, 7.f, 16.f), t * 0.5f);
@@ -413,7 +489,7 @@ App::Camera App::currentCamera() const {
 }
 
 // ---------------------------------------------------------------------------
-void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive, float emissiveStrength, float flags, float phase) {
+void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive, float emissiveStrength, float flags, float phase, float rotX) {
     const render::AtlasRegion& r = assets_.region(tex);
     render::CubeInstance c;
     c.posScale = glm::vec4(pos, scale);
@@ -421,6 +497,7 @@ void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& t
     c.emissive = glm::vec4(emissive, emissiveStrength);
     c.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
     c.params = glm::vec4(0.7f, 0.05f, phase, flags);
+    c.rot = glm::vec4(rotX, 0.f, 0.f, 0.f);
     cubes_.push_back(c);
 }
 
@@ -434,10 +511,11 @@ void App::buildEnvironment() {
         c.emissive = glm::vec4(0.f);
         c.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
         c.params = glm::vec4(0.9f, 0.f, 0.f, 0.f);
+        c.rot = glm::vec4(0.f);
         envCubes_.push_back(c);
     };
-    const int halfW = static_cast<int>(FpsMode::kArenaHalfW) + 1;
-    const int depth = static_cast<int>(FpsMode::kArenaDepth) + 1;
+    const int halfW = 15;
+    const int depth = 23;
     const int height = core::kBoardH + 3;
     // Floor (top face at y = 0) and ceiling
     for (int x = -halfW; x < halfW; ++x)
@@ -445,7 +523,7 @@ void App::buildEnvironment() {
             push({x + 0.5f, -0.5f, z + 0.5f}, assets_.floor, glm::vec4(1.f));
             push({x + 0.5f, height + 0.5f, z + 0.5f}, assets_.ceiling, glm::vec4(0.6f, 0.6f, 0.6f, 1.f));
         }
-    // Back wall behind the board, side walls, front wall behind the player.
+    // Back wall behind the board, side walls, front wall behind the overview camera.
     for (int y = 0; y < height; ++y) {
         for (int x = -halfW; x < halfW; ++x) {
             push({x + 0.5f, y + 0.5f, -2.5f}, assets_.wall, glm::vec4(0.85f, 0.85f, 0.85f, 1.f));
@@ -456,11 +534,6 @@ void App::buildEnvironment() {
             push({halfW + 0.5f, y + 0.5f, z + 0.5f}, assets_.wall, glm::vec4(0.75f, 0.75f, 0.75f, 1.f));
         }
     }
-    // Board frame: dark pillars either side and a lip below.
-    for (int y = 0; y < core::kBoardH + 1; ++y) {
-        push({-core::kBoardW * 0.5f - 0.5f, y + 0.5f, 0.f}, assets_.block, glm::vec4(0.25f, 0.25f, 0.3f, 1.f));
-        push({core::kBoardW * 0.5f + 0.5f, y + 0.5f, 0.f}, assets_.block, glm::vec4(0.25f, 0.25f, 0.3f, 1.f));
-    }
 }
 
 void App::addBoard() {
@@ -469,6 +542,22 @@ void App::addBoard() {
     float flash = 0.5f + 0.5f * std::sin(g.clearProgress() * kPi * 3.f);
     bool alert = (mode_ == Mode::Alert);
     float alertFlash = alert ? (0.5f + 0.5f * std::sin(modeT_ * 18.f)) : 0.f;
+    float rotX = boardTilt() * kPi * 0.5f;
+    const glm::vec4 frameCol(0.25f, 0.25f, 0.3f, 1.f);
+
+    // Frame: side rails and the far lip, hinged with the board.
+    const float halfW = core::kBoardW * 0.5f + 0.5f;
+    for (int i = 0; i <= core::kBoardH; ++i) {
+        float h = static_cast<float>(i) + 0.5f;
+        cube(boardPosH(-halfW, h), 1.f, frameCol, assets_.block, {}, 0.f, 0.f, 0.f, rotX);
+        cube(boardPosH(halfW, h), 1.f, frameCol, assets_.block, {}, 0.f, 0.f, 0.f, rotX);
+    }
+    for (int c = 0; c < core::kBoardW; ++c)
+        cube(boardPosH(static_cast<float>(c) - core::kBoardW * 0.5f + 0.5f, core::kBoardH + 0.5f), 1.f, frameCol, assets_.block, {}, 0.f, 0.f, 0.f, rotX);
+
+    auto redCube = [&](glm::vec3 pos, float extraGlow, float phase) {
+        cube(pos, 0.96f, glm::vec4(1.f, 0.55f, 0.55f, 1.f), assets_.redBlock, glm::vec3(1.f, 0.12f, 0.05f), 0.8f + extraGlow, 1.f, phase, rotX);
+    };
 
     for (int r = 0; r < core::kBoardH; ++r) {
         bool rowClearing = std::find(clearing.begin(), clearing.end(), r) != clearing.end();
@@ -476,40 +565,46 @@ void App::addBoard() {
         for (int c = 0; c < core::kBoardW; ++c) {
             const core::Cell& cell = g.at(c, r);
             if (cell.empty()) continue;
-            // Cells that have become enemies are not drawn as blocks any more.
-            if (cell.red() && (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut)) {
-                bool isEnemy = false;
-                for (const Enemy& e : fps_.enemies()) if (e.col == c && e.row == r) isEnemy = true;
-                if (isEnemy) continue;
-            }
-            glm::vec3 pos = cellCentre(c, r);
+            glm::vec3 pos = boardPos(static_cast<float>(c), static_cast<float>(r));
             if (cell.red()) {
-                float e = 0.8f + (rowRed ? 0.9f * alertFlash : 0.f);
-                cube(pos, 0.96f, glm::vec4(1.f, 0.55f, 0.55f, 1.f), assets_.redBlock, glm::vec3(1.f, 0.12f, 0.05f), e, 1.f, static_cast<float>(c) * 0.7f + r);
+                redCube(pos, rowRed ? 0.9f * alertFlash : 0.f, static_cast<float>(c) * 0.7f + r);
             } else {
                 glm::vec3 col = kPieceColors[cell.color % 7];
                 if (rowClearing) col = glm::mix(col, glm::vec3(1.f), flash);
-                cube(pos, 0.96f, glm::vec4(col, 1.f), assets_.block, rowClearing ? glm::vec3(1.f) : glm::vec3(0.f), rowClearing ? flash : 0.f);
+                cube(pos, 0.96f, glm::vec4(col, 1.f), assets_.block, rowClearing ? glm::vec3(1.f) : glm::vec3(0.f), rowClearing ? flash : 0.f, 0.f, 0.f, rotX);
             }
         }
     }
-    if (mode_ == Mode::Blocks || mode_ == Mode::Paused || mode_ == Mode::Title) {
+    // While the board tips over, the regions that will become monsters are
+    // still shown as red blocks; they sink away as the monsters rise.
+    if (mode_ == Mode::FlyIn || mode_ == Mode::Fps) {
+        for (const Enemy& e : fps_.enemies()) {
+            if (mode_ == Mode::Fps && !(e.state == Enemy::State::Emerging && e.stateT < 0.45f)) continue;
+            float sink = (mode_ == Mode::Fps) ? std::clamp(e.stateT / 0.45f, 0.f, 1.f) : 0.f;
+            for (auto [c, r] : e.cells) {
+                glm::vec3 pos = boardPos(static_cast<float>(c), static_cast<float>(r));
+                pos.y -= sink * 1.2f;
+                redCube(pos, 0.6f, static_cast<float>(c) * 0.7f + r);
+            }
+        }
+    }
+    bool showPiece = (mode_ == Mode::Blocks || mode_ == Mode::Title || (mode_ == Mode::Paused && pausedFrom_ == Mode::Blocks));
+    if (showPiece) {
         if (auto ghost = g.ghost()) {
             for (int i = 0; i < 4; ++i) {
                 auto [cx, cy] = ghost->cells()[i];
                 if (cy < 0) continue;
                 glm::vec3 col = ghost->red[i] ? glm::vec3(0.9f, 0.2f, 0.2f) : kPieceColors[static_cast<int>(ghost->shape)];
-                cube(cellCentre(cx, cy), 0.3f, glm::vec4(col * 0.8f, 1.f), assets_.block, col, 0.35f);
+                cube(boardPos(static_cast<float>(cx), static_cast<float>(cy)), 0.3f, glm::vec4(col * 0.8f, 1.f), assets_.block, col, 0.35f);
             }
         }
         if (const auto& p = g.active()) {
             for (int i = 0; i < 4; ++i) {
                 auto [cx, cy] = p->cells()[i];
                 if (cy < 0) continue;
-                if (p->red[i])
-                    cube(cellCentre(cx, cy), 0.96f, glm::vec4(1.f, 0.55f, 0.55f, 1.f), assets_.redBlock, glm::vec3(1.f, 0.12f, 0.05f), 0.9f, 1.f, static_cast<float>(i));
-                else
-                    cube(cellCentre(cx, cy), 0.96f, glm::vec4(kPieceColors[static_cast<int>(p->shape)], 1.f), assets_.block);
+                glm::vec3 pos = boardPos(static_cast<float>(cx), static_cast<float>(cy));
+                if (p->red[i]) redCube(pos, 0.1f, static_cast<float>(i));
+                else cube(pos, 0.96f, glm::vec4(kPieceColors[static_cast<int>(p->shape)], 1.f), assets_.block);
             }
         }
     }
@@ -535,42 +630,43 @@ const std::string& App::animFrame(const SpriteAnim& a, float t, bool loop, bool*
     int n = static_cast<int>(a.frames.size());
     int i = static_cast<int>(t * a.fps);
     i = loop ? ((i % n) + n) % n : std::clamp(i, 0, n - 1);
-    if (flip) *flip = a.mirrored[i];
-    return a.frames[i];
+    if (flip) *flip = a.mirrored[static_cast<size_t>(i)];
+    return a.frames[static_cast<size_t>(i)];
 }
 
 void App::addFpsActors() {
     for (const Enemy& e : fps_.enemies()) {
-        const SpriteAnim* anim = &assets_.enemyIdle;
+        const EnemyArt& art = assets_.enemies[std::clamp(e.tier, 0, kEnemyTiers - 1)];
+        const SpriteAnim* anim = &art.walk;
         bool loop = true;
         float t = e.animT;
-        glm::vec4 tint(1.f);
+        glm::vec4 tint = art.tint;
         switch (e.state) {
-        case Enemy::State::Emerging: anim = &assets_.enemyIdle; t = e.stateT; tint = glm::vec4(1.f, 0.6f, 0.6f, 1.f); break;
-        case Enemy::State::Idle: anim = &assets_.enemyIdle; break;
-        case Enemy::State::Attack: anim = &assets_.enemyAttack; loop = false; t = e.stateT; break;
-        case Enemy::State::Pain: anim = &assets_.enemyPain; loop = false; t = e.stateT; tint = glm::vec4(1.f, 0.7f, 0.7f, 1.f); break;
-        case Enemy::State::Dying: anim = &assets_.enemyDeath; loop = false; t = e.stateT; break;
-        case Enemy::State::Dead: anim = &assets_.enemyDeath; loop = false; t = 100.f; break;
+        case Enemy::State::Emerging: t = std::max(0.f, e.stateT); tint *= glm::vec4(1.f, 0.6f, 0.6f, 1.f); break;
+        case Enemy::State::Idle: break;
+        case Enemy::State::Attack: anim = &art.attack; loop = false; t = e.stateT; break;
+        case Enemy::State::Pain: anim = &art.pain; loop = false; t = e.stateT; tint *= glm::vec4(1.f, 0.7f, 0.7f, 1.f); break;
+        case Enemy::State::Dying: anim = &art.death; loop = false; t = e.stateT; break;
+        case Enemy::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
         }
         bool flip = false;
         const std::string& key = animFrame(*anim, t, loop, &flip);
-        if (!key.empty()) billboard(key, e.pos, kSpritePx, tint, true, flip);
+        if (!key.empty()) billboard(key, e.pos, art.metresPerPixel, tint, true, flip);
     }
     for (const Projectile& p : fps_.projectiles()) {
         bool flip = false;
-        const std::string& key = animFrame(assets_.fireball, p.animT, true, &flip);
-        if (!key.empty()) billboard(key, p.pos - glm::vec3(0.f, 0.3f, 0.f), kSpritePx * 1.2f, glm::vec4(1.f), false, flip);
+        const SpriteAnim& anim = assets_.projectile[std::clamp(p.type, 0, kProjectileTypes - 1)];
+        const std::string& key = animFrame(anim, p.animT, true, &flip);
+        if (!key.empty()) billboard(key, p.pos - glm::vec3(0.f, 0.3f, 0.f), 0.031f, glm::vec4(1.f), false, flip);
     }
     for (const Explosion& ex : fps_.explosions()) {
         float t = ex.t / ex.duration;
-        const SpriteAnim& anim = ex.radius > 1.f ? assets_.explosion : assets_.fireballHit;
+        const SpriteAnim& anim = ex.hitType < 0 ? assets_.explosion : assets_.projectileHit[std::clamp(ex.hitType, 0, kProjectileTypes - 1)];
         int n = static_cast<int>(anim.frames.size());
         if (n == 0) continue;
         int i = std::clamp(static_cast<int>(t * n), 0, n - 1);
-        float scale = ex.radius > 1.f ? kSpritePx * 2.6f : kSpritePx * 1.2f;
-        // Explosion sprites have their origin near the middle; place the origin at the blast centre.
-        billboard(anim.frames[i], ex.pos - glm::vec3(0.f, ex.radius > 1.f ? 0.9f : 0.2f, 0.f), scale, glm::vec4(1.f, 1.f, 1.f, 1.f), false, anim.mirrored[i]);
+        float scale = ex.hitType < 0 ? 0.031f * (1.6f + 0.4f * ex.radius) : 0.031f * 1.2f;
+        billboard(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, ex.hitType < 0 ? 0.9f : 0.2f, 0.f), scale, glm::vec4(1.f), false, anim.mirrored[static_cast<size_t>(i)]);
     }
     for (const Debris& d : fps_.debris()) {
         float fade = std::min(1.f, d.ttl / 0.4f);
@@ -588,19 +684,28 @@ void App::addLights() {
     for (int r = 0; r < core::kBoardH; ++r)
         for (int c = 0; c < core::kBoardW; ++c)
             if (game_->at(c, r).red()) {
-                glm::vec3 p = cellCentre(c, r) + glm::vec3(0.f, 0.f, 0.8f);
+                glm::vec3 p = boardPos(static_cast<float>(c), static_cast<float>(r)) + glm::vec3(0.f, 0.f, 0.8f);
                 float pulse = 0.8f + 0.2f * std::sin(time_ * 6.f + c * 0.7f + r);
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});
             }
-    for (const Enemy& e : fps_.enemies())
-        if (e.state != Enemy::State::Dead)
-            cands.push_back({glm::length(e.pos - cam) - 5.f, {e.pos + glm::vec3(0.f, 1.f, 0.4f), 4.f, {1.f, 0.2f, 0.05f}, 1.0f}});
-    for (const Explosion& ex : fps_.explosions()) {
-        float t = 1.f - ex.t / ex.duration;
-        cands.push_back({-100.f, {ex.pos, ex.radius > 1.f ? 9.f : 3.f, {1.f, 0.6f, 0.2f}, (ex.radius > 1.f ? 6.f : 1.5f) * t}});
+    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_));
+    if (inFps) {
+        for (const Enemy& e : fps_.enemies()) {
+            if (e.state == Enemy::State::Dead) continue;
+            float glow = (e.tier == 4) ? 1.4f : 0.9f;
+            glm::vec3 col = (e.tier == 4) ? glm::vec3(0.3f, 1.f, 0.3f) : glm::vec3(1.f, 0.2f, 0.05f);
+            cands.push_back({glm::length(e.pos - cam) - 5.f, {e.pos + glm::vec3(0.f, 1.f, 0.f), 4.f + e.tier, col, glow}});
+            if (e.flashT > 0.f) cands.push_back({-150.f, {e.pos + glm::vec3(0.f, 1.2f, 0.f), 5.f, {1.f, 0.85f, 0.5f}, 2.5f * e.flashT}});
+        }
+        for (const Explosion& ex : fps_.explosions()) {
+            float t = 1.f - ex.t / ex.duration;
+            bool big = ex.hitType < 0;
+            cands.push_back({-100.f, {ex.pos, big ? 6.f + ex.radius * 2.f : 3.f, {1.f, 0.6f, 0.2f}, (big ? 6.f : 1.5f) * t}});
+        }
+        for (const Projectile& p : fps_.projectiles())
+            cands.push_back({-50.f, {p.pos, 3.f, p.type == 2 ? glm::vec3(0.3f, 1.f, 0.3f) : glm::vec3(1.f, 0.5f, 0.1f), 1.2f}});
+        if (muzzleLight_ > 0.f && mode_ == Mode::Fps) cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, {1.f, 0.8f, 0.4f}, 3.f * muzzleLight_}});
     }
-    for (const Projectile& p : fps_.projectiles()) cands.push_back({-50.f, {p.pos, 3.f, {1.f, 0.5f, 0.1f}, 1.2f}});
-    if (muzzleLight_ > 0.f && (mode_ == Mode::Fps)) cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, {1.f, 0.8f, 0.4f}, 3.f * muzzleLight_}});
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
     for (size_t i = 0; i < cands.size() && i < static_cast<size_t>(render::kMaxLights); ++i) frame_.lights.push_back(cands[i].l);
 }
@@ -617,6 +722,17 @@ void App::screenSprite(const std::string& key, float x, float y, float scale, gl
     screenQuads_.push_back(q);
 }
 
+void App::panel(float x, float y, float w, float h, glm::vec4 color) {
+    const render::AtlasRegion& r = assets_.region(assets_.white);
+    render::QuadInstance q;
+    q.pos = glm::vec4(x, y, 0.f, 0.f);
+    q.size = glm::vec4(w, h, 0.f, 1.f);
+    q.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
+    q.color = color;
+    q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
+    screenQuads_.push_back(q);
+}
+
 void App::text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align) {
     int w = assets_.textWidth(s, scale);
     if (align == 1) x -= w * 0.5f;
@@ -627,7 +743,6 @@ void App::text(float x, float y, const std::string& s, float scale, glm::vec4 co
         auto it = assets_.font.find(c);
         if (it == assets_.font.end()) { cx += (assets_.fontHeight / 2 + 1) * scale; continue; }
         const render::AtlasRegion& r = assets_.region(it->second);
-        // Doom glyphs carry a top offset so that letters with descenders line up.
         float gy = y + (assets_.usingWad() ? -r.offsetY * scale : 0.f);
         screenSprite(it->second, cx, gy, scale, color, 0.f, 1.f);
         cx += (r.w + 1) * scale;
@@ -640,26 +755,15 @@ void App::addHud() {
     float s = std::max(1.f, std::round(H / 300.f));   // font scale
     glm::vec4 white(1.f), red(1.f, 0.25f, 0.2f, 1.f), dim(0.8f, 0.8f, 0.8f, 1.f), yellow(1.f, 0.9f, 0.3f, 1.f);
     float lh = (assets_.fontHeight + 4) * s;
+    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::Paused && pausedFrom_ == Mode::Fps) || (mode_ == Mode::GameOver && diedInFps_));
 
-    auto darkPanel = [&](float x, float y, float w, float h, float a) {
-        const render::AtlasRegion& r = assets_.region(assets_.white);
-        render::QuadInstance q;
-        q.pos = glm::vec4(x, y, 0.f, 0.f);
-        q.size = glm::vec4(w, h, 0.f, 1.f);
-        q.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
-        q.color = glm::vec4(0.f, 0.f, 0.f, a);
-        q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
-        screenQuads_.push_back(q);
-    };
-
-    if (mode_ == Mode::Blocks || mode_ == Mode::Paused || mode_ == Mode::Alert || mode_ == Mode::GameOver || mode_ == Mode::Title) {
+    if (!inFps) {
         float x = 24.f, y = 24.f;
         text(x, y, "SCORE", s, dim); y += lh;
         text(x, y, std::to_string(game_->score()), s, white); y += lh * 1.4f;
         text(x, y, "LEVEL " + std::to_string(game_->level()), s, dim); y += lh;
         text(x, y, "LINES " + std::to_string(game_->lines()), s, dim); y += lh;
         text(x, y, "RED LINES " + std::to_string(redLinesSurvived_), s, red); y += lh * 1.4f;
-        // Next piece preview
         text(x, y, "NEXT", s, dim); y += lh;
         const core::Piece& n = game_->next();
         float cellPx = 12.f * s;
@@ -676,29 +780,27 @@ void App::addHud() {
             q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
             screenQuads_.push_back(q);
         }
-        y += cellPx * 4.5f;
         text(W - 24.f, 24.f, "ARROWS/WASD MOVE  UP ROTATE  SPACE DROP", s * 0.6f, dim, 2);
         text(W - 24.f, 24.f + lh, "RED BLOCKS REFUSE TO CLEAR.", s * 0.6f, dim, 2);
-        text(W - 24.f, 24.f + lh * 2.f, "A FULL RED ROW PULLS YOU IN.", s * 0.6f, dim, 2);
-        text(W - 24.f, 24.f + lh * 3.f, "F12 SCREENSHOT  ESC PAUSE", s * 0.6f, dim, 2);
+        text(W - 24.f, 24.f + lh * 2.f, "A FULL RED ROW TIPS THE BOARD OVER.", s * 0.6f, dim, 2);
+        text(W - 24.f, 24.f + lh * 3.f, "ESC MENU  F12 SCREENSHOT", s * 0.6f, dim, 2);
     }
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 16.f);
         text(W * 0.5f, H * 0.42f, "RED LINE", s * 2.2f, glm::vec4(1.f, 0.2f * f, 0.1f * f, 1.f), 1);
-        text(W * 0.5f, H * 0.42f + lh * 2.4f, "THEY REFUSE TO DIE", s, white, 1);
+        text(W * 0.5f, H * 0.42f + lh * 2.4f, "THE BOARD IS FALLING", s, white, 1);
     }
-    if (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut) {
+    if (inFps) {
         if (mode_ == Mode::Fps) {
-            // Weapon: bottom centre, bobbing with movement and recoiling when fired.
             bool flip = false;
             const std::string& gun = fps_.gunFiring() ? animFrame(assets_.gunFire, fps_.gunAnimT(), false, &flip) : animFrame(assets_.gunIdle, 0.f, true, &flip);
             float gs = H / 200.f;
-            float bob = std::sin(time_ * 6.f) * 3.f * gs * ((fpsIn_.fwd || fpsIn_.back || fpsIn_.left || fpsIn_.right) ? 1.f : 0.15f);
+            bool moving = fpsIn_.fwd || fpsIn_.back || fpsIn_.left || fpsIn_.right;
+            float bob = std::sin(time_ * 6.f) * 3.f * gs * (moving ? 1.f : 0.15f);
             float recoil = fps_.recoil() * 18.f * gs;
             if (!gun.empty()) {
                 const render::AtlasRegion& r = assets_.region(gun);
-                // Doom weapon sprites are drawn with their origin relative to a 320x200 screen.
-                float gx = W * 0.5f + (assets_.usingWad() ? (-r.offsetX + r.w * 0.5f) * gs * 0.f : 0.f);
+                float gx = W * 0.5f;
                 screenSprite(gun, gx, H + recoil + std::fabs(bob) - 2.f * gs, gs, glm::vec4(1.f), 0.5f, 0.f, flip);
                 if (fps_.gunFiring() && fps_.gunAnimT() < 0.12f && !assets_.gunFlash.empty()) {
                     const std::string& fl = animFrame(assets_.gunFlash, fps_.gunAnimT(), false);
@@ -708,43 +810,46 @@ void App::addHud() {
             }
             screenSprite(assets_.crosshair, W * 0.5f, H * 0.5f, std::max(1.f, s * 0.7f), glm::vec4(1.f, 1.f, 1.f, 0.85f), 0.5f, 0.5f);
         }
-        if (fps_.damageFlash() > 0.f) {
-            const render::AtlasRegion& r = assets_.region(assets_.white);
-            render::QuadInstance q;
-            q.pos = glm::vec4(0.f, 0.f, 0.f, 0.f);
-            q.size = glm::vec4(W, H, 0.f, 1.f);
-            q.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
-            q.color = glm::vec4(1.f, 0.f, 0.f, 0.45f * fps_.damageFlash());
-            q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
-            screenQuads_.push_back(q);
-        }
-        darkPanel(0.f, H - lh * 1.6f, W, lh * 1.6f, 0.55f);
+        if (fps_.damageFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.f, 0.f, 0.45f * fps_.damageFlash()));
+        panel(0.f, H - lh * 1.6f, W, lh * 1.6f, glm::vec4(0.f, 0.f, 0.f, 0.55f));
         float hy = H - lh * 1.3f;
         text(24.f, hy, "HEALTH " + std::to_string(static_cast<int>(std::ceil(fps_.health()))) + "%", s, fps_.health() < 30.f ? red : white);
         text(W * 0.5f, hy, "DEMONS " + std::to_string(fps_.enemiesLeft()) + "/" + std::to_string(fps_.totalEnemies()), s, yellow, 1);
-        text(W - 24.f, hy, "SCORE " + std::to_string(game_->score()), s, white, 2);
+        text(W - 24.f, hy, "LEVEL " + std::to_string(game_->level()) + "   SCORE " + std::to_string(game_->score()), s, white, 2);
         if (mode_ == Mode::Fps && fps_.elapsed() < 3.f) text(W * 0.5f, H * 0.3f, "MOUSE LOOK  WASD MOVE  CLICK FIRE", s * 0.8f, white, 1);
     }
+
+    // Menus ----------------------------------------------------------------
+    auto drawMenu = [&](float y0) {
+        for (size_t i = 0; i < menu_.items.size(); ++i) {
+            bool sel = static_cast<int>(i) == menu_.index;
+            float f = sel ? (0.7f + 0.3f * std::sin(time_ * 6.f)) : 1.f;
+            std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
+            text(W * 0.5f, y0 + static_cast<float>(i) * lh * 1.5f, label, s * 1.2f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1);
+        }
+    };
     if (mode_ == Mode::Title) {
-        darkPanel(0.f, 0.f, W, H, 0.55f);
-        if (!assets_.title.empty()) screenSprite(assets_.title, W * 0.5f, H * 0.28f, s * 1.2f, glm::vec4(1.f, 0.6f, 0.6f, 1.f), 0.5f, 0.5f);
-        float f = 0.6f + 0.4f * std::sin(time_ * 3.f);
-        text(W * 0.5f, H * 0.42f, "REDLINE", s * 3.f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
-        text(W * 0.5f, H * 0.42f + lh * 3.4f, "STACK THE BLOCKS. SOME OF THEM ARE RED.", s, white, 1);
-        text(W * 0.5f, H * 0.42f + lh * 4.6f, "RED BLOCKS REFUSE TO EXPLODE. WHEN A ROW IS ALL RED...", s, white, 1);
-        text(W * 0.5f, H * 0.42f + lh * 6.6f, "PRESS ENTER", s * 1.2f, glm::vec4(1.f, 1.f, 1.f, f), 1);
+        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.55f));
+        if (!assets_.title.empty()) screenSprite(assets_.title, W * 0.5f, H * 0.22f, s * 1.2f, glm::vec4(1.f, 0.6f, 0.6f, 1.f), 0.5f, 0.5f);
+        text(W * 0.5f, H * 0.36f, "REDLINE", s * 3.f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
+        text(W * 0.5f, H * 0.36f + lh * 3.4f, "STACK THE BLOCKS. SOME OF THEM ARE RED.", s, white, 1);
+        text(W * 0.5f, H * 0.36f + lh * 4.6f, "WHEN A ROW IS ALL RED THE BOARD TIPS OVER", s, white, 1);
+        text(W * 0.5f, H * 0.36f + lh * 5.8f, "AND EVERY RED CLUSTER BECOMES A DEMON.", s, white, 1);
+        drawMenu(H * 0.36f + lh * 8.f);
         text(W * 0.5f, H - lh * 1.5f, assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : "ASSETS: PROCEDURAL (NO WAD FOUND)", s * 0.7f, dim, 1);
     }
     if (mode_ == Mode::Paused) {
-        darkPanel(0.f, 0.f, W, H, 0.5f);
-        text(W * 0.5f, H * 0.45f, "PAUSED", s * 2.f, white, 1);
-        text(W * 0.5f, H * 0.45f + lh * 2.4f, "ESC TO RESUME", s, dim, 1);
+        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.5f));
+        text(W * 0.5f, H * 0.32f, "PAUSED", s * 2.f, white, 1);
+        drawMenu(H * 0.32f + lh * 3.f);
+        text(W * 0.5f, H * 0.32f + lh * 3.f + lh * 1.5f * static_cast<float>(menu_.items.size()) + lh, "UP/DOWN SELECT   ENTER CONFIRM   ESC RESUME", s * 0.7f, dim, 1);
     }
     if (mode_ == Mode::GameOver) {
-        darkPanel(0.f, 0.f, W, H, std::min(0.6f, gameOverT_));
-        text(W * 0.5f, H * 0.4f, fps_.playerDead() ? "YOU DIED" : "GAME OVER", s * 2.4f, red, 1);
-        text(W * 0.5f, H * 0.4f + lh * 2.8f, "SCORE " + std::to_string(game_->score()) + "   BEST " + std::to_string(highScore_), s, white, 1);
-        text(W * 0.5f, H * 0.4f + lh * 4.2f, "ENTER TO PLAY AGAIN", s, dim, 1);
+        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, std::min(0.6f, gameOverT_)));
+        text(W * 0.5f, H * 0.3f, diedInFps_ ? "YOU DIED" : "GAME OVER", s * 2.4f, red, 1);
+        text(W * 0.5f, H * 0.3f + lh * 2.8f, "SCORE " + std::to_string(game_->score()) + "   BEST " + std::to_string(highScore_), s, white, 1);
+        text(W * 0.5f, H * 0.3f + lh * 4.f, "LEVEL " + std::to_string(game_->level()) + "   RED LINES SURVIVED " + std::to_string(redLinesSurvived_), s, dim, 1);
+        drawMenu(H * 0.3f + lh * 6.2f);
     }
 }
 
@@ -767,11 +872,11 @@ void App::buildScene() {
     frame_.cameraPos = eye;
     frame_.time = time_;
     frame_.sunDir = glm::normalize(glm::vec3(0.35f, 0.8f, 0.6f));
-    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut);
-    frame_.sunIntensity = inFps ? 0.55f : 0.9f;
-    frame_.ambient = inFps ? glm::vec3(0.16f, 0.13f, 0.13f) : glm::vec3(0.30f, 0.30f, 0.34f);
-    frame_.fogDensity = inFps ? 0.035f : 0.012f;
-    frame_.fogColor = inFps ? glm::vec3(0.06f, 0.02f, 0.02f) : glm::vec3(0.03f, 0.03f, 0.05f);
+    float tilt = boardTilt();
+    frame_.sunIntensity = glm::mix(0.9f, 0.55f, tilt);
+    frame_.ambient = glm::mix(glm::vec3(0.30f, 0.30f, 0.34f), glm::vec3(0.16f, 0.13f, 0.13f), tilt);
+    frame_.fogDensity = glm::mix(0.012f, 0.035f, tilt);
+    frame_.fogColor = glm::mix(glm::vec3(0.03f, 0.03f, 0.05f), glm::vec3(0.06f, 0.02f, 0.02f), tilt);
     frame_.clearColor = frame_.fogColor;
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 18.f);
@@ -779,7 +884,8 @@ void App::buildScene() {
     }
 
     addBoard();
-    if (inFps || mode_ == Mode::GameOver || (mode_ == Mode::Paused && pausedFrom_ == Mode::Fps)) addFpsActors();
+    bool actors = (mode_ == Mode::Fps || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_) || (mode_ == Mode::Paused && pausedFrom_ == Mode::Fps));
+    if (actors) addFpsActors();
     addLights();
     addHud();
 }

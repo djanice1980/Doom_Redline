@@ -238,7 +238,7 @@ void Renderer::createPipelines() {
         VkVertexInputBindingDescription b[2] = {
             {0, sizeof(CubeVertex), VK_VERTEX_INPUT_RATE_VERTEX},
             {1, sizeof(CubeInstance), VK_VERTEX_INPUT_RATE_INSTANCE}};
-        VkVertexInputAttributeDescription a[8] = {
+        VkVertexInputAttributeDescription a[9] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, pos)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, normal)},
             {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(CubeVertex, uv)},
@@ -246,11 +246,12 @@ void Renderer::createPipelines() {
             {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, color)},
             {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, emissive)},
             {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, uvRect)},
-            {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, params)}};
+            {7, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, params)},
+            {8, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, rot)}};
         VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         vi.vertexBindingDescriptionCount = 2;
         vi.pVertexBindingDescriptions = b;
-        vi.vertexAttributeDescriptionCount = 8;
+        vi.vertexAttributeDescriptionCount = 9;
         vi.pVertexAttributeDescriptions = a;
         cubePipe_ = makePipeline(cubeVS, cubeFS, vi, true, false);
     }

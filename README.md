@@ -4,10 +4,13 @@ Falling blocks that refuse to die.
 
 It plays like classic block stacking, except some minos are **red**. Red blocks
 refuse to dissolve when a row completes: the normal blocks vanish, the red ones
-stay and sink deeper into the stack. When a row is *entirely* red the game
-pulls the camera into the board, the red row turns into Doom imps, and you clear
-them with a shotgun. Every demon you kill explodes and takes the neighbouring
-blocks with it. Then you fly back out and keep stacking.
+stay and sink deeper into the stack. When a row is *entirely* red the whole
+board tips over onto the floor and you land inside it: every block is now a
+chest-high wall, and every connected cluster of red blocks has become a Doom
+monster standing in the pocket it left behind. Small clusters are zombies and
+imps; big ones are demons, cacodemons and barons. Kill them all with the
+shotgun. Every kill explodes and takes the neighbouring blocks with it. Then the
+board stands back up, the level goes up, and you keep stacking, faster.
 
 Native Vulkan 1.3 renderer (dynamic rendering, instanced cubes and billboards,
 one atlas). Art and sounds come straight out of your Doom IWAD when one is
@@ -69,10 +72,11 @@ Block mode:
 | Z, Left Ctrl | rotate counter-clockwise |
 | Down, S | soft drop |
 | Space | hard drop |
-| Esc | pause |
+| Esc | pause menu (resume / restart / quit) |
 | F12 | screenshot to `redline-screenshot.png` |
 
 First-person mode: mouse to look, WASD to move, left click / Space to fire.
+Menus (title, pause, game over): Up/Down or W/S to pick, Enter or click to confirm.
 
 ## Rules that differ from classic
 
@@ -82,10 +86,20 @@ First-person mode: mouse to look, WASD to move, left click / Space to fire.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
 - A row that is entirely red never clears. It triggers the first-person phase.
-- Killing a demon removes its cell and every *normal* cell within 1.5 cells.
-  Red cells are only removed by killing them.
-- Surviving the phase pays 1000 x level; each kill pays 50 + 25 per block destroyed.
-- Fireballs hurt. Reaching zero health ends the game.
+- In that phase **every** 4-connected red cluster on the board becomes one
+  monster; its class depends on the cluster size (1: zombieman, 2-3: imp, 4-6:
+  demon, 7-11: cacodemon, 12+: baron) with a level-dependent chance of being
+  bumped up a class. Monster health scales with the level (x0.45 at level 1,
+  +0.15 per level, capped at x2.5), and so does their attack cadence.
+- Killing a monster explodes every cell of its cluster, destroying the *normal*
+  cells within 1.5 cells of each. Standing next to it hurts you too.
+- Blocks are chest-high: you can see and shoot over them; fireballs aimed at
+  your body are stopped by them. Zombies hitscan, imps/cacodemons/barons throw
+  fireballs, demons charge and bite.
+- Surviving the phase pays 1000 x level and raises the level by one (faster
+  gravity, more red minos, tougher monsters next time). Each kill pays 50 + 25
+  per block destroyed.
+- Reaching zero health ends the game.
 
 ## Command line
 
@@ -95,8 +109,9 @@ First-person mode: mouse to look, WASD to move, left click / Space to fire.
 --screenshot <png>  --frames <n>       --bot              --mute
 ```
 
-`--scenario redline` starts with a nearly complete red row and drops the last
-red piece for you; `--scenario fps` skips straight to the fight. `--bot` makes
+`--scenario redline` starts with a nearly complete red row plus a few red
+clusters of different sizes and drops the last red piece for you; `--scenario
+fps` skips straight to the fight (`--level N` sets the level for it). `--bot` makes
 the player auto-aim and fire, which together with `--frames`/`--screenshot`
 gives a headless-ish smoke test of the whole loop:
 

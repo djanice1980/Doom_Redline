@@ -108,8 +108,11 @@ public:
     int explodeAt(int col, int row, float radius);
     // Remove a single cell without side effects (e.g. enemy walked away).
     void clearCell(int col, int row);
-    // Call when the FPS mode is over; resumes normal play (settles, spawns).
+    // Call when the FPS mode is over; resumes normal play (settles, spawns)
+    // and raises the level by one so each fight makes the stacking harder.
     void resumeAfterRedLine();
+    // Removes every red cell (used when the FPS phase consumed them all).
+    void clearAllRed();
 
     // --- state access -----------------------------------------------------
     const Cell& at(int col, int row) const { return grid_[row][col]; }
@@ -135,6 +138,7 @@ public:
     void setCell(int col, int row, Cell c) { grid_[row][col] = c; }
     void forcePiece(Shape s, std::array<bool, 4> red);   // replaces the *next* piece
     void spawnNow();                                     // spawn immediately (phase must be Spawning)
+    void setLevel(int level) { level_ = level < 1 ? 1 : level; }
     bool rowFull(int row) const;
     bool rowAllRed(int row) const;
 
@@ -171,6 +175,15 @@ private:
     int redLineEvents_ = 0;
     std::vector<Shape> bag_;
 };
+
+// A 4-connected group of red cells. Larger groups become bigger enemies.
+struct RedRegion {
+    std::vector<std::pair<int, int>> cells;   // (col,row)
+    float centroidCol = 0.f, centroidRow = 0.f;
+    int anchorCol = 0, anchorRow = 0;         // the region cell nearest the centroid
+    int size() const { return static_cast<int>(cells.size()); }
+};
+std::vector<RedRegion> findRedRegions(const Game& g);
 
 // Shape table: 4 rotations x 4 minos, (dx, dy) relative to piece origin.
 const std::array<std::pair<int, int>, 4>& shapeCells(Shape s, int rot);

@@ -11,6 +11,7 @@ layout(location = 4) in vec4 iColor;      // rgba tint
 layout(location = 5) in vec4 iEmissive;   // rgb, w strength
 layout(location = 6) in vec4 iUVRect;     // u0 v0 u1 v1
 layout(location = 7) in vec4 iParams;     // x roughness, y metallic, z anim phase, w flags
+layout(location = 8) in vec4 iRot;        // x rotation about X, y about Y (radians)
 
 layout(location = 0) out vec3 vWorldPos;
 layout(location = 1) out vec3 vNormal;
@@ -24,9 +25,15 @@ void main() {
     // flag bit 1: pulse (used for the "refusing" red blocks)
     float pulse = 0.0;
     if ((int(iParams.w) & 1) != 0) pulse = 0.04 * sin(u.cameraPos.w * 6.0 + iParams.z);
-    vec3 world = iPosScale.xyz + inPos * (s * (1.0 + pulse));
+    // Rotate about Y then X (rigid board tilt).
+    float cy = cos(iRot.y), sy = sin(iRot.y);
+    float cx = cos(iRot.x), sx = sin(iRot.x);
+    mat3 ry = mat3(cy, 0.0, -sy,  0.0, 1.0, 0.0,  sy, 0.0, cy);
+    mat3 rx = mat3(1.0, 0.0, 0.0,  0.0, cx, sx,  0.0, -sx, cx);
+    mat3 R = rx * ry;
+    vec3 world = iPosScale.xyz + R * (inPos * (s * (1.0 + pulse)));
     vWorldPos = world;
-    vNormal = inNormal;
+    vNormal = R * inNormal;
     vUV = mix(iUVRect.xy, iUVRect.zw, inUV);
     vColor = iColor;
     vEmissive = iEmissive;

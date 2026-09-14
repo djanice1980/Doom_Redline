@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 #include "audio/audio.h"
 #include "render/atlas.h"
 
@@ -19,6 +21,18 @@ struct SpriteAnim {
     float fps = 8.f;
     bool empty() const { return frames.empty(); }
 };
+
+// One monster class per red-region size tier (zombie, imp, demon, cacodemon, baron).
+struct EnemyArt {
+    std::string name;
+    SpriteAnim walk, attack, pain, death;
+    float metresPerPixel = 0.031f;
+    glm::vec4 tint{1.f};
+    std::string sightSound, painSound, deathSound, attackSound;   // logical sound names
+};
+
+constexpr int kEnemyTiers = 5;
+constexpr int kProjectileTypes = 3;   // imp / cacodemon / baron fireballs
 
 class Assets {
 public:
@@ -40,20 +54,16 @@ public:
     std::string ceiling = "ceiling";
     std::string crosshair = "crosshair";
     std::string white = "__white";
-    SpriteAnim enemyIdle, enemyAttack, enemyPain, enemyDeath;
+    EnemyArt enemies[kEnemyTiers];
+    SpriteAnim projectile[kProjectileTypes], projectileHit[kProjectileTypes];
     SpriteAnim gunIdle, gunFire, gunFlash;
-    SpriteAnim explosion, fireball, fireballHit;
+    SpriteAnim explosion;
     std::string title;                      // optional big title graphic ("" if none)
 
     // Font: char -> atlas key. Doom's STCFN font is uppercase only.
     std::map<char, std::string> font;
     int fontHeight = 8;
-    float fontScale = 1.f;   // suggested on-screen scale
     int textWidth(const std::string& s, float scale) const;
-
-    // Sound names are logical too: "shoot", "explode", "hit", "move", "rotate",
-    // "lock", "clear", "redline", "pain", "enemy_die", "levelup", "fireball",
-    // "fireball_hit", "gameover", "enemy_sight", "enemy_pain".
 
 private:
     void loadProcedural(audio::Audio& audio);

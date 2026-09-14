@@ -33,33 +33,53 @@ first red line around level 2-3 with the default chances.
 
 ## World
 
-One scene, two cameras. Cell `(col,row)` (row 0 = top) sits at
-`x = col - 4.5`, `y = 19 - row + 0.5`, `z = 0`. The board is a wall standing on
-the floor (`y = 0`). The arena is built from unit cubes: floor, ceiling, back
-wall at `z = -2.5`, side walls at `x = +-15.5`, front wall at `z = 23.5`. All
-of it is one instanced draw.
+One scene, two board orientations. Cell `(col,row)` (row 0 = top) has board-plane
+coordinates `x = col - 4.5`, `h = 19 - row + 0.5`. `App::boardPosH(x, h)` maps
+that onto the world through a hinge along the board's bottom edge:
+`(x, h cos t + 0.5 sin t, h sin t)` with `t = tilt * 90 deg`. Tilt 0 is the
+standing wall of block mode; tilt 1 lays the board flat on the arena floor with
+row 19 at `z = 0.5` and row 0 at `z = 19.5`. The cubes rotate rigidly with it
+(per-instance rotation in `CubeInstance::rot`). The frame (two rails and a
+lintel) is hinged with the board so it becomes the side walls and far wall of
+the play space when flat.
+
+The arena is built from unit cubes: floor, ceiling, back wall at `z = -2.5`,
+side walls at `x = +-15.5`, front wall at `z = 23.5`. All of it is one
+instanced draw.
 
 - Block camera: `(0, 11, 20.5)` looking at `(0, 10.2, 0)`, 60 deg vertical FOV.
-- FPS camera: player feet on the floor, eye at 1.6 m, starting at `z = 11`
-  facing `-Z`. WASD moves on the XZ plane clamped to the arena.
-- Transitions lerp eye, target and FOV with smoothstep over 1.8 s (in) and
-  1.4 s (out). During `Alert` (1.4 s) the red row flashes and the ambient light
-  pulses red before the fly-in.
+- FPS camera: player feet on the flat board, eye at 1.25 m (blocks are 1 m, so
+  they are chest-high cover), starting in the highest empty cell nearest the
+  centre column, facing -Z towards the stack. 80 deg FOV.
+- Transitions: `Alert` (1.4 s, red row flashes, ambient pulses red), `FlyIn`
+  (2.2 s: tilt 0 -> 1 with smoothstep while the camera arcs from the overview to
+  the player's eye, rising 6 m mid-way), `FlyOut` (1.6 s, the reverse).
 
 ## FPS phase (`src/game/fps_mode.h`)
 
-- One `Enemy` per red cell in each all-red row. Feet at the cell's bottom edge,
-  0.55 m in front of the wall; they emerge 1.2 m forward over 0.9 s (staggered).
-- States: Emerging, Idle (hover/bob, drift on X), Attack (0.6 s wind-up; the
-  fireball launches at 0.35 s), Pain (0.25 s), Dying (explodes at 0.45 s, Dead
-  at 0.7 s).
-- Attack cadence is scaled by the number of demons alive so ten of them don't
-  produce a wall of fire. Killing one heals 6.
-- Hit test: ray vs vertical cylinder (r = 0.45 m, h = 1.6 m). Shotgun does 35
-  (x1.6 inside 3 m); imps have 60 HP.
-- Explosions push `Explosion` (sprite + light), `Debris` cubes (bounce on the
-  floor), and call `Game::explodeAt` with radius 1.5.
-- The phase ends 1.2 s after the last demon dies; the player dying ends the game.
+- `FpsMode::begin` runs `core::findRedRegions` (4-connected flood fill) and
+  turns **every** region into one `Enemy`. Tier by size: 1 zombie, 2-3 imp,
+  4-6 demon, 7-11 cacodemon, 12+ baron; a level-scaled roll can bump a tier up
+  (8 % per level, max 50 %) or down. The region's red cells are removed from
+  the grid (the monster is standing in the pocket) and remembered on the enemy.
+- Stats table in `fps_mode.cpp` (`kStats`): hp, hit cylinder, attack kind
+  (hitscan / projectile type / melee), speed, flies, cadence, damage, score.
+  `hp *= clamp(0.45 + 0.15 (level-1), 0.45, 2.5)`; cadence `*= max(0.5,
+  1 - 0.06 (level-1))` and also scales with the number alive.
+- Movement: circle-vs-grid slide for the player and walking monsters
+  (`moveWithCollision`); cacodemons fly over blocks. Line of sight and the
+  shotgun ray use `rayBlockDistance` (0.05 m march against `solidAt`, which
+  treats cells below 1 m and the frame as solid).
+- Enemies rise out of the board when the phase starts (their red cubes sink
+  away in sync). Zombies hitscan (65 % hit chance with LOS), imps/cacos/barons
+  launch BAL1/BAL2/BAL7 fireballs at the player's centre (so chest-high blocks
+  stop them), demons charge and bite within 1.3 m.
+- Death: `explodeEnemy` calls `Game::explodeAt(cell, 1.5)` for every cell of the
+  cluster, spawns debris per destroyed block, a blast sprite and light, and
+  hurts the player within `2 + 0.5 tier` m. Each kill heals 5.
+- The phase ends 1.2 s after the last monster dies; `Game::resumeAfterRedLine`
+  then scores `1000 * level` and raises the level. The player dying ends the
+  game (`YOU DIED` screen with the board still flat).
 
 ## Renderer (`src/render/renderer.h`)
 
@@ -78,8 +98,10 @@ of it is one instanced draw.
 
 ## Assets (`src/game/assets.cpp`)
 
-Logical names only. From a Doom IWAD: imp `TROO` (A-D walk, E-G attack, H pain,
-I-L death), shotgun `SHTG`/`SHTF`, rocket blast `MISL` B-D, imp fireball `BAL1`,
+Logical names only. From a Doom IWAD: monsters `POSS` (zombieman), `TROO`
+(imp), `SARG` (demon), `HEAD` (cacodemon), `BOSS` (baron) with walk / attack /
+pain / death frame runs per the Doom state tables, shotgun `SHTG`/`SHTF`, rocket
+blast `MISL` B-D, fireballs `BAL1`/`BAL2`/`BAL7` (A-B flight, C-E impact),
 wall `STARTAN3`, floor `FLOOR4_8`, ceiling `CEIL3_5`, font `STCFN*` (converted
 to white so HUD tints work), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
 `DSFIRSHT`, `DSFIRXPL`, `DSPOPAIN`, `DSBGDTH1`, `DSBGSIT1`, `DSPLPAIN`,

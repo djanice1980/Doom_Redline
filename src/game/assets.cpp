@@ -13,6 +13,10 @@ namespace rl::game {
 
 namespace fs = std::filesystem;
 
+namespace {
+const char* kTierNames[kEnemyTiers] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON"};
+}
+
 std::optional<fs::path> Assets::findWad(const std::optional<fs::path>& explicitPath) {
     std::vector<fs::path> candidates;
     if (explicitPath) candidates.push_back(*explicitPath);
@@ -85,21 +89,36 @@ void Assets::loadProcedural(audio::Audio& audio) {
         a.fps = fps;
         for (int i = 0; i < count; ++i) {
             std::string key = prefix + std::to_string(i);
-            atlas_.add(key, gen(i));
+            if (!atlas_.has(key)) atlas_.add(key, gen(i));
             a.frames.push_back(key);
             a.mirrored.push_back(false);
         }
     };
-    anim(enemyIdle, "enemy_idle", 2, 3.f, [](int i) { return proc::enemyFrame(i == 0 ? 0 : 2, 64); });
-    anim(enemyAttack, "enemy_attack", 1, 4.f, [](int) { return proc::enemyFrame(1, 64); });
-    anim(enemyPain, "enemy_pain", 1, 4.f, [](int) { return proc::enemyFrame(2, 64); });
-    anim(enemyDeath, "enemy_death", 4, 8.f, [](int i) { return proc::enemyFrame(3 + i, 64); });
+    // One procedural monster, scaled and tinted per tier.
+    const glm::vec4 tints[kEnemyTiers] = {{0.7f, 0.7f, 0.8f, 1.f}, {1.f, 1.f, 1.f, 1.f}, {1.f, 0.6f, 0.6f, 1.f}, {1.f, 0.4f, 0.4f, 1.f}, {0.5f, 1.f, 0.5f, 1.f}};
+    const float sizes[kEnemyTiers] = {0.026f, 0.031f, 0.034f, 0.045f, 0.055f};
+    for (int t = 0; t < kEnemyTiers; ++t) {
+        EnemyArt& e = enemies[t];
+        e.name = kTierNames[t];
+        e.tint = tints[t];
+        e.metresPerPixel = sizes[t];
+        anim(e.walk, "enemy_idle", 2, 3.f, [](int i) { return proc::enemyFrame(i == 0 ? 0 : 2, 64); });
+        anim(e.attack, "enemy_attack", 1, 4.f, [](int) { return proc::enemyFrame(1, 64); });
+        anim(e.pain, "enemy_pain", 1, 4.f, [](int) { return proc::enemyFrame(2, 64); });
+        anim(e.death, "enemy_death", 4, 8.f, [](int i) { return proc::enemyFrame(3 + i, 64); });
+        e.sightSound = "enemy_sight";
+        e.painSound = "enemy_pain";
+        e.deathSound = "enemy_die";
+        e.attackSound = t == 0 ? "shoot" : "fireball";
+    }
     anim(gunIdle, "gun_idle", 1, 1.f, [](int) { return proc::gunFrame(0); });
     anim(gunFire, "gun_fire", 2, 10.f, [](int i) { return proc::gunFrame(1 + i); });
     anim(gunFlash, "gun_flash", 1, 10.f, [](int) { return proc::muzzleFlash(48); });
     anim(explosion, "explosion", 5, 14.f, [](int i) { return proc::explosionFrame(i, 64); });
-    anim(fireball, "fireball", 1, 1.f, [](int) { return proc::fireball(16); });
-    anim(fireballHit, "fireball_hit", 3, 14.f, [](int i) { return proc::explosionFrame(i, 32); });
+    for (int p = 0; p < kProjectileTypes; ++p) {
+        anim(projectile[p], "fireball", 1, 1.f, [](int) { return proc::fireball(16); });
+        anim(projectileHit[p], "fireball_hit", 3, 14.f, [](int i) { return proc::explosionFrame(i, 32); });
+    }
 
     font.clear();
     for (auto& [ch, img] : proc::font(1)) {
@@ -108,7 +127,6 @@ void Assets::loadProcedural(audio::Audio& audio) {
         font[ch] = key;
     }
     fontHeight = 7;
-    fontScale = 3.f;
     title.clear();
 
     auto add = [&](const char* name, proc::Sound s) { audio.addSound(name, s.rate, std::move(s.samples)); };
@@ -128,6 +146,7 @@ void Assets::loadProcedural(audio::Audio& audio) {
     add("fireball", proc::sndFireball());
     add("fireball_hit", proc::sndHit());
     add("gameover", proc::sndGameOver());
+    add("menu", proc::sndMove());
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +190,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addFlat("floor", {"FLOOR4_8", "FLAT5_4", "FLOOR0_1"}, proc::floorTexture(64));
     addFlat("ceiling", {"CEIL3_5", "FLAT20", "CEIL5_1"}, proc::wallTexture(64));
 
-    // Sprite animations: imp (TROO), shotgun (SHTG/SHTF), rocket explosion (MISL), imp fireball (BAL1).
-    auto addSprite = [&](SpriteAnim& a, const char* sprite, const std::string& prefix, const char* frameLetters, float fps) {
+    auto addSprite = [&](SpriteAnim& a, const char* sprite, const char* frameLetters, float fps) {
         a = {};
         a.fps = fps;
         auto set = wad::SpriteSet::load(*wad, *pal, sprite);
@@ -180,31 +198,54 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         for (const char* f = frameLetters; *f; ++f) {
             auto view = set->get(*f, 1);
             if (!view || !view->image) continue;
-            std::string key = prefix + std::string(1, *f);
-            atlas_.add(key, *view->image);
+            std::string key = std::string(sprite) + "_" + std::string(1, *f);
+            if (!atlas_.has(key)) atlas_.add(key, *view->image);
             a.frames.push_back(key);
             a.mirrored.push_back(view->mirrored);
         }
         return !a.frames.empty();
     };
     bool ok = true;
-    ok &= addSprite(enemyIdle, "TROO", "troo_", "ABCD", 5.f);
-    ok &= addSprite(enemyAttack, "TROO", "troo_", "EFG", 6.f);
-    ok &= addSprite(enemyPain, "TROO", "troo_", "H", 6.f);
-    ok &= addSprite(enemyDeath, "TROO", "troo_", "IJKL", 9.f);
-    ok &= addSprite(gunIdle, "SHTG", "shtg_", "A", 1.f);
-    ok &= addSprite(gunFire, "SHTG", "shtg_", "BCDCB", 9.f);
-    ok &= addSprite(gunFlash, "SHTF", "shtf_", "AB", 12.f);
-    ok &= addSprite(explosion, "MISL", "misl_", "BCD", 12.f);
-    ok &= addSprite(fireball, "BAL1", "bal1_", "AB", 8.f);
-    ok &= addSprite(fireballHit, "BAL1", "bal1_", "CDE", 14.f);
+    // Monster classes by red-region size. Frame letters follow the Doom state tables.
+    struct Def { const char* sprite; const char* walk; const char* attack; const char* pain; const char* death; float px; };
+    const Def defs[kEnemyTiers] = {
+        {"POSS", "ABCD", "EF", "G", "HIJKL", 0.031f},      // zombieman: hitscan
+        {"TROO", "ABCD", "EFG", "H", "IJKL", 0.031f},      // imp: fireball
+        {"SARG", "ABCD", "EFG", "H", "IJKLMN", 0.031f},    // demon: melee
+        {"HEAD", "A", "BCD", "E", "FGHIJK", 0.034f},       // cacodemon: floats, fast fireball
+        {"BOSS", "ABCD", "EFG", "H", "IJKLMNO", 0.033f},   // baron: green fireball, tanky
+    };
+    const char* sightSnd[kEnemyTiers] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT"};
+    const char* painSnd[kEnemyTiers] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN"};
+    const char* deathSnd[kEnemyTiers] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH"};
+    const char* attackSnd[kEnemyTiers] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT"};
+    for (int t = 0; t < kEnemyTiers; ++t) {
+        EnemyArt& e = enemies[t];
+        e.name = kTierNames[t];
+        e.metresPerPixel = defs[t].px;
+        ok &= addSprite(e.walk, defs[t].sprite, defs[t].walk, 5.f);
+        ok &= addSprite(e.attack, defs[t].sprite, defs[t].attack, 6.f);
+        ok &= addSprite(e.pain, defs[t].sprite, defs[t].pain, 6.f);
+        ok &= addSprite(e.death, defs[t].sprite, defs[t].death, 9.f);
+        e.sightSound = std::string("sight") + std::to_string(t);
+        e.painSound = std::string("pain") + std::to_string(t);
+        e.deathSound = std::string("death") + std::to_string(t);
+        e.attackSound = std::string("attack") + std::to_string(t);
+    }
+    ok &= addSprite(gunIdle, "SHTG", "A", 1.f);
+    ok &= addSprite(gunFire, "SHTG", "BCDCB", 9.f);
+    ok &= addSprite(gunFlash, "SHTF", "AB", 12.f);
+    ok &= addSprite(explosion, "MISL", "BCD", 12.f);
+    const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7"};
+    for (int p = 0; p < kProjectileTypes; ++p) {
+        ok &= addSprite(projectile[p], balls[p], "AB", 8.f);
+        ok &= addSprite(projectileHit[p], balls[p], "CDE", 14.f);
+    }
     if (!ok) {
         std::fprintf(stderr, "[assets] WAD is missing expected sprites; falling back to procedural art\n");
         atlas_ = {};
         return false;
     }
-    // Rocket explosion frames have their origin at the centre already; the
-    // enemy/fireball ones are used as-is.
 
     if (auto pic = wad::loadPatch(*wad, *pal, "M_DOOM")) {
         atlas_.add("title_doom", *pic);
@@ -235,10 +276,9 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         maxH = 7;
     }
     fontHeight = maxH > 0 ? maxH : 8;
-    fontScale = 3.f;
 
     // Sounds: prefer the WAD, fall back to procedural for anything missing.
-    auto addSound = [&](const char* name, std::initializer_list<const char*> lumps, proc::Sound fallback) {
+    auto addSound = [&](const std::string& name, std::initializer_list<const char*> lumps, proc::Sound fallback) {
         for (const char* l : lumps) {
             if (auto s = wad::loadSound(*wad, l)) {
                 audio.addSound(name, s->sampleRate, std::move(s->samples));
@@ -256,13 +296,18 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSound("clear", {"DSITEMUP"}, proc::sndClear());
     addSound("redline", {"DSDMACT"}, proc::sndRedLine());
     addSound("pain", {"DSPLPAIN"}, proc::sndPain());
-    addSound("enemy_die", {"DSBGDTH1", "DSBGDTH2"}, proc::sndEnemyDie());
-    addSound("enemy_pain", {"DSPOPAIN"}, proc::sndHit());
-    addSound("enemy_sight", {"DSBGSIT1", "DSBGSIT2"}, proc::sndRedLine());
     addSound("levelup", {"DSGETPOW"}, proc::sndLevelUp());
     addSound("fireball", {"DSFIRSHT"}, proc::sndFireball());
     addSound("fireball_hit", {"DSFIRXPL"}, proc::sndHit());
     addSound("gameover", {"DSPDIEHI", "DSPLDETH"}, proc::sndGameOver());
+    addSound("menu", {"DSPSTOP"}, proc::sndMove());
+    addSound("menu_select", {"DSPISTOL"}, proc::sndRotate());
+    for (int t = 0; t < kEnemyTiers; ++t) {
+        addSound(enemies[t].sightSound, {sightSnd[t]}, proc::sndRedLine());
+        addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());
+        addSound(enemies[t].deathSound, {deathSnd[t]}, proc::sndEnemyDie());
+        addSound(enemies[t].attackSound, {attackSnd[t]}, proc::sndFireball());
+    }
     return true;
 }
 #endif

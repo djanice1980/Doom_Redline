@@ -383,8 +383,55 @@ void Game::clearCell(int col, int row) {
 void Game::resumeAfterRedLine() {
     if (phase_ != Phase::RedLine) return;
     score_ += 1000 * level_;
+    ++level_;
+    push(EventType::LevelUp, level_);
     phase_ = Phase::Settling;
     phaseAcc_ = 0.f;
+}
+
+void Game::clearAllRed() {
+    for (auto& row : grid_)
+        for (auto& c : row)
+            if (c.red()) c = Cell{};
+}
+
+std::vector<RedRegion> findRedRegions(const Game& g) {
+    std::vector<RedRegion> out;
+    bool seen[kBoardH][kBoardW] = {};
+    for (int r = 0; r < kBoardH; ++r) {
+        for (int c = 0; c < kBoardW; ++c) {
+            if (seen[r][c] || !g.at(c, r).red()) continue;
+            RedRegion region;
+            std::vector<std::pair<int, int>> stack{{c, r}};
+            seen[r][c] = true;
+            while (!stack.empty()) {
+                auto [x, y] = stack.back();
+                stack.pop_back();
+                region.cells.push_back({x, y});
+                const int dx[4] = {1, -1, 0, 0}, dy[4] = {0, 0, 1, -1};
+                for (int k = 0; k < 4; ++k) {
+                    int nx = x + dx[k], ny = y + dy[k];
+                    if (nx < 0 || nx >= kBoardW || ny < 0 || ny >= kBoardH) continue;
+                    if (seen[ny][nx] || !g.at(nx, ny).red()) continue;
+                    seen[ny][nx] = true;
+                    stack.push_back({nx, ny});
+                }
+            }
+            float sc = 0.f, sr = 0.f;
+            for (auto [x, y] : region.cells) { sc += static_cast<float>(x); sr += static_cast<float>(y); }
+            region.centroidCol = sc / static_cast<float>(region.cells.size());
+            region.centroidRow = sr / static_cast<float>(region.cells.size());
+            float best = 1e9f;
+            for (auto [x, y] : region.cells) {
+                float d = (x - region.centroidCol) * (x - region.centroidCol) + (y - region.centroidRow) * (y - region.centroidRow);
+                if (d < best) { best = d; region.anchorCol = x; region.anchorRow = y; }
+            }
+            out.push_back(std::move(region));
+        }
+    }
+    // Biggest regions first so the toughest enemies get placed first.
+    std::sort(out.begin(), out.end(), [](const RedRegion& a, const RedRegion& b) { return a.size() > b.size(); });
+    return out;
 }
 
 }  // namespace rl::core

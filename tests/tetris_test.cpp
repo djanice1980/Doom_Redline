@@ -198,7 +198,41 @@ static void testRedPiecesAppear() {
     CHECK(g.next().red[0] + g.next().red[1] + g.next().red[2] + g.next().red[3] <= r.maxRedPerPiece);
 }
 
+static void testRedRegions() {
+    Game g(1, fastRules());
+    fill(g, 19, CellKind::Red);                       // 10-cell row
+    g.setCell(3, 18, Cell{CellKind::Red, 0});         // attached above -> same region (11)
+    g.setCell(0, 10, Cell{CellKind::Red, 0});         // single
+    g.setCell(7, 5, Cell{CellKind::Red, 0});          // pair
+    g.setCell(8, 5, Cell{CellKind::Red, 0});
+    g.setCell(9, 4, Cell{CellKind::Red, 0});          // diagonal only -> separate single
+    auto regions = findRedRegions(g);
+    CHECK(regions.size() == 4);
+    CHECK(regions[0].size() == 11);
+    CHECK(regions[1].size() == 2);
+    CHECK(regions[2].size() == 1 && regions[3].size() == 1);
+    CHECK(regions[0].anchorRow == 19);                // anchor is a real region cell
+    bool anchorInRegion = false;
+    for (auto [x, y] : regions[0].cells) if (x == regions[0].anchorCol && y == regions[0].anchorRow) anchorInRegion = true;
+    CHECK(anchorInRegion);
+    CHECK(regions[1].anchorRow == 5 && (regions[1].anchorCol == 7 || regions[1].anchorCol == 8));
+    int before = g.level();
+    fill(g, 17, CellKind::Normal, 0);
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    g.rotateCW();
+    for (int i = 0; i < 6; ++i) g.moveLeft();
+    g.hardDrop();
+    runUntil(g, Phase::RedLine);
+    CHECK(g.phase() == Phase::RedLine);
+    g.clearAllRed();
+    CHECK(findRedRegions(g).empty());
+    g.resumeAfterRedLine();
+    CHECK(g.level() == before + 1);                  // each fight raises the level
+}
+
 int main() {
+    testRedRegions();
     testShapesCover();
     testClassicLineClear();
     testRedCellSurvivesClear();

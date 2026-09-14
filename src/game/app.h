@@ -1,5 +1,5 @@
 #pragma once
-// Top-level game: window, modes, scene assembly and HUD.
+// Top-level game: window, modes, scene assembly, menu and HUD.
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -31,6 +31,7 @@ struct Options {
     int frames = 0;
     bool bot = false;                  // auto-aim/fire in FPS mode (smoke testing)
     bool mute = false;
+    int level = 1;                     // starting level (scenarios)
 };
 
 class App {
@@ -42,10 +43,13 @@ public:
 private:
     enum class Mode { Title, Blocks, Alert, FlyIn, Fps, FlyOut, GameOver, Paused };
     struct Camera { glm::vec3 eye{0.f}; glm::vec3 target{0.f}; float fov = 50.f; };
+    struct Menu { std::vector<std::string> items; int index = 0; };
 
     void newGame();
     void applyScenario();
     void handleEvents();
+    void menuKey(int key);
+    void menuSelect();
     void update(float dt);
     void updateBlocksInput(float dt);
     void handleGameEvents();
@@ -54,6 +58,9 @@ private:
     Camera blocksCamera() const;
     Camera fpsCamera() const;
     Camera currentCamera() const;
+    float boardTilt() const;                        // 0 = standing wall, 1 = flat on the floor
+    glm::vec3 boardPos(float col, float row) const; // cell centre for the current tilt
+    glm::vec3 boardPosH(float x, float h) const;    // board-plane coords (x, height) -> world
 
     void buildScene();
     void buildEnvironment();
@@ -64,9 +71,11 @@ private:
     void text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align = 0);
     void screenSprite(const std::string& key, float x, float y, float scale, glm::vec4 color, float anchorX, float anchorY, bool flip = false);
     void billboard(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip);
-    void cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive = {}, float emissiveStrength = 0.f, float flags = 0.f, float phase = 0.f);
+    void cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive = {}, float emissiveStrength = 0.f, float flags = 0.f, float phase = 0.f, float rotX = 0.f);
+    void panel(float x, float y, float w, float h, glm::vec4 color);
     const std::string& animFrame(const SpriteAnim& a, float t, bool loop, bool* flip = nullptr) const;
     void play(const char* name, float gain = 1.f, float pitch = 1.f);
+    void play(const std::string& name, float gain = 1.f, float pitch = 1.f) { play(name.c_str(), gain, pitch); }
 
     Options opts_;
     SDL_Window* window_ = nullptr;
@@ -79,6 +88,7 @@ private:
     FpsMode fps_;
     Mode mode_ = Mode::Title;
     Mode pausedFrom_ = Mode::Blocks;
+    Menu menu_;
     float modeT_ = 0.f;
     float time_ = 0.f;
     float gameOverT_ = 0.f;
@@ -88,6 +98,7 @@ private:
     int frameCount_ = 0;
     int highScore_ = 0;
     int redLinesSurvived_ = 0;
+    bool diedInFps_ = false;
 
     // Blocks-mode input state (DAS)
     struct { bool left = false, right = false, down = false; float dasT = 0.f; int dasDir = 0; bool dasActive = false; } keys_;
@@ -101,6 +112,8 @@ private:
     render::FrameParams frame_;
     float muzzleLight_ = 0.f;
     float shakeT_ = 0.f;
+    float botBlockedT_ = 0.f;
+    float botSide_ = 1.f;
 };
 
 }  // namespace rl::game
