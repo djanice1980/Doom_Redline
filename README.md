@@ -13,8 +13,10 @@ shotgun. Every kill explodes and takes the neighbouring blocks with it. Then the
 board stands back up, the level goes up, and you keep stacking, faster.
 
 Native Vulkan 1.3 renderer (dynamic rendering, instanced cubes and billboards,
-one atlas). Art and sounds come straight out of your Doom IWAD when one is
-present, with procedural fallbacks so the game runs without it.
+one atlas). Art, sounds and music come straight out of your Doom IWAD when one
+is present, with procedural fallbacks so the game runs without it. The music
+is Doom's own MUS scores played through a built-in OPL3 (Adlib) synthesizer
+using the WAD's GENMIDI instrument bank, the way the game sounded in 1993.
 
 ## Build (Arch / CachyOS)
 
@@ -60,6 +62,32 @@ the game; the WADs are never copied into the repo.
 
 `build/src/wad/wadinfo <file.wad>` prints what a WAD contains (sprites, textures,
 flats, font glyphs, sounds) and can dump individual lumps; `--help` lists flags.
+
+## Music
+
+Doom's soundtrack plays from the WAD: the title fanfare and intermission
+theme on the menu, a level track while stacking (changing with the level),
+the boss-level themes during fights, and the ending music over game over.
+Press M to toggle it; `--music-volume 0.3` sets the level; `--no-music`
+keeps only the sound effects.
+
+By default the tracks go through the built-in OPL3 emulator. If you prefer
+General MIDI, install a soundfont and the game switches to FluidSynth
+automatically (rebuild after installing so CMake picks up the library, which
+is already on this machine):
+
+```bash
+sudo pacman -S --needed soundfont-fluid
+```
+
+That installs `/usr/share/soundfonts/FluidR3_GM.sf2`, which is found on its
+own; any other `.sf2` works via `REDLINE_SOUNDFONT=/path/to/file.sf2`.
+
+## High scores
+
+The top ten (score, level, red lines survived, lines, date) are kept in
+`~/.local/share/redline/redline/highscores.txt`. The title screen shows the
+top five and the game-over screen announces your rank.
 
 ## Controls
 
@@ -202,9 +230,9 @@ src/core      rules engine (tetris.h) and shared image/PNG helpers - no deps
 src/wad       Doom WAD reader: patches, sprites, flats, textures, fonts, DMX sounds
 src/render    Vulkan context, atlas packer, instanced renderer
 src/game      assets (WAD -> atlas/sounds), FPS simulation, app/modes/HUD
-src/audio     SDL3 stream mixer
+src/audio     SDL3 stream mixer, MUS sequencer, GENMIDI, OPL3 emulator, FluidSynth backend
 shaders       GLSL, compiled by glslc at build time and embedded
-tests         tetris_test, wad_test
+tests         tetris_test, wad_test, opl_test, music_test
 tools         wadinfo, embed.cmake
 docs          design.md (rules and scene layout), remix.md (RTX Remix plan)
 ```

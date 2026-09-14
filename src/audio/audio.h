@@ -27,6 +27,8 @@ public:
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45);
     void update();
     void setMasterGain(float g) { master_ = g; }
+    uint32_t deviceId() const { return device_; }
+    static constexpr int kRate = 48000;
 
 private:
     struct Sound { int rate; std::vector<float> samples; };

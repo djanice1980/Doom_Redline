@@ -9,6 +9,8 @@
 #include <glm/glm.hpp>
 
 #include "audio/audio.h"
+#include "audio/music.h"
+#include "game/highscores.h"
 #include "core/tetris.h"
 #include "game/assets.h"
 #include "game/fps_mode.h"
@@ -38,6 +40,8 @@ struct Options {
     int keysFrame = 30;
     int keysHoldFrames = 150;          // released this many frames later
     int stackRows = 0;                 // pre-fill this many holey rows of normal blocks (blocks scenario)
+    bool noMusic = false;
+    float musicVolume = 0.45f;
 };
 
 class App {
@@ -82,6 +86,8 @@ private:
     void announce(const std::string& text, glm::vec4 color, float scale = 1.2f);
     const std::string& animFrame(const SpriteAnim& a, float t, bool loop, bool* flip = nullptr) const;
     void play(const char* name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45);
+    void updateMusic();
+    std::string pickTrack(const std::vector<const char*>& prefs, int index) const;
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45) { play(name.c_str(), gain, pitch, minIntervalMs); }
 
     Options opts_;
@@ -89,7 +95,10 @@ private:
     std::unique_ptr<render::VkContext> ctx_;
     std::unique_ptr<render::Renderer> renderer_;
     audio::Audio audio_;
+    audio::Music music_;
     Assets assets_;
+    HighScores highScores_;
+    int lastRank_ = 0;
 
     std::unique_ptr<core::Game> game_;
     FpsMode fps_;

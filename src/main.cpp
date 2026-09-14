@@ -25,8 +25,10 @@ void usage() {
         "  --god                Player takes no damage (testing)\n"
         "  --keys <letters>@<frame>[x<hold>]  Hold letters from a frame for <hold> frames (default 150), e.g. --keys BFG@30x150\n"
         "  --stack <rows>       Pre-fill that many holey rows (testing)\n"
-        "  --mute\n"
-        "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1\n");
+        "  --mute               No sound at all\n"
+        "  --no-music           Sound effects only\n"
+        "  --music-volume <0-1> Music level (default 0.45)\n"
+        "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1, REDLINE_SOUNDFONT=<file.sf2>\n");
 }
 }  // namespace
 
@@ -60,6 +62,8 @@ int main(int argc, char** argv) {
         }
         else if (a == "--stack") o.stackRows = std::atoi(next());
         else if (a == "--mute") o.mute = true;
+        else if (a == "--no-music") o.noMusic = true;
+        else if (a == "--music-volume") o.musicVolume = static_cast<float>(std::atof(next()));
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }

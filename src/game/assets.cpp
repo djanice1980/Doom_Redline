@@ -291,6 +291,19 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         return false;
     }
 
+    // Music and the OPL instrument bank.
+    for (const wad::Lump& l : wad->lumps()) {
+        if (l.name.size() > 2 && l.name[0] == 'D' && l.name[1] == '_' && l.size > 16) {
+            auto bytes = wad->data(l);
+            if (bytes.size() >= 4 && bytes[0] == 'M' && bytes[1] == 'U' && bytes[2] == 'S') music[l.name] = std::vector<uint8_t>(bytes.begin(), bytes.end());
+        }
+    }
+    {
+        auto bytes = wad->data("GENMIDI");
+        genmidi.assign(bytes.begin(), bytes.end());
+    }
+    std::fprintf(stderr, "[assets] %zu music tracks, GENMIDI %s\n", music.size(), genmidi.empty() ? "missing" : "loaded");
+
     if (auto pic = wad::loadPatch(*wad, *pal, "M_DOOM")) {
         atlas_.add("title_doom", *pic);
         title = "title_doom";

@@ -78,7 +78,13 @@ if(REDLINE_BUILD_GAME)
       src/game/procedural.cpp
       src/game/app.cpp
       src/game/fps_mode.cpp
-      src/audio/audio.cpp)
+      src/game/highscores.cpp
+      src/audio/audio.cpp
+      src/audio/opl3.cpp
+      src/audio/opl_driver.cpp
+      src/audio/genmidi.cpp
+      src/audio/mus.cpp
+      src/audio/music.cpp)
   add_dependencies(redline rl_shaders)
   target_include_directories(redline PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR})
   target_link_libraries(redline PRIVATE rl_core Vulkan::Vulkan SDL3::SDL3 glm::glm)
@@ -87,4 +93,26 @@ if(REDLINE_BUILD_GAME)
     target_link_libraries(redline PRIVATE rl_wad)
     target_compile_definitions(redline PRIVATE REDLINE_HAVE_WAD=1)
   endif()
+
+  # Optional FluidSynth backend (used at runtime only when a soundfont is found).
+  find_package(PkgConfig QUIET)
+  if(PkgConfig_FOUND)
+    pkg_check_modules(FLUIDSYNTH IMPORTED_TARGET fluidsynth)
+    if(FLUIDSYNTH_FOUND)
+      target_link_libraries(redline PRIVATE PkgConfig::FLUIDSYNTH)
+      target_compile_definitions(redline PRIVATE REDLINE_HAVE_FLUIDSYNTH=1)
+      message(STATUS "FluidSynth ${FLUIDSYNTH_VERSION} found: soundfont music backend enabled")
+    endif()
+  endif()
+
+  if(REDLINE_BUILD_TESTS)
+    add_executable(opl_test tests/opl_test.cpp src/audio/opl3.cpp)
+    target_include_directories(opl_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME opl_test COMMAND opl_test)
+    add_executable(music_test tests/music_test.cpp src/audio/opl3.cpp src/audio/opl_driver.cpp src/audio/genmidi.cpp src/audio/mus.cpp)
+    target_include_directories(music_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME music_test COMMAND music_test)
+  endif()
+  add_executable(musrender tools/musrender.cpp src/audio/opl3.cpp src/audio/opl_driver.cpp src/audio/genmidi.cpp src/audio/mus.cpp)
+  target_include_directories(musrender PRIVATE ${CMAKE_SOURCE_DIR}/src)
 endif()

@@ -201,3 +201,34 @@ to white so HUD tints work), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
 `DSFIRSHT`, `DSFIRXPL`, `DSPOPAIN`, `DSBGDTH1`, `DSBGSIT1`, `DSPLPAIN`,
 `DSPDIEHI`, `DSDMACT`, `DSITEMUP`, `DSPSTOP`, `DSSWTCHN`, `DSSTNMOV`, `DSGETPOW`.
 Anything missing falls back to `procedural.cpp`. Block tiles are always ours.
+
+## Music (`src/audio/`)
+
+- `mus.cpp` parses a MUS lump into `MusEvent`s (140 ticks/s; MUS channel 15
+  becomes MIDI 9; note-on velocity is "sticky" per channel; MUS controllers
+  0-9 map to program change and CC 0/1/7/10/11/91/93/64/67; system events
+  10/11 -> all notes off, 14 -> reset controllers).
+- `genmidi.cpp` parses `#OPL_II#` + 175 x 36 bytes (+ names): 128 melodic
+  programs and 47 percussion voices (notes 35-81), each with two 2-op voices,
+  flags (fixed pitch, double voice), fine tune and fixed note. A small
+  built-in bank stands in when there is no WAD.
+- `opl3.cpp` is a YMF262 emulator written from the chip's behaviour (log-sin
+  and exp tables, attenuation-domain operators, envelope generator with KSR
+  and KSL, feedback, tremolo/vibrato, 8 waveforms, OPL3 stereo, resampled
+  from 49716 Hz). `opl_driver.cpp` is the DMX-style voice driver: 18 voices,
+  oldest-stolen; GENMIDI voices programmed per note; volume = velocity x CC7 x
+  CC11 turned into TL attenuation; pan into the OPL3 L/R bits; pitch bend
+  +-2 semitones into F-Number/BLOCK.
+- `music.cpp` owns the sequencer and an `SDL_AudioStream` with a get-callback
+  on SDL's audio thread; `play(name, loop, next)`, `stop(fade)`, fades ramped
+  per sample. Backend is `OplBackend` or, when a soundfont path resolves and
+  the build found fluidsynth, `FluidBackend`.
+- Track choice (`App::updateMusic`): title D_INTRO once then D_INTER looped;
+  stacking tracks rotate by level over E1-E3 map themes; fights rotate by red
+  line count over the boss/late themes; game over plays D_BUNNY once. Doom 2
+  names are in the same preference lists.
+
+## High scores (`src/game/highscores.cpp`)
+
+Top 10 in SDL's pref path as whitespace-separated lines; `add()` returns the
+1-based rank (0 = not placed) and saves.

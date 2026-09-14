@@ -70,6 +70,10 @@ public:
     SpriteAnim explosion;
     std::string title;                      // optional big title graphic ("" if none)
 
+    // Music: raw MUS lumps by name (D_E1M1 ...) and the GENMIDI OPL bank.
+    std::map<std::string, std::vector<uint8_t>> music;
+    std::vector<uint8_t> genmidi;
+
     // Font: char -> atlas key. Doom's STCFN font is uppercase only.
     std::map<char, std::string> font;
     int fontHeight = 8;

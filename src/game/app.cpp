@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -50,6 +51,28 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (!assets_.load(wad, audio_)) throw std::runtime_error("asset build failed");
     renderer_->setAtlas(assets_.atlas().image());
     buildEnvironment();
+
+    // Music: MUS tracks from the WAD through the OPL3 emulator with GENMIDI,
+    // or FluidSynth when a soundfont is available.
+    if (!opts_.mute && !opts_.noMusic) {
+        audio::GenMidiBank bank;
+        if (auto parsed = audio::parseGenMidi(assets_.genmidi)) bank = std::move(*parsed);
+        else bank = audio::builtinGenMidi();
+        std::string soundfont;
+        if (const char* e = std::getenv("REDLINE_SOUNDFONT")) soundfont = e;
+        else {
+            const char* candidates[] = {"/usr/share/soundfonts/FluidR3_GM.sf2", "/usr/share/soundfonts/default.sf2", "/usr/share/sounds/sf2/FluidR3_GM.sf2",
+                                        "/usr/share/soundfonts/FluidR3_GM2-2.sf2", "/usr/share/sounds/sf2/default-GM.sf2"};
+            std::error_code ec;
+            for (const char* c : candidates) if (std::filesystem::is_regular_file(c, ec)) { soundfont = c; break; }
+        }
+        bool ok = music_.init(audio_.deviceId(), audio::Audio::kRate, bank, soundfont);
+        for (auto& [name, data] : assets_.music) music_.addTrack(name, data);
+        music_.setVolume(opts_.musicVolume);
+        std::fprintf(stderr, "[music] %s, %zu tracks, backend %s\n", ok ? "ready" : "unavailable", music_.trackNames().size(), music_.backendName());
+    }
+    highScores_.load();
+    std::fprintf(stderr, "[app] high scores: %zu entries at %s\n", highScores_.entries().size(), highScores_.path().c_str());
 
     newGame();
     applyScenario();
@@ -208,6 +231,8 @@ void App::enterMode(Mode m) {
         play("gameover", 1.f);
         gameOverT_ = 0.f;
         highScore_ = std::max(highScore_, game_->score());
+        lastRank_ = highScores_.add({game_->score(), game_->level(), redLinesSurvived_, game_->lines(), ""});
+        if (lastRank_ > 0) std::fprintf(stderr, "[app] new high score rank %d: %d\n", lastRank_, game_->score());
         menu_.items = {"RESTART", "QUIT"};
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
@@ -217,6 +242,57 @@ void App::enterMode(Mode m) {
     default:
         break;
     }
+    updateMusic();
+}
+
+// Music selection: title music on the menu, a stacking track per level, a
+// fight track per red line, the ending music over the game-over screen.
+std::string App::pickTrack(const std::vector<const char*>& prefs, int index) const {
+    std::vector<std::string> avail;
+    for (const char* p : prefs) if (music_.hasTrack(p)) avail.push_back(p);
+    if (avail.empty()) return "";
+    return avail[static_cast<size_t>(((index % static_cast<int>(avail.size())) + static_cast<int>(avail.size())) % static_cast<int>(avail.size()))];
+}
+
+void App::updateMusic() {
+    static const std::vector<const char*> kTitleIntro = {"D_INTRO", "D_DM2TTL"};
+    static const std::vector<const char*> kTitleLoop = {"D_INTER", "D_DM2INT", "D_VICTOR", "D_READ_M"};
+    static const std::vector<const char*> kBlocks = {"D_E1M1", "D_E1M2", "D_E1M3", "D_E1M5", "D_E1M7", "D_E2M1", "D_E2M2", "D_E2M4", "D_E3M2", "D_E3M3", "D_E1M4", "D_E2M5",
+                                                     "D_RUNNIN", "D_STALKS", "D_COUNTD", "D_BETWEE", "D_DOOM", "D_THE_DA", "D_SHAWN", "D_DDTBLU", "D_IN_CIT", "D_DEAD"};
+    static const std::vector<const char*> kFight = {"D_E1M8", "D_E2M8", "D_E3M8", "D_E1M6", "D_E2M6", "D_E3M4", "D_E1M9", "D_E3M1",
+                                                    "D_ROMERO", "D_ADRIAN", "D_MESSAG", "D_TENSE", "D_SHAWN2", "D_OPENIN"};
+    static const std::vector<const char*> kGameOver = {"D_BUNNY", "D_DM2INT", "D_INTER"};
+    if (!music_.enabled() && music_.trackNames().empty()) return;
+    std::string want;
+    bool loop = true;
+    std::string next;
+    switch (mode_) {
+    case Mode::Title: {
+        std::string intro = pickTrack(kTitleIntro, 0), loopTrack = pickTrack(kTitleLoop, 0);
+        if (!intro.empty()) { want = intro; loop = false; next = loopTrack; } else want = loopTrack;
+        // Already on the title sequence? Leave it alone.
+        if (music_.current() == intro || music_.current() == loopTrack) return;
+        break;
+    }
+    case Mode::Blocks:
+        want = pickTrack(kBlocks, game_ ? game_->level() - 1 : 0);
+        break;
+    case Mode::Alert: case Mode::FlyIn: case Mode::Countdown: case Mode::Fps: case Mode::FlyOut: {
+        want = pickTrack(kFight, game_ ? game_->redLineCount() - 1 : 0);
+        if (want.empty()) return;
+        for (const char* f : kFight) if (music_.current() == f) return;   // keep the fight track across the transitions
+        break;
+    }
+    case Mode::GameOver:
+        want = pickTrack(kGameOver, 0);
+        loop = false;
+        break;
+    case Mode::Paused:
+        return;
+    }
+    if (want.empty()) { music_.stop(); return; }
+    if (music_.current() == want) return;
+    music_.play(want, loop, next);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +383,11 @@ void App::handleEvents() {
             SDL_Keycode k = e.key.key;
             if (k == SDLK_F12) {
                 renderer_->screenshot("redline-screenshot.png");
+                break;
+            }
+            if (k == SDLK_M && !e.key.repeat) {
+                music_.setEnabled(!music_.enabled());
+                announce(music_.enabled() ? "MUSIC ON" : "MUSIC OFF", glm::vec4(0.8f, 0.8f, 1.f, 1.f), 0.9f);
                 break;
             }
             if (k == SDLK_ESCAPE) {
@@ -1136,7 +1217,20 @@ void App::addHud() {
         text(W * 0.5f, H * 0.36f + lh * 4.6f, "WHEN A ROW IS ALL RED THE BOARD TIPS OVER", s, white, 1);
         text(W * 0.5f, H * 0.36f + lh * 5.8f, "AND EVERY RED CLUSTER BECOMES A DEMON.", s, white, 1);
         drawMenu(H * 0.36f + lh * 8.f);
+        if (!highScores_.entries().empty()) {
+            float ty = H * 0.36f + lh * 8.f + lh * 1.5f * 2.f + lh * 0.8f;
+            text(W * 0.5f, ty, "HIGH SCORES", s * 0.8f, yellow, 1);
+            ty += lh * 0.9f;
+            int shown = 0;
+            for (const HighScore& h : highScores_.entries()) {
+                if (shown++ >= 5) break;
+                std::string line = std::to_string(shown) + ".  " + std::to_string(h.score) + "   LVL " + std::to_string(h.level) + "   RED LINES " + std::to_string(h.redLines) + "   " + h.date;
+                text(W * 0.5f, ty, line, s * 0.7f, dim, 1);
+                ty += lh * 0.8f;
+            }
+        }
         text(W * 0.5f, H - lh * 1.5f, assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : "ASSETS: PROCEDURAL (NO WAD FOUND)", s * 0.7f, dim, 1);
+        text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : music_.backendName()) + "  (M TOGGLES)", s * 0.6f, dim, 2);
     }
     if (mode_ == Mode::Paused) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.5f));
@@ -1149,7 +1243,22 @@ void App::addHud() {
         text(W * 0.5f, H * 0.3f, diedInFps_ ? "YOU DIED" : "GAME OVER", s * 2.4f, red, 1);
         text(W * 0.5f, H * 0.3f + lh * 2.8f, "SCORE " + std::to_string(game_->score()) + "   BEST " + std::to_string(highScore_), s, white, 1);
         text(W * 0.5f, H * 0.3f + lh * 4.f, "LEVEL " + std::to_string(game_->level()) + "   RED LINES SURVIVED " + std::to_string(redLinesSurvived_), s, dim, 1);
-        drawMenu(H * 0.3f + lh * 6.2f);
+        if (lastRank_ > 0) {
+            float f = 0.6f + 0.4f * std::sin(time_ * 5.f);
+            text(W * 0.5f, H * 0.3f + lh * 5.3f, lastRank_ == 1 ? "NEW HIGH SCORE!" : "HIGH SCORE #" + std::to_string(lastRank_), s * 1.2f, glm::vec4(1.f, 0.9f * f + 0.1f, 0.3f, 1.f), 1);
+        }
+        drawMenu(H * 0.3f + lh * 6.8f);
+        if (!highScores_.entries().empty()) {
+            float ty = H * 0.3f + lh * 6.8f + lh * 1.5f * 2.f + lh * 0.6f;
+            int shown = 0;
+            for (const HighScore& h : highScores_.entries()) {
+                if (shown++ >= 5) break;
+                bool mine = (shown == lastRank_);
+                std::string line = std::to_string(shown) + ".  " + std::to_string(h.score) + "   LVL " + std::to_string(h.level) + "   RED LINES " + std::to_string(h.redLines);
+                text(W * 0.5f, ty, line, s * 0.7f, mine ? yellow : dim, 1);
+                ty += lh * 0.8f;
+            }
+        }
     }
 }
 
