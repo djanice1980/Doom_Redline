@@ -7,6 +7,9 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
 
 - **Red minos.** `Rules::redChanceBase + redChancePerLevel * (level-1)` per mino,
   capped by `redChanceMax` and `maxRedPerPiece`.
+- **Rotation.** SRS kick tables (`kKicksJLSTZ`, `kKicksI`, y negated because
+  rows grow downward), tried in order after the plain rotation. The upward
+  kicks are what let a piece rotate while resting on the floor or the stack.
 - **Lock.** Minos are written as `Normal` or `Red` cells. Any mino still above
   row 0 at lock time ends the game.
 - **Clear check.** Rows that are full *and not entirely red* flash for
