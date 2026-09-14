@@ -1,0 +1,178 @@
+#pragma once
+// Pure game logic for the block-stacking half of REDLINE. No rendering, no
+// platform code, deterministic given a seed. Rules that differ from classic
+// Tetris are documented on the Rules struct and in docs/design.md.
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <random>
+#include <vector>
+
+namespace rl::core {
+
+constexpr int kBoardW = 10;
+constexpr int kBoardH = 20;
+
+enum class CellKind : uint8_t { Empty = 0, Normal = 1, Red = 2 };
+
+struct Cell {
+    CellKind kind = CellKind::Empty;
+    uint8_t color = 0;   // tetromino colour index 0..6 for Normal cells
+    bool empty() const { return kind == CellKind::Empty; }
+    bool red() const { return kind == CellKind::Red; }
+};
+
+enum class Shape : uint8_t { I, O, T, S, Z, J, L, Count };
+
+struct Piece {
+    Shape shape = Shape::I;
+    int rot = 0;      // 0..3
+    int x = 0;        // board column of the piece origin
+    int y = 0;        // board row (0 = top)
+    std::array<bool, 4> red{};   // which of the 4 minos are red (index = mino order in the shape table)
+    // Absolute board coordinates of the 4 minos for the current rot/x/y.
+    std::array<std::pair<int, int>, 4> cells() const;
+};
+
+struct Rules {
+    // Probability that any given mino of a new piece is red, at level 1.
+    float redChanceBase = 0.10f;
+    // Added per level.
+    float redChancePerLevel = 0.02f;
+    float redChanceMax = 0.45f;
+    // Max red minos in a single piece.
+    int maxRedPerPiece = 2;
+    // Red cells are loose: after locking / clearing they fall through empty
+    // space until supported ("refuse" to be part of the structure).
+    bool redCellsSettle = true;
+    // Gravity interval at level 1 (seconds per row) and scaling.
+    float gravityBase = 0.80f;
+    float gravityPerLevel = 0.85f;   // multiplicative per level
+    float gravityMin = 0.06f;
+    float softDropMultiplier = 12.0f;
+    float lockDelay = 0.40f;          // seconds resting before lock
+    float clearAnimTime = 0.30f;      // seconds the cleared row flashes
+    float settleStepTime = 0.05f;     // seconds per one-row red-cell fall
+    int linesPerLevel = 10;
+};
+
+enum class Phase : uint8_t {
+    Spawning,   // about to spawn next piece
+    Falling,    // active piece under player control
+    Clearing,   // full rows flashing; normal cells about to vanish
+    Settling,   // loose red cells falling one row per step
+    RedLine,    // a full red row exists -> the FPS mode takes over (game logic paused)
+    GameOver,
+};
+
+enum class EventType : uint8_t {
+    PieceSpawned,
+    PieceMoved,
+    PieceRotated,
+    PieceLocked,
+    LinesCleared,      // a = number of rows
+    RedCellFell,       // a = column, b = new row
+    RedLine,           // a = row index (first full red row found)
+    LevelUp,           // a = new level
+    GameOver,
+    HardDrop,          // a = rows dropped
+};
+
+struct Event {
+    EventType type;
+    int a = 0;
+    int b = 0;
+};
+
+class Game {
+public:
+    explicit Game(uint32_t seed = 1, Rules rules = {});
+
+    // --- simulation -------------------------------------------------------
+    void tick(float dt);
+
+    // --- player input (ignored unless Phase::Falling) ---------------------
+    void moveLeft();
+    void moveRight();
+    void rotateCW();
+    void rotateCCW();
+    void setSoftDrop(bool on) { softDrop_ = on; }
+    void hardDrop();
+
+    // --- FPS-mode interface ----------------------------------------------
+    // Rows that are entirely red (the trigger condition). Empty unless phase is RedLine.
+    std::vector<int> redRows() const;
+    // Called by the FPS mode when an enemy at (col,row) is killed: removes the
+    // red cell and destroys Normal cells within `radius` (Euclidean, in cells).
+    // Returns number of normal cells destroyed.
+    int explodeAt(int col, int row, float radius);
+    // Remove a single cell without side effects (e.g. enemy walked away).
+    void clearCell(int col, int row);
+    // Call when the FPS mode is over; resumes normal play (settles, spawns).
+    void resumeAfterRedLine();
+
+    // --- state access -----------------------------------------------------
+    const Cell& at(int col, int row) const { return grid_[row][col]; }
+    Cell& at(int col, int row) { return grid_[row][col]; }
+    Phase phase() const { return phase_; }
+    const std::optional<Piece>& active() const { return active_; }
+    const Piece& next() const { return next_; }
+    // Ghost piece landing row for the active piece (same x/rot).
+    std::optional<Piece> ghost() const;
+    int score() const { return score_; }
+    int level() const { return level_; }
+    int lines() const { return lines_; }
+    int redLineCount() const { return redLineEvents_; }
+    // Rows currently flashing (only during Clearing).
+    const std::vector<int>& clearingRows() const { return clearing_; }
+    float clearProgress() const;   // 0..1 during Clearing
+    // Events since the last drain; consumed by audio/VFX.
+    std::vector<Event> drainEvents();
+    const Rules& rules() const { return rules_; }
+    uint32_t seed() const { return seed_; }
+
+    // Debug/test helpers
+    void setCell(int col, int row, Cell c) { grid_[row][col] = c; }
+    void forcePiece(Shape s, std::array<bool, 4> red);   // replaces the *next* piece
+    void spawnNow();                                     // spawn immediately (phase must be Spawning)
+    bool rowFull(int row) const;
+    bool rowAllRed(int row) const;
+
+private:
+    bool fits(const Piece& p) const;
+    bool tryMove(int dx, int dy);
+    bool tryRotate(int dir);
+    void lock();
+    void beginClearOrSettle();
+    bool settleStep();            // one row of red-cell falling; false if nothing moved
+    bool checkRedLine();          // sets phase RedLine if any full red row
+    void finishClear();
+    void spawn();
+    Piece makePiece();
+    float gravityInterval() const;
+    void push(EventType t, int a = 0, int b = 0) { events_.push_back({t, a, b}); }
+
+    Rules rules_;
+    uint32_t seed_;
+    std::mt19937 rng_;
+    std::array<std::array<Cell, kBoardW>, kBoardH> grid_{};
+    std::optional<Piece> active_;
+    Piece next_;
+    Phase phase_ = Phase::Spawning;
+    float gravityAcc_ = 0.f;
+    float lockAcc_ = 0.f;
+    float phaseAcc_ = 0.f;
+    bool softDrop_ = false;
+    std::vector<int> clearing_;
+    std::vector<Event> events_;
+    int score_ = 0;
+    int level_ = 1;
+    int lines_ = 0;
+    int redLineEvents_ = 0;
+    std::vector<Shape> bag_;
+};
+
+// Shape table: 4 rotations x 4 minos, (dx, dy) relative to piece origin.
+const std::array<std::pair<int, int>, 4>& shapeCells(Shape s, int rot);
+
+}  // namespace rl::core
