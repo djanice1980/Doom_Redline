@@ -18,10 +18,11 @@ enum class CellKind : uint8_t { Empty = 0, Normal = 1, Red = 2 };
 struct Cell {
     CellKind kind = CellKind::Empty;
     uint8_t color = 0;   // tetromino colour index 0..6 for Normal cells
-    float corrupt = 0.f; // > 0: seconds left before this Normal cell turns Red (it flashes meanwhile)
+    float corrupt = 0.f; // > 0: seconds left before this cell turns Red (a Normal cell flashes; an Empty one is being filled by evil)
     bool empty() const { return kind == CellKind::Empty; }
     bool red() const { return kind == CellKind::Red; }
     bool corrupting() const { return kind == CellKind::Normal && corrupt > 0.f; }
+    bool spawning() const { return kind == CellKind::Empty && corrupt > 0.f; }
 };
 
 enum class Shape : uint8_t { I, O, T, S, Z, J, L, Count };
@@ -68,6 +69,13 @@ struct Rules {
     float corruptionRate = 0.7f;
     float corruptionTime = 1.6f;      // seconds of flashing before the switch
     int corruptionBurst = 4;          // extra blocks per event at full danger
+    // Evil spawn: an empty cell hemmed in by red (every existing left/right/
+    // below/above neighbour red or turning, walls count, at least two red
+    // neighbours), or the last hole in an otherwise red row, gets filled by a
+    // new red block. Fires more readily than corruption and does not need a
+    // high stack: rate = evilSpawnRate * (0.3 + 0.7 * danger) per second.
+    float evilSpawnRate = 1.4f;
+    float evilSpawnTime = 1.2f;       // seconds of warning before the block appears
     // Scoring
     int lineScore[5] = {0, 100, 300, 600, 1000};   // x level x combo/chain multipliers
     float comboStep = 0.5f;           // +50 % per consecutive clearing piece
@@ -96,6 +104,8 @@ enum class EventType : uint8_t {
     HardDrop,          // a = rows dropped
     CellCorrupting,    // a = column, b = row: a normal block started turning red
     CellTurnedRed,     // a = column, b = row
+    EvilSpawning,      // a = column, b = row: evil is filling an empty cell
+    EvilSpawned,       // a = column, b = row: the new red block is in place
 };
 
 struct Event {
@@ -153,6 +163,7 @@ public:
     int stackRows() const;                        // filled height of the stack in rows
     float danger() const;                         // 0..1 corruption pressure
     int corruptionTargetRow() const;              // row the next corruption hits, -1 if none
+    std::vector<std::pair<int, int>> evilSpawnCandidates() const;   // empty cells evil can fill
     int lines() const { return lines_; }
     int redLineCount() const { return redLineEvents_; }
     // Rows currently flashing (only during Clearing).

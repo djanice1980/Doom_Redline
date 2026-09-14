@@ -343,22 +343,48 @@ void Game::tick(float dt) {
             }
         }
         // Corruption: flashing blocks count down and turn red; new ones start
-        // at a rate that grows with the height of the stack.
+        // at a rate that grows with the height of the stack. Evil spawns fill
+        // hemmed-in holes on their own clock.
         {
             bool turned = false;
             for (int r = 0; r < kBoardH; ++r)
                 for (int c = 0; c < kBoardW; ++c) {
                     Cell& cell = grid_[r][c];
-                    if (!cell.corrupting()) continue;
-                    cell.corrupt -= dt;
-                    if (cell.corrupt <= 0.f) {
-                        cell.corrupt = 0.f;
-                        cell.kind = CellKind::Red;
-                        push(EventType::CellTurnedRed, c, r);
-                        turned = true;
+                    if (cell.corrupting()) {
+                        cell.corrupt -= dt;
+                        if (cell.corrupt <= 0.f) {
+                            cell.corrupt = 0.f;
+                            cell.kind = CellKind::Red;
+                            push(EventType::CellTurnedRed, c, r);
+                            turned = true;
+                        }
+                    } else if (cell.spawning()) {
+                        cell.corrupt -= dt;
+                        if (cell.corrupt <= 0.f) {
+                            bool occupied = false;
+                            for (auto [px, py] : active_->cells()) occupied = occupied || (px == c && py == r);
+                            if (occupied) { cell.corrupt = 0.05f; continue; }   // wait for the piece to leave
+                            cell.corrupt = 0.f;
+                            cell.kind = CellKind::Red;
+                            cell.color = 0;
+                            push(EventType::EvilSpawned, c, r);
+                            turned = true;
+                        }
                     }
                 }
             float d = danger();
+            {
+                std::uniform_real_distribution<float> u(0.f, 1.f);
+                float spawnRate = rules_.evilSpawnRate * (0.3f + 0.7f * d);
+                if (u(rng_) < spawnRate * dt) {
+                    auto holes = evilSpawnCandidates();
+                    if (!holes.empty()) {
+                        auto [c, r] = holes[static_cast<size_t>(u(rng_) * static_cast<float>(holes.size())) % holes.size()];
+                        grid_[r][c].corrupt = rules_.evilSpawnTime;
+                        push(EventType::EvilSpawning, c, r);
+                    }
+                }
+            }
             if (d > 0.f) {
                 float rate = rules_.corruptionRate * d * d * (1.f + 0.1f * static_cast<float>(level_ - 1));
                 std::uniform_real_distribution<float> u(0.f, 1.f);
@@ -497,6 +523,43 @@ int Game::corruptionTargetRow() const {
         }
     }
     return best;
+}
+
+// Holes evil may fill: empty cells (not already spawning) whose existing
+// neighbours are all red or turning with at least two real red neighbours
+// (walls and the floor count as red), plus the last hole of a row that is
+// otherwise entirely red.
+std::vector<std::pair<int, int>> Game::evilSpawnCandidates() const {
+    std::vector<std::pair<int, int>> out;
+    auto redLike = [&](int c, int r) { return grid_[r][c].red() || grid_[r][c].corrupting(); };
+    for (int r = 0; r < kBoardH; ++r) {
+        int empties = 0, reds = 0;
+        for (int c = 0; c < kBoardW; ++c) {
+            if (grid_[r][c].empty()) ++empties;
+            else if (redLike(c, r)) ++reds;
+        }
+        bool lastHole = (empties == 1 && reds == kBoardW - 1);
+        for (int c = 0; c < kBoardW; ++c) {
+            const Cell& cell = grid_[r][c];
+            if (!cell.empty() || cell.spawning()) continue;
+            if (lastHole) { out.push_back({c, r}); continue; }
+            int redNeighbours = 0;
+            bool ok = true;
+            auto look = [&](int nc, int nr, bool required) {
+                if (nc < 0 || nc >= kBoardW || nr >= kBoardH) return;       // wall / floor: counts as red
+                if (nr < 0) return;                                        // open sky above the board
+                const Cell& n = grid_[nr][nc];
+                if (n.empty()) { if (required) ok = false; return; }
+                if (redLike(nc, nr)) ++redNeighbours; else ok = false;
+            };
+            look(c - 1, r, true);
+            look(c + 1, r, true);
+            look(c, r + 1, true);
+            look(c, r - 1, false);
+            if (ok && redNeighbours >= 2) out.push_back({c, r});
+        }
+    }
+    return out;
 }
 
 void Game::clearAllRed() {

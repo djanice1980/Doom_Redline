@@ -83,6 +83,9 @@ void App::applyScenario() {
             for (int c = 0; c < core::kBoardW; ++c)
                 if ((c * 7 + r * 3) % 5 != 0) game_->setCell(c, r, core::Cell{core::CellKind::Normal, static_cast<uint8_t>((c + r) % 7)});
         game_->setLevel(std::max(opts_.level, 4));
+        // A hole boxed in by red at the bottom: evil is already filling it.
+        for (int c = 0; c < core::kBoardW; ++c) if (c != 5) game_->setCell(c, core::kBoardH - 1, core::Cell{core::CellKind::Red, 0});
+        { core::Cell hole; hole.corrupt = 0.9f; game_->setCell(5, core::kBoardH - 1, hole); }
         const int pre[4][2] = {{2, 12}, {6, 15}, {8, 9}, {4, 18}};
         for (auto& pc : pre) {
             core::Cell cell = game_->at(pc[0], pc[1]);
@@ -353,6 +356,8 @@ void App::handleGameEvents() {
         case core::EventType::LevelUp: play("levelup", 1.f); announce("LEVEL " + std::to_string(ev.a), glm::vec4(0.6f, 0.9f, 1.f, 1.f), 1.4f); break;
         case core::EventType::CellCorrupting: play("redline", 0.35f, 1.6f); break;
         case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f); shakeT_ = std::max(shakeT_, 0.1f); break;
+        case core::EventType::EvilSpawning: play("redline", 0.5f, 0.7f); break;
+        case core::EventType::EvilSpawned: play("explode", 0.5f, 1.4f); shakeT_ = std::max(shakeT_, 0.15f); announce("EVIL SPAWNED", glm::vec4(1.f, 0.3f, 0.2f, 1.f), 1.f); break;
         default: break;
         }
     }
@@ -658,8 +663,17 @@ void App::addBoard() {
         bool rowRed = g.rowAllRed(r);
         for (int c = 0; c < core::kBoardW; ++c) {
             const core::Cell& cell = g.at(c, r);
-            if (cell.empty()) continue;
             glm::vec3 pos = boardPos(static_cast<float>(c), static_cast<float>(r));
+            if (cell.spawning()) {
+                // Evil filling a hole: a red block growing out of nothing, flickering faster as it solidifies.
+                float left = cell.corrupt / std::max(0.01f, g.rules().evilSpawnTime);   // 1 -> 0
+                float grow = 0.25f + 0.7f * (1.f - left);
+                float freq = 10.f + 30.f * (1.f - left);
+                bool on = std::sin(time_ * freq + r * 0.9f) > -0.3f;
+                if (on) cube(pos, 0.96f * grow, glm::vec4(1.f, 0.5f, 0.5f, 1.f), assets_.redBlock, glm::vec3(1.f, 0.12f, 0.05f), 1.2f, 1.f, static_cast<float>(c) + r, rotX);
+                continue;
+            }
+            if (cell.empty()) continue;
             if (cell.red()) {
                 redCube(pos, rowRed ? 0.9f * alertFlash : 0.f, static_cast<float>(c) * 0.7f + r);
             } else if (cell.corrupting()) {
@@ -795,7 +809,7 @@ void App::addLights() {
     // Every red (or turning) cell glows.
     for (int r = 0; r < core::kBoardH; ++r)
         for (int c = 0; c < core::kBoardW; ++c)
-            if (game_->at(c, r).red() || game_->at(c, r).corrupting()) {
+            if (game_->at(c, r).red() || game_->at(c, r).corrupting() || game_->at(c, r).spawning()) {
                 glm::vec3 p = boardPos(static_cast<float>(c), static_cast<float>(r)) + glm::vec3(0.f, 0.f, 0.8f);
                 float pulse = 0.8f + 0.2f * std::sin(time_ * 6.f + c * 0.7f + r);
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});

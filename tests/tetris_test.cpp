@@ -419,7 +419,40 @@ static void testRotationKicksOnFloor() {
     }
 }
 
+static void testEvilSpawn() {
+    Rules r = fastRules();
+    r.evilSpawnRate = 100.f;    // near-certain within a few ticks
+    r.evilSpawnTime = 0.05f;
+    r.corruptionRate = 0.f;
+    Game g(4, r);
+    fill(g, 19, CellKind::Red, 5);                     // bottom row all red except the hole at column 5
+    for (int c = 0; c < 10; ++c) if (c != 5) g.setCell(c, 17, Cell{CellKind::Normal, 0});
+    auto holes = g.evilSpawnCandidates();
+    CHECK(holes.size() == 1 && holes[0].first == 5 && holes[0].second == 19);
+    g.forcePiece(Shape::O, {});
+    g.spawnNow();
+    bool sawSpawning = false, sawSpawned = false;
+    for (int i = 0; i < 60 && g.phase() == Phase::Falling; ++i) {
+        g.tick(0.02f);
+        for (const Event& e : g.drainEvents()) {
+            if (e.type == EventType::EvilSpawning) sawSpawning = true;
+            if (e.type == EventType::EvilSpawned) sawSpawned = true;
+        }
+    }
+    CHECK(sawSpawning && sawSpawned);
+    CHECK(g.at(5, 19).red());
+    CHECK(g.phase() == Phase::RedLine);               // the filled hole completed a red row
+    // A hole with only normal neighbours is left alone; one boxed in by red is not.
+    Game h(4, r);
+    fill(h, 19, CellKind::Normal, 4);
+    CHECK(h.evilSpawnCandidates().empty());
+    h.setCell(3, 19, Cell{CellKind::Red, 0});
+    h.setCell(5, 19, Cell{CellKind::Red, 0});
+    CHECK(h.evilSpawnCandidates().size() == 1);        // floor below counts as red, sky above is fine
+}
+
 int main() {
+    testEvilSpawn();
     testRotationKicksOnFloor();
     testScoring();
     testCascadeChain();

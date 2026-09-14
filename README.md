@@ -96,6 +96,13 @@ Up/Down or W/S to pick, Enter or click to confirm.
   towards a fight rather than merely sprinkled with red. If a turned block
   completes a red row, the fight starts right away and the piece in the air
   resumes afterwards.
+- **Evil spawns.** A hole boxed in by red (left, right and below all red or
+  turning, walls and the floor count, at least two real red neighbours), or
+  the last empty cell of an otherwise all-red row, gets filled by evil: a red
+  block grows out of nothing over 1.2 s and then is simply there. This fires
+  more readily than corruption and does not need a tall stack (it only gets
+  faster as the stack rises), so a red row with one gap will close itself
+  unless you fill it first.
 - A row that is entirely red never clears. It triggers the first-person phase.
 - In that phase **every** 4-connected red cluster on the board becomes one
   monster; its class depends on the cluster size (1: zombieman, 2-3: imp, 4-6:

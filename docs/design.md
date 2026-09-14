@@ -35,6 +35,15 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   Red and `CellTurnedRed` fires. A red row formed this way triggers the red
   line immediately; `spawn()` keeps the interrupted active piece so it resumes
   after the fight.
+- **Evil spawn.** `evilSpawnCandidates()` lists empty cells whose existing
+  left/right/below neighbours are all red or corrupting (an empty required
+  neighbour disqualifies; off-board counts as red; above is optional) with at
+  least two real red neighbours, plus the single hole of a row whose other
+  nine cells are red. While a piece falls, one random candidate starts
+  spawning at `evilSpawnRate * (0.3 + 0.7 danger)` per second; `Cell::corrupt`
+  on an *Empty* cell marks it (`spawning()`), the renderer grows a flickering
+  red cube there, and after `evilSpawnTime` it becomes Red (waiting if the
+  active piece is sitting in it). A completed red row triggers the fight.
 - **Scoring.** `lineScore[n] * level * (1 + comboStep (combo-1)) * (1 +
   chainStep * chain)`. `combo_` counts consecutive clearing pieces (reset by a
   piece that clears nothing); `chain_` counts clears produced by a collapse
