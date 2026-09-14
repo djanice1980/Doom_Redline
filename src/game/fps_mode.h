@@ -2,7 +2,8 @@
 // First-person phase. The board has tipped over onto the floor: every cell is
 // a 1 m cube standing on the ground, the player walks between them, and each
 // connected region of red cells has become one monster (bigger region, nastier
-// monster). Pure simulation; the App turns this state into draw calls.
+// monster). Dying monsters drop health, ammo and weapons. Pure simulation; the
+// App turns this state into draw calls.
 #include <random>
 #include <string>
 #include <vector>
@@ -26,6 +27,7 @@ inline bool flatToCell(glm::vec3 p, int& col, int& row) {
     return col >= 0 && col < core::kBoardW && row >= 0 && row < core::kBoardH;
 }
 
+// ---------------------------------------------------------------------------
 enum class AttackKind { Hitscan, Projectile, Melee };
 
 struct EnemyStats {
@@ -33,7 +35,7 @@ struct EnemyStats {
     float hp;
     float radius, height;
     AttackKind attack;
-    int projectile;        // index into Assets::projectile (Projectile attacks)
+    int projectile;        // projectile type (Projectile attacks)
     float speed;           // m/s, 0 = stationary
     bool flies;            // ignores block collision, hovers
     float attackInterval;  // seconds between attacks (before level scaling)
@@ -43,6 +45,43 @@ struct EnemyStats {
 };
 const EnemyStats& enemyStats(int tier);
 
+// Projectile types index Assets::projectile / projectileHit.
+enum ProjectileType { kProjImp = 0, kProjCaco = 1, kProjBaron = 2, kProjRocket = 3, kProjPlasma = 4, kProjTypeCount = 5 };
+
+// ---------------------------------------------------------------------------
+enum WeaponId { kShotgun = 0, kChaingun = 1, kRocketLauncher = 2, kPlasmaRifle = 3, kWeaponCount = 4 };
+
+struct WeaponDef {
+    const char* name;
+    float cycle;          // seconds between shots
+    float damage;
+    bool projectile;
+    int projType;
+    float projSpeed;
+    float blast;          // splash radius (m), 0 = none
+    int ammoPerPickup;    // 0 = infinite
+    int maxAmmo;
+    float spread;         // radians of random cone
+};
+const WeaponDef& weaponDef(int id);
+
+struct WeaponSlot {
+    bool owned = false;
+    int ammo = 0;
+};
+
+enum class PickupKind { Stim = 0, Medikit, Bullets, Rockets, Cells, Chaingun, RocketLauncher, PlasmaGun, Count };
+constexpr int kPickupKinds = static_cast<int>(PickupKind::Count);
+
+struct Pickup {
+    PickupKind kind;
+    glm::vec3 pos, vel;
+    glm::vec3 home;       // a known-open spot (the dead monster's pocket)
+    float t = 0.f;
+    bool landed = false;
+};
+
+// ---------------------------------------------------------------------------
 struct Enemy {
     enum class State { Emerging, Idle, Attack, Pain, Dying, Dead };
     int tier = 1;
@@ -66,6 +105,8 @@ struct Projectile {
     glm::vec3 pos, vel;
     int type = 0;
     float damage = 10.f;
+    float blast = 0.f;       // splash radius (player rockets)
+    bool fromPlayer = false;
     float ttl = 5.f;
     float animT = 0.f;
 };
@@ -90,13 +131,16 @@ struct FpsInput {
     float moveX = 0.f, moveZ = 0.f;   // -1..1 strafe / forward
     float lookDX = 0.f, lookDY = 0.f; // mouse delta (pixels)
     bool fire = false;
+    int selectWeapon = -1;            // 0..3 to switch, -1 none
+    int wheel = 0;                    // +1 next / -1 previous weapon
 };
 
 struct FpsEvent {
-    enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight } type;
+    enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
+                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit } type;
     glm::vec3 pos{0.f};
     int tier = 0;
-    int a = 0;
+    int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
 };
 
 class FpsMode {
@@ -118,9 +162,13 @@ public:
     float pitch() const { return pitch_; }
     float health() const { return health_; }
     float damageFlash() const { return damageFlash_; }
+    float pickupFlash() const { return pickupFlash_; }
     float gunAnimT() const { return gunT_; }
-    bool gunFiring() const { return gunT_ < gunCycle_; }
+    bool gunFiring() const { return gunT_ < weaponDef(weapon_).cycle * 1.2f && gunT_ < 0.6f; }
     float recoil() const;
+    int currentWeapon() const { return weapon_; }
+    const WeaponSlot& weapon(int id) const { return slots_[id]; }
+    void selectWeapon(int id);
     int enemiesLeft() const;
     int totalEnemies() const { return static_cast<int>(enemies_.size()); }
     float elapsed() const { return elapsed_; }
@@ -130,6 +178,7 @@ public:
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
     const std::vector<Explosion>& explosions() const { return explosions_; }
     const std::vector<Debris>& debris() const { return debris_; }
+    const std::vector<Pickup>& pickups() const { return pickups_; }
     std::vector<FpsEvent> drainEvents();
 
     // Solid cell test in flat coordinates (blocks only; enemies are not solid).
@@ -141,7 +190,12 @@ public:
 
 private:
     void fire(core::Game& game);
+    void hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game);
+    void damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos);
     void explodeEnemy(Enemy& e, core::Game& game);
+    void dropLoot(const Enemy& e);
+    void applyPickup(const Pickup& p);
+    void rocketBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
     void moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, const core::Game& game) const;
     bool lineOfSight(glm::vec3 a, glm::vec3 b, const core::Game& game) const;
     void hurtPlayer(float dmg, glm::vec3 from);
@@ -152,14 +206,17 @@ private:
     std::vector<Projectile> projectiles_;
     std::vector<Explosion> explosions_;
     std::vector<Debris> debris_;
+    std::vector<Pickup> pickups_;
     std::vector<FpsEvent> events_;
     glm::vec3 playerPos_{0.f, 0.f, 18.5f};
     float yaw_ = 3.14159265f;   // facing -Z (towards the stack)
     float pitch_ = 0.f;
     float health_ = 100.f;
     float damageFlash_ = 0.f;
+    float pickupFlash_ = 0.f;
     float gunT_ = 10.f;
-    float gunCycle_ = 0.75f;
+    int weapon_ = kShotgun;
+    WeaponSlot slots_[kWeaponCount];
     float elapsed_ = 0.f;
     int level_ = 1;
     bool finished_ = false;

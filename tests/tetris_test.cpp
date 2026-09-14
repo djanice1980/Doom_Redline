@@ -135,10 +135,19 @@ static void testRedLineTrigger() {
     CHECK(g.at(2, 18).empty());
     CHECK(g.at(2, 17).kind == CellKind::Normal);
     CHECK(g.redRows().empty());
+    g.setCell(6, 12, Cell{CellKind::Normal, 2});   // floating leftovers
+    g.setCell(6, 11, Cell{CellKind::Normal, 3});
     g.resumeAfterRedLine();
+    CHECK(g.collapsing());
     runUntil(g, Phase::Falling);
     CHECK(g.phase() == Phase::Falling);
-    CHECK(g.at(2, 17).kind == CellKind::Normal);   // normal cells do not fall
+    CHECK(!g.collapsing());
+    // After a fight everything left falls to the floor, keeping its column order.
+    CHECK(g.at(2, 19).kind == CellKind::Normal);
+    CHECK(g.at(2, 17).empty());
+    CHECK(g.at(6, 19).color == 2);
+    CHECK(g.at(6, 18).color == 3);
+    CHECK(g.at(6, 12).empty() && g.at(6, 11).empty());
 }
 
 static void testRedRowDoesNotClear() {

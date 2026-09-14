@@ -9,18 +9,25 @@ namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kMoveSpeed = 4.5f;
 constexpr float kMouseSens = 0.0022f;
-constexpr float kShotDamage = 40.f;
 constexpr float kPlayerRadius = 0.3f;
 constexpr float kExplosionRadius = 1.5f;   // cells, around every cell of the region
 constexpr float kBlockTop = 1.0f;          // blocks are unit cubes on the floor
 
-//               name         hp     r      h     attack                 proj speed flies interval dmg   pspd  score
+//               name         hp     r      h     attack                 proj        speed flies interval dmg   pspd  score
 const EnemyStats kStats[] = {
-    {"ZOMBIE",     20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1, 0.f,  false, 2.2f, 5.f,  0.f,  100},
-    {"IMP",        60.f, 0.40f, 1.7f, AttackKind::Projectile,  0, 0.f,  false, 2.6f, 10.f, 8.f,  200},
-    {"DEMON",     150.f, 0.50f, 1.6f, AttackKind::Melee,      -1, 3.6f, false, 1.0f, 14.f, 0.f,  350},
-    {"CACODEMON", 400.f, 0.65f, 1.8f, AttackKind::Projectile,  1, 1.8f, true,  2.4f, 16.f, 10.f, 600},
-    {"BARON",    1000.f, 0.70f, 2.3f, AttackKind::Projectile,  2, 1.2f, false, 2.8f, 28.f, 10.f, 1200},
+    {"ZOMBIE",     20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1,         0.f,  false, 2.2f, 5.f,  0.f,  100},
+    {"IMP",        60.f, 0.40f, 1.7f, AttackKind::Projectile, kProjImp,   0.f,  false, 2.6f, 10.f, 8.f,  200},
+    {"DEMON",     150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,         3.6f, false, 1.0f, 14.f, 0.f,  350},
+    {"CACODEMON", 400.f, 0.65f, 1.8f, AttackKind::Projectile, kProjCaco,  1.8f, true,  2.4f, 16.f, 10.f, 600},
+    {"BARON",    1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron, 1.2f, false, 2.8f, 28.f, 10.f, 1200},
+};
+
+//                 name              cycle  dmg   proj   type          speed  blast ammo max  spread
+const WeaponDef kWeapons[kWeaponCount] = {
+    {"SHOTGUN",        0.75f, 40.f,  false, -1,           0.f,   0.f,  0,   0,   0.f},
+    {"CHAINGUN",       0.10f, 12.f,  false, -1,           0.f,   0.f,  60,  200, 0.03f},
+    {"ROCKET LAUNCHER",0.80f, 110.f, true,  kProjRocket,  22.f,  2.2f, 4,   30,  0.f},
+    {"PLASMA RIFLE",   0.12f, 22.f,  true,  kProjPlasma,  28.f,  0.f,  40,  200, 0.01f},
 };
 
 int tierForRegion(int size) {
@@ -33,6 +40,7 @@ int tierForRegion(int size) {
 }  // namespace
 
 const EnemyStats& enemyStats(int tier) { return kStats[std::clamp(tier, 0, 4)]; }
+const WeaponDef& weaponDef(int id) { return kWeapons[std::clamp(id, 0, kWeaponCount - 1)]; }
 
 FpsMode::FpsMode() : rng_(12345) {}
 
@@ -41,9 +49,18 @@ glm::vec3 FpsMode::forward() const {
 }
 
 float FpsMode::recoil() const {
-    if (gunT_ >= gunCycle_) return 0.f;
-    float t = gunT_ / gunCycle_;
-    return std::sin(t * kPi) * (1.f - t);
+    float cycle = std::max(0.25f, weaponDef(weapon_).cycle);
+    if (gunT_ >= cycle) return 0.f;
+    float t = gunT_ / cycle;
+    return std::sin(t * kPi) * (1.f - t) * (weapon_ == kRocketLauncher ? 1.6f : weapon_ == kShotgun ? 1.f : 0.4f);
+}
+
+void FpsMode::selectWeapon(int id) {
+    if (id < 0 || id >= kWeaponCount || id == weapon_) return;
+    if (!slots_[id].owned || (weaponDef(id).ammoPerPickup > 0 && slots_[id].ammo <= 0)) return;
+    weapon_ = id;
+    gunT_ = std::max(gunT_, 0.f);
+    push(FpsEvent::Type::WeaponSwitch, eye(), 0, id);
 }
 
 // ---------------------------------------------------------------------------
@@ -52,16 +69,22 @@ void FpsMode::begin(core::Game& game, int level) {
     projectiles_.clear();
     explosions_.clear();
     debris_.clear();
+    pickups_.clear();
     events_.clear();
     finished_ = false;
     finishDelay_ = 0.f;
     elapsed_ = 0.f;
     health_ = 100.f;
     damageFlash_ = 0.f;
+    pickupFlash_ = 0.f;
     gunT_ = 10.f;
     level_ = level;
     yaw_ = kPi;
     pitch_ = 0.f;
+    // Weapons persist across fights within a game; the shotgun is always there.
+    slots_[kShotgun].owned = true;
+    slots_[kShotgun].ammo = 0;
+    if (!slots_[weapon_].owned || (weaponDef(weapon_).ammoPerPickup > 0 && slots_[weapon_].ammo <= 0)) weapon_ = kShotgun;
     rng_.seed(game.seed() * 7919u + static_cast<uint32_t>(game.redLineCount()) * 104729u);
     std::uniform_real_distribution<float> u(0.f, 1.f);
 
@@ -191,11 +214,26 @@ void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
 }
 
 // ---------------------------------------------------------------------------
-void FpsMode::fire(core::Game& game) {
-    gunT_ = 0.f;
-    push(FpsEvent::Type::Shoot, eye());
-    glm::vec3 o = eye();
-    glm::vec3 d = forward();
+void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos) {
+    if (!e.alive()) return;
+    e.hp -= dmg;
+    push(FpsEvent::Type::EnemyHit, hitPos, e.tier);
+    spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
+    if (e.hp <= 0.f) {
+        health_ = std::min(100.f, health_ + 5.f);   // small heal per kill keeps long fights winnable
+        e.state = Enemy::State::Dying;
+        e.stateT = 0.f;
+        e.animT = 0.f;
+        push(FpsEvent::Type::EnemyDied, e.pos, e.tier);
+        dropLoot(e);
+    } else if (e.state != Enemy::State::Emerging) {
+        e.state = Enemy::State::Pain;
+        e.stateT = 0.f;
+        e.attacked = false;
+    }
+}
+
+void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game) {
     float blockT = rayBlockDistance(o, d, 60.f, game);
     Enemy* best = nullptr;
     float bestT = blockT;
@@ -217,24 +255,76 @@ void FpsMode::fire(core::Game& game) {
         if (t < bestT) { bestT = t; best = &e; }
     }
     if (!best) {
-        if (blockT < 60.f) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 3, false);
+        if (blockT < 60.f) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 2, false);
         return;
     }
-    best->hp -= kShotDamage * (bestT < 2.5f ? 1.5f : 1.f);
-    glm::vec3 hitPos = o + d * bestT;
-    push(FpsEvent::Type::EnemyHit, hitPos, best->tier);
-    spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 4, true);
-    if (best->hp <= 0.f) {
-        health_ = std::min(100.f, health_ + 5.f);   // small heal per kill keeps long fights winnable
-        best->state = Enemy::State::Dying;
-        best->stateT = 0.f;
-        best->animT = 0.f;
-        push(FpsEvent::Type::EnemyDied, best->pos, best->tier);
-    } else if (best->state != Enemy::State::Emerging) {
-        best->state = Enemy::State::Pain;
-        best->stateT = 0.f;
-        best->attacked = false;
+    damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), o + d * bestT);
+}
+
+void FpsMode::fire(core::Game& game) {
+    const WeaponDef& w = weaponDef(weapon_);
+    if (w.ammoPerPickup > 0) {
+        if (slots_[weapon_].ammo <= 0) { selectWeapon(kShotgun); weapon_ = kShotgun; return; }
+        --slots_[weapon_].ammo;
     }
+    gunT_ = 0.f;
+    push(FpsEvent::Type::Shoot, eye(), 0, weapon_);
+    glm::vec3 o = eye();
+    glm::vec3 d = forward();
+    if (w.spread > 0.f) {
+        std::uniform_real_distribution<float> u(-1.f, 1.f);
+        glm::vec3 right(-std::cos(yaw_), 0.f, std::sin(yaw_));
+        glm::vec3 up = glm::normalize(glm::cross(right, d));
+        d = glm::normalize(d + right * (u(rng_) * w.spread) + up * (u(rng_) * w.spread));
+    }
+    if (!w.projectile) {
+        hitscan(o, d, w.damage, game);
+        return;
+    }
+    Projectile p;
+    p.pos = o + d * 0.6f - glm::vec3(0.f, 0.15f, 0.f);
+    p.vel = d * w.projSpeed;
+    p.type = w.projType;
+    p.damage = w.damage;
+    p.blast = w.blast;
+    p.fromPlayer = true;
+    p.ttl = 4.f;
+    projectiles_.push_back(p);
+    // Out of ammo after this shot: fall back to the shotgun once the cycle ends.
+    if (w.ammoPerPickup > 0 && slots_[weapon_].ammo <= 0) { int prev = weapon_; weapon_ = kShotgun; push(FpsEvent::Type::WeaponSwitch, eye(), 0, kShotgun); (void)prev; }
+}
+
+// Splash damage from a player rocket: hurts every monster in range, the player
+// if too close, and blasts the blocks around the impact.
+void FpsMode::rocketBlast(glm::vec3 pos, float radius, float damage, core::Game& game) {
+    for (Enemy& e : enemies_) {
+        if (!e.alive()) continue;
+        glm::vec3 c = e.pos + glm::vec3(0.f, e.height * 0.5f, 0.f);
+        float d = glm::length(c - pos);
+        if (d < radius + e.radius) damageEnemy(e, damage * (1.f - std::max(0.f, d - e.radius) / radius), c);
+    }
+    float pd = glm::length((playerPos_ + glm::vec3(0.f, 0.6f, 0.f)) - pos);
+    if (pd < radius) hurtPlayer(45.f * (1.f - pd / radius), pos);
+    int destroyed = 0;
+    int c, r;
+    if (flatToCell(glm::vec3(pos.x, 0.5f, pos.z), c, r)) {
+        // Blast every normal block within a cell of the impact.
+        for (int y = r - 1; y <= r + 1; ++y)
+            for (int x = c - 1; x <= c + 1; ++x) {
+                if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
+                if (game.at(x, y).kind != core::CellKind::Normal) continue;
+                if (glm::length(flatCellCentre(x, y) - pos) > radius * 0.75f) continue;
+                game.clearCell(x, y);
+                spawnDebris(flatCellCentre(x, y), {0.85f, 0.85f, 0.85f}, 5, false);
+                ++destroyed;
+            }
+    }
+    Explosion ex;
+    ex.pos = pos;
+    ex.radius = radius;
+    ex.duration = 0.5f;
+    explosions_.push_back(ex);
+    push(FpsEvent::Type::RocketBlast, pos, 0, destroyed);
 }
 
 void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
@@ -268,6 +358,66 @@ void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
 }
 
 // ---------------------------------------------------------------------------
+// Loot: bigger monsters drop more. Weapons the player lacks are favoured.
+void FpsMode::dropLoot(const Enemy& e) {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    int count = 1 + e.tier / 2 + (u(rng_) < 0.25f ? 1 : 0);
+    bool anyExtraWeapon = slots_[kChaingun].owned || slots_[kRocketLauncher].owned || slots_[kPlasmaRifle].owned;
+    for (int i = 0; i < count; ++i) {
+        float roll = u(rng_);
+        PickupKind kind;
+        if (roll < 0.32f) {
+            kind = (e.tier >= 2 || u(rng_) < 0.3f) ? PickupKind::Medikit : PickupKind::Stim;
+        } else if (roll < (anyExtraWeapon ? 0.66f : 0.45f)) {
+            const PickupKind ammo[3] = {PickupKind::Bullets, PickupKind::Rockets, PickupKind::Cells};
+            // Prefer ammo for something the player owns.
+            std::vector<PickupKind> owned;
+            if (slots_[kChaingun].owned) owned.push_back(PickupKind::Bullets);
+            if (slots_[kRocketLauncher].owned) owned.push_back(PickupKind::Rockets);
+            if (slots_[kPlasmaRifle].owned) owned.push_back(PickupKind::Cells);
+            kind = owned.empty() ? ammo[static_cast<int>(u(rng_) * 3.f) % 3] : owned[static_cast<size_t>(u(rng_) * static_cast<float>(owned.size())) % owned.size()];
+        } else if (roll < 0.88f) {
+            // Weapon: class roughly follows the monster's tier.
+            float w = u(rng_) + 0.25f * static_cast<float>(e.tier);
+            kind = w < 0.8f ? PickupKind::Chaingun : (w < 1.5f ? PickupKind::RocketLauncher : PickupKind::PlasmaGun);
+        } else {
+            continue;   // nothing
+        }
+        Pickup p;
+        p.kind = kind;
+        p.home = glm::vec3(e.pos.x, 0.f, e.pos.z);
+        p.pos = e.pos + glm::vec3(0.f, 0.8f, 0.f);
+        p.vel = glm::vec3((u(rng_) - 0.5f) * 3.f, 3.f + u(rng_) * 2.f, (u(rng_) - 0.5f) * 3.f);
+        pickups_.push_back(p);
+    }
+}
+
+void FpsMode::applyPickup(const Pickup& p) {
+    auto giveWeapon = [&](int id) {
+        bool had = slots_[id].owned;
+        slots_[id].owned = true;
+        slots_[id].ammo = std::min(weaponDef(id).maxAmmo, slots_[id].ammo + weaponDef(id).ammoPerPickup * (had ? 1 : 2));
+        if (!had) { weapon_ = id; push(FpsEvent::Type::WeaponSwitch, eye(), 0, id); }
+    };
+    auto giveAmmo = [&](int id, float mult) {
+        slots_[id].ammo = std::min(weaponDef(id).maxAmmo, slots_[id].ammo + static_cast<int>(weaponDef(id).ammoPerPickup * mult));
+    };
+    switch (p.kind) {
+    case PickupKind::Stim: health_ = std::min(100.f, health_ + 10.f); break;
+    case PickupKind::Medikit: health_ = std::min(100.f, health_ + 25.f); break;
+    case PickupKind::Bullets: giveAmmo(kChaingun, 1.f); break;
+    case PickupKind::Rockets: giveAmmo(kRocketLauncher, 1.f); break;
+    case PickupKind::Cells: giveAmmo(kPlasmaRifle, 1.f); break;
+    case PickupKind::Chaingun: giveWeapon(kChaingun); break;
+    case PickupKind::RocketLauncher: giveWeapon(kRocketLauncher); break;
+    case PickupKind::PlasmaGun: giveWeapon(kPlasmaRifle); break;
+    default: break;
+    }
+    pickupFlash_ = 1.f;
+    push(FpsEvent::Type::Pickup, p.pos, 0, static_cast<int>(p.kind));
+}
+
+// ---------------------------------------------------------------------------
 void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     elapsed_ += dt;
     // --- look & move ---------------------------------------------------------
@@ -280,10 +430,18 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     if (health_ > 0.f) moveWithCollision(playerPos_, move * kMoveSpeed * dt, kPlayerRadius, game);
     playerPos_.y = 0.f;
     damageFlash_ = std::max(0.f, damageFlash_ - dt * 2.5f);
+    pickupFlash_ = std::max(0.f, pickupFlash_ - dt * 3.f);
 
     // --- weapon ----------------------------------------------------------
+    if (in.selectWeapon >= 0) selectWeapon(in.selectWeapon);
+    if (in.wheel != 0) {
+        for (int step = 1; step < kWeaponCount; ++step) {
+            int id = ((weapon_ + in.wheel * step) % kWeaponCount + kWeaponCount) % kWeaponCount;
+            if (slots_[id].owned && (weaponDef(id).ammoPerPickup == 0 || slots_[id].ammo > 0)) { selectWeapon(id); break; }
+        }
+    }
     gunT_ += dt;
-    if (in.fire && gunT_ >= gunCycle_ && health_ > 0.f) fire(game);
+    if (in.fire && gunT_ >= weaponDef(weapon_).cycle && health_ > 0.f) fire(game);
 
     // --- enemies ---------------------------------------------------------
     std::uniform_real_distribution<float> u(0.f, 1.f);
@@ -386,24 +544,67 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         p.ttl -= dt;
         p.animT += dt;
         bool remove = p.ttl <= 0.f || p.pos.y < 0.f || solidAt(p.pos, game) || std::fabs(p.pos.x) > 16.f || p.pos.z > 24.f || p.pos.z < -3.f;
-        glm::vec3 dp = p.pos - playerCentre;
-        if (std::fabs(dp.x) < 0.45f && std::fabs(dp.z) < 0.45f && dp.y > -0.7f && dp.y < 0.8f) {
-            hurtPlayer(p.damage, p.pos);
-            remove = true;
+        if (p.fromPlayer) {
+            for (Enemy& e : enemies_) {
+                if (!e.alive() || e.state == Enemy::State::Emerging) continue;
+                glm::vec2 d(p.pos.x - e.pos.x, p.pos.z - e.pos.z);
+                if (glm::length(d) < e.radius + 0.15f && p.pos.y > e.pos.y - 0.1f && p.pos.y < e.pos.y + e.height + 0.1f) {
+                    if (p.blast <= 0.f) damageEnemy(e, p.damage, p.pos);
+                    remove = true;
+                    break;
+                }
+            }
+        } else {
+            glm::vec3 dp = p.pos - playerCentre;
+            if (std::fabs(dp.x) < 0.45f && std::fabs(dp.z) < 0.45f && dp.y > -0.7f && dp.y < 0.8f) {
+                hurtPlayer(p.damage, p.pos);
+                remove = true;
+            }
         }
         if (remove) {
-            Explosion ex;
-            ex.pos = prev;
-            ex.duration = 0.25f;
-            ex.radius = 0.4f;
-            ex.hitType = p.type;
-            explosions_.push_back(ex);
-            push(FpsEvent::Type::FireballHit, p.pos);
+            if (p.fromPlayer && p.blast > 0.f) {
+                rocketBlast(prev, p.blast, p.damage, game);
+            } else {
+                Explosion ex;
+                ex.pos = prev;
+                ex.duration = 0.25f;
+                ex.radius = 0.4f;
+                ex.hitType = p.type;
+                explosions_.push_back(ex);
+                push(p.fromPlayer ? FpsEvent::Type::PlasmaHit : FpsEvent::Type::FireballHit, p.pos);
+            }
             projectiles_[i] = projectiles_.back();
             projectiles_.pop_back();
         } else {
             ++i;
         }
+    }
+
+    // --- pickups ---------------------------------------------------------
+    for (size_t i = 0; i < pickups_.size();) {
+        Pickup& p = pickups_[i];
+        p.t += dt;
+        if (!p.landed) {
+            p.vel.y -= 12.f * dt;
+            p.pos += p.vel * dt;
+            if (p.pos.y <= 0.f) {
+                p.pos.y = 0.f;
+                p.landed = true;
+                // Landed inside a block? Slide back to the monster's open pocket.
+                if (solidAt(glm::vec3(p.pos.x, 0.5f, p.pos.z), game)) p.pos = p.home;
+            }
+        }
+        bool taken = false;
+        if (p.landed && health_ > 0.f) {
+            glm::vec2 d(p.pos.x - playerPos_.x, p.pos.z - playerPos_.z);
+            if (glm::length(d) < 0.7f) {
+                bool useful = true;
+                if (p.kind == PickupKind::Stim || p.kind == PickupKind::Medikit) useful = health_ < 100.f;
+                if (useful) { applyPickup(p); taken = true; }
+            }
+        }
+        if (taken) { pickups_[i] = pickups_.back(); pickups_.pop_back(); }
+        else ++i;
     }
 
     // --- explosions & debris ------------------------------------------------

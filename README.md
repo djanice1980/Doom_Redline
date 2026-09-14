@@ -75,8 +75,9 @@ Block mode:
 | Esc | pause menu (resume / restart / quit) |
 | F12 | screenshot to `redline-screenshot.png` |
 
-First-person mode: mouse to look, WASD to move, left click / Space to fire.
-Menus (title, pause, game over): Up/Down or W/S to pick, Enter or click to confirm.
+First-person mode: mouse to look, WASD to move, left click / Space to fire,
+1-4 or mouse wheel (Q/E) to switch weapons. Menus (title, pause, game over):
+Up/Down or W/S to pick, Enter or click to confirm.
 
 ## Rules that differ from classic
 
@@ -96,9 +97,18 @@ Menus (title, pause, game over): Up/Down or W/S to pick, Enter or click to confi
 - Blocks are chest-high: you can see and shoot over them; fireballs aimed at
   your body are stopped by them. Zombies hitscan, imps/cacodemons/barons throw
   fireballs, demons charge and bite.
+- Dying monsters drop loot: stimpacks and medikits, ammo, and weapons
+  (chaingun, rocket launcher, plasma rifle) that pop out and land next to the
+  body. Bigger monsters drop more. Walk over an item to take it; weapons you
+  already own give ammo instead. Weapons persist for the rest of the game.
+- The shotgun never runs out. The chaingun is fast hitscan, the plasma rifle
+  fires fast bolts, and rockets have splash damage that also blasts the blocks
+  around the impact (and you, if you are too close).
 - Surviving the phase pays 1000 x level and raises the level by one (faster
   gravity, more red minos, tougher monsters next time). Each kill pays 50 + 25
   per block destroyed.
+- When the board stands back up, every remaining block falls to the floor
+  (column by column, animated), so the holes the explosions left collapse.
 - Reaching zero health ends the game.
 
 ## Command line

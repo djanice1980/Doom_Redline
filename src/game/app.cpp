@@ -204,6 +204,8 @@ void App::menuSelect() {
 void App::handleEvents() {
     SDL_Event e;
     fpsIn_.dx = fpsIn_.dy = 0.f;
+    fpsIn_.select = -1;
+    fpsIn_.wheel = 0;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
         case SDL_EVENT_QUIT:
@@ -224,6 +226,9 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
             if (e.button.button == SDL_BUTTON_LEFT) fpsIn_.fire = false;
+            break;
+        case SDL_EVENT_MOUSE_WHEEL:
+            if (mode_ == Mode::Fps) fpsIn_.wheel += (e.wheel.y > 0.f) ? 1 : (e.wheel.y < 0.f ? -1 : 0);
             break;
         case SDL_EVENT_KEY_DOWN: {
             SDL_Keycode k = e.key.key;
@@ -256,6 +261,12 @@ void App::handleEvents() {
                 case SDLK_A: case SDLK_LEFT: fpsIn_.left = true; break;
                 case SDLK_D: case SDLK_RIGHT: fpsIn_.right = true; break;
                 case SDLK_SPACE: case SDLK_LCTRL: fpsIn_.fire = true; break;
+                case SDLK_1: fpsIn_.select = 0; break;
+                case SDLK_2: fpsIn_.select = 1; break;
+                case SDLK_3: fpsIn_.select = 2; break;
+                case SDLK_4: fpsIn_.select = 3; break;
+                case SDLK_Q: fpsIn_.wheel -= 1; break;
+                case SDLK_E: fpsIn_.wheel += 1; break;
                 default: break;
                 }
             }
@@ -312,7 +323,16 @@ void App::handleFpsEvents() {
     for (const FpsEvent& ev : fps_.drainEvents()) {
         const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
         switch (ev.type) {
-        case FpsEvent::Type::Shoot: play("shoot", 1.f); muzzleLight_ = 1.f; shakeT_ = 0.12f; break;
+        case FpsEvent::Type::Shoot: play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f); muzzleLight_ = 1.f; shakeT_ = ev.a == kRocketLauncher ? 0.2f : (ev.a == kShotgun ? 0.12f : 0.04f); break;
+        case FpsEvent::Type::Pickup: {
+            static const char* kinds[] = {"stim", "medikit", "bullets", "rockets", "cells", "chaingun", "rocket launcher", "plasma gun"};
+            std::fprintf(stderr, "[fps] pickup %s (health %d)\n", kinds[std::clamp(ev.a, 0, 7)], static_cast<int>(fps_.health()));
+            play(ev.a >= static_cast<int>(PickupKind::Chaingun) ? "pickup_weapon" : "pickup_item", 0.9f);
+            break;
+        }
+        case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
+        case FpsEvent::Type::RocketBlast: std::fprintf(stderr, "[fps] rocket blast destroyed %d blocks\n", ev.a); play("rocket_hit", 1.f); shakeT_ = 0.35f; break;
+        case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f); break;
         case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f); break;
         case FpsEvent::Type::EnemyDied: play(art.deathSound, 1.f); break;
         case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
@@ -358,6 +378,8 @@ void App::update(float dt) {
         in.lookDX = fpsIn_.dx;
         in.lookDY = fpsIn_.dy;
         in.fire = fpsIn_.fire;
+        in.selectWeapon = fpsIn_.select;
+        in.wheel = fpsIn_.wheel;
         if (opts_.bot) {
             // Aim at the nearest living enemy's chest; advance when it is far or hidden.
             const Enemy* target = nullptr;
@@ -378,6 +400,13 @@ void App::update(float dt) {
                 float len = glm::length(to);
                 bool clear = fps_.rayBlockDistance(fps_.eye(), to / len, len, *game_) >= len - 0.01f;
                 in.fire = std::fabs(dyaw) < 0.03f && clear;
+                // Best owned weapon with ammo: rockets at range, plasma, chaingun, shotgun.
+                auto usable = [&](int id) { return fps_.weapon(id).owned && (weaponDef(id).ammoPerPickup == 0 || fps_.weapon(id).ammo > 0); };
+                int want = kShotgun;
+                if (usable(kChaingun)) want = kChaingun;
+                if (usable(kPlasmaRifle)) want = kPlasmaRifle;
+                if (usable(kRocketLauncher) && len > 4.5f) want = kRocketLauncher;
+                if (want != fps_.currentWeapon()) in.selectWeapon = want;
                 if (clear) {
                     botBlockedT_ = 0.f;
                     in.moveZ = len > 7.f ? 1.f : 0.f;
@@ -659,6 +688,12 @@ void App::addFpsActors() {
         const std::string& key = animFrame(anim, p.animT, true, &flip);
         if (!key.empty()) billboard(key, p.pos - glm::vec3(0.f, 0.3f, 0.f), 0.031f, glm::vec4(1.f), false, flip);
     }
+    for (const Pickup& p : fps_.pickups()) {
+        const SpriteAnim& anim = assets_.pickups[std::clamp(static_cast<int>(p.kind), 0, kPickupArt - 1)];
+        if (anim.empty()) continue;
+        float bob = p.landed ? 0.06f + 0.05f * std::sin(time_ * 4.f + p.pos.x) : 0.f;
+        billboard(anim.frames[0], p.pos + glm::vec3(0.f, bob, 0.f), 0.031f, glm::vec4(1.f), true, false);
+    }
     for (const Explosion& ex : fps_.explosions()) {
         float t = ex.t / ex.duration;
         const SpriteAnim& anim = ex.hitType < 0 ? assets_.explosion : assets_.projectileHit[std::clamp(ex.hitType, 0, kProjectileTypes - 1)];
@@ -702,8 +737,12 @@ void App::addLights() {
             bool big = ex.hitType < 0;
             cands.push_back({-100.f, {ex.pos, big ? 6.f + ex.radius * 2.f : 3.f, {1.f, 0.6f, 0.2f}, (big ? 6.f : 1.5f) * t}});
         }
-        for (const Projectile& p : fps_.projectiles())
-            cands.push_back({-50.f, {p.pos, 3.f, p.type == 2 ? glm::vec3(0.3f, 1.f, 0.3f) : glm::vec3(1.f, 0.5f, 0.1f), 1.2f}});
+        for (const Projectile& p : fps_.projectiles()) {
+            glm::vec3 col = p.type == kProjBaron ? glm::vec3(0.3f, 1.f, 0.3f) : p.type == kProjPlasma ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 0.5f, 0.1f);
+            cands.push_back({-50.f, {p.pos, p.type == kProjRocket ? 4.f : 3.f, col, 1.2f}});
+        }
+        for (const Pickup& p : fps_.pickups())
+            if (p.landed) cands.push_back({glm::length(p.pos - cam), {p.pos + glm::vec3(0.f, 0.4f, 0.f), 1.5f, {0.6f, 0.8f, 1.f}, 0.5f}});
         if (muzzleLight_ > 0.f && mode_ == Mode::Fps) cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, {1.f, 0.8f, 0.4f}, 3.f * muzzleLight_}});
     }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
@@ -792,8 +831,9 @@ void App::addHud() {
     }
     if (inFps) {
         if (mode_ == Mode::Fps) {
+            const WeaponArt& wa = assets_.weapons[std::clamp(fps_.currentWeapon(), 0, kWeaponArt - 1)];
             bool flip = false;
-            const std::string& gun = fps_.gunFiring() ? animFrame(assets_.gunFire, fps_.gunAnimT(), false, &flip) : animFrame(assets_.gunIdle, 0.f, true, &flip);
+            const std::string& gun = fps_.gunFiring() ? animFrame(wa.fire, fps_.gunAnimT(), false, &flip) : animFrame(wa.idle, 0.f, true, &flip);
             float gs = H / 200.f;
             bool moving = fpsIn_.fwd || fpsIn_.back || fpsIn_.left || fpsIn_.right;
             float bob = std::sin(time_ * 6.f) * 3.f * gs * (moving ? 1.f : 0.15f);
@@ -801,22 +841,36 @@ void App::addHud() {
             if (!gun.empty()) {
                 const render::AtlasRegion& r = assets_.region(gun);
                 float gx = W * 0.5f;
-                screenSprite(gun, gx, H + recoil + std::fabs(bob) - 2.f * gs, gs, glm::vec4(1.f), 0.5f, 0.f, flip);
-                if (fps_.gunFiring() && fps_.gunAnimT() < 0.12f && !assets_.gunFlash.empty()) {
-                    const std::string& fl = animFrame(assets_.gunFlash, fps_.gunAnimT(), false);
+                screenSprite(gun, gx, H + recoil + std::fabs(bob) - 2.f * gs, gs, wa.tint, 0.5f, 0.f, flip);
+                if (fps_.gunFiring() && fps_.gunAnimT() < 0.12f && !wa.flash.empty()) {
+                    const std::string& fl = animFrame(wa.flash, fps_.gunAnimT(), false);
                     const render::AtlasRegion& fr = assets_.region(fl);
                     screenSprite(fl, gx, H + recoil - (r.h - fr.h) * gs - 6.f * gs, gs, glm::vec4(1.f), 0.5f, 0.f);
                 }
             }
             screenSprite(assets_.crosshair, W * 0.5f, H * 0.5f, std::max(1.f, s * 0.7f), glm::vec4(1.f, 1.f, 1.f, 0.85f), 0.5f, 0.5f);
         }
+        if (fps_.pickupFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 1.f, 0.6f, 0.18f * fps_.pickupFlash()));
         if (fps_.damageFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.f, 0.f, 0.45f * fps_.damageFlash()));
         panel(0.f, H - lh * 1.6f, W, lh * 1.6f, glm::vec4(0.f, 0.f, 0.f, 0.55f));
         float hy = H - lh * 1.3f;
         text(24.f, hy, "HEALTH " + std::to_string(static_cast<int>(std::ceil(fps_.health()))) + "%", s, fps_.health() < 30.f ? red : white);
         text(W * 0.5f, hy, "DEMONS " + std::to_string(fps_.enemiesLeft()) + "/" + std::to_string(fps_.totalEnemies()), s, yellow, 1);
         text(W - 24.f, hy, "LEVEL " + std::to_string(game_->level()) + "   SCORE " + std::to_string(game_->score()), s, white, 2);
-        if (mode_ == Mode::Fps && fps_.elapsed() < 3.f) text(W * 0.5f, H * 0.3f, "MOUSE LOOK  WASD MOVE  CLICK FIRE", s * 0.8f, white, 1);
+        // Weapon roster: owned weapons with ammo, current one highlighted.
+        {
+            float wy = hy - lh * 1.3f;
+            float wx = W - 24.f;
+            for (int i = kWeaponCount - 1; i >= 0; --i) {
+                const WeaponSlot& slot = fps_.weapon(i);
+                if (!slot.owned) continue;
+                std::string label = std::to_string(i + 1) + " " + assets_.weapons[i].name + (weaponDef(i).ammoPerPickup ? " " + std::to_string(slot.ammo) : "");
+                bool cur = (i == fps_.currentWeapon());
+                text(wx, wy, label, s * 0.7f, cur ? yellow : dim, 2);
+                wx -= static_cast<float>(assets_.textWidth(label, s * 0.7f)) + 18.f * s;
+            }
+        }
+        if (mode_ == Mode::Fps && fps_.elapsed() < 3.f) text(W * 0.5f, H * 0.3f, "MOUSE LOOK  WASD MOVE  CLICK FIRE  1-4/WHEEL WEAPONS", s * 0.8f, white, 1);
     }
 
     // Menus ----------------------------------------------------------------

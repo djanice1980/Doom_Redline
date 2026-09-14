@@ -102,7 +102,7 @@ private:
 
     // Blocks-mode input state (DAS)
     struct { bool left = false, right = false, down = false; float dasT = 0.f; int dasDir = 0; bool dasActive = false; } keys_;
-    struct { float dx = 0.f, dy = 0.f; bool fire = false; bool fwd = false, back = false, left = false, right = false; } fpsIn_;
+    struct { float dx = 0.f, dy = 0.f; bool fire = false; bool fwd = false, back = false, left = false, right = false; int select = -1; int wheel = 0; } fpsIn_;
 
     // Per-frame draw lists
     std::vector<render::CubeInstance> envCubes_;

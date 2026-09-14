@@ -273,11 +273,12 @@ void Game::finishClear() {
 // Move every unsupported red cell down by one row. Bottom-up so a stack of
 // red cells moves together.
 bool Game::settleStep() {
-    if (!rules_.redCellsSettle) return false;
+    if (!rules_.redCellsSettle && !collapseAll_) return false;
     bool moved = false;
     for (int r = kBoardH - 2; r >= 0; --r) {
         for (int c = 0; c < kBoardW; ++c) {
-            if (grid_[r][c].red() && grid_[r + 1][c].empty()) {
+            bool loose = grid_[r][c].red() || (collapseAll_ && !grid_[r][c].empty());
+            if (loose && grid_[r + 1][c].empty()) {
                 grid_[r + 1][c] = grid_[r][c];
                 grid_[r][c] = Cell{};
                 push(EventType::RedCellFell, c, r + 1);
@@ -285,6 +286,7 @@ bool Game::settleStep() {
             }
         }
     }
+    if (!moved) collapseAll_ = false;
     return moved;
 }
 
@@ -385,6 +387,7 @@ void Game::resumeAfterRedLine() {
     score_ += 1000 * level_;
     ++level_;
     push(EventType::LevelUp, level_);
+    collapseAll_ = true;
     phase_ = Phase::Settling;
     phaseAcc_ = 0.f;
 }

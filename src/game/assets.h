@@ -32,7 +32,16 @@ struct EnemyArt {
 };
 
 constexpr int kEnemyTiers = 5;
-constexpr int kProjectileTypes = 3;   // imp / cacodemon / baron fireballs
+constexpr int kProjectileTypes = 5;   // imp / cacodemon / baron fireballs, rocket, plasma
+constexpr int kWeaponArt = 4;         // shotgun, chaingun, rocket launcher, plasma rifle
+constexpr int kPickupArt = 8;         // stim, medikit, bullets, rockets, cells, chaingun, launcher, plasma gun
+
+struct WeaponArt {
+    std::string name;
+    SpriteAnim idle, fire, flash;
+    std::string fireSound;
+    glm::vec4 tint{1.f};
+};
 
 class Assets {
 public:
@@ -56,7 +65,8 @@ public:
     std::string white = "__white";
     EnemyArt enemies[kEnemyTiers];
     SpriteAnim projectile[kProjectileTypes], projectileHit[kProjectileTypes];
-    SpriteAnim gunIdle, gunFire, gunFlash;
+    WeaponArt weapons[kWeaponArt];
+    SpriteAnim pickups[kPickupArt];
     SpriteAnim explosion;
     std::string title;                      // optional big title graphic ("" if none)
 

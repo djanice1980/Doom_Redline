@@ -108,9 +108,11 @@ public:
     int explodeAt(int col, int row, float radius);
     // Remove a single cell without side effects (e.g. enemy walked away).
     void clearCell(int col, int row);
-    // Call when the FPS mode is over; resumes normal play (settles, spawns)
-    // and raises the level by one so each fight makes the stacking harder.
+    // Call when the FPS mode is over; resumes normal play and raises the level
+    // by one so each fight makes the stacking harder. Every remaining block
+    // (not just red ones) then falls to the floor, one row per settle step.
     void resumeAfterRedLine();
+    bool collapsing() const { return collapseAll_; }
     // Removes every red cell (used when the FPS phase consumed them all).
     void clearAllRed();
 
@@ -173,6 +175,7 @@ private:
     int level_ = 1;
     int lines_ = 0;
     int redLineEvents_ = 0;
+    bool collapseAll_ = false;   // settle phase moves every cell, not only red ones
     std::vector<Shape> bag_;
 };
 

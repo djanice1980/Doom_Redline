@@ -77,9 +77,24 @@ instanced draw.
 - Death: `explodeEnemy` calls `Game::explodeAt(cell, 1.5)` for every cell of the
   cluster, spawns debris per destroyed block, a blast sprite and light, and
   hurts the player within `2 + 0.5 tier` m. Each kill heals 5.
+- **Weapons** (`kWeapons` in `fps_mode.cpp`): shotgun (infinite, 40 dmg,
+  0.75 s), chaingun (12 dmg hitscan, 0.1 s, 60 rounds per pickup, 200 max),
+  rocket launcher (projectile 22 m/s, 110 dmg, 2.2 m splash that also clears
+  normal blocks within a cell of the impact and hurts the player, 4 per
+  pickup), plasma rifle (bolts 28 m/s, 22 dmg, 0.12 s, 40 per pickup). Player
+  projectiles test a point against each monster's cylinder every frame. Weapon
+  slots persist across fights; an empty weapon falls back to the shotgun.
+- **Loot** (`dropLoot`): each death drops `1 + tier/2` items (+1 with 25 %):
+  32 % health (medikit for tier >= 2), then ammo (favouring owned weapons;
+  the band is wider once the player owns an extra weapon), then a weapon whose
+  class follows the tier, 12 % nothing. Items pop out with a velocity, land on
+  the floor, slide back to the monster's pocket if they land inside a block,
+  and are collected within 0.7 m (health items only when not at 100).
 - The phase ends 1.2 s after the last monster dies; `Game::resumeAfterRedLine`
-  then scores `1000 * level` and raises the level. The player dying ends the
-  game (`YOU DIED` screen with the board still flat).
+  then scores `1000 * level`, raises the level and sets `collapseAll_`, so the
+  settle phase drops every remaining cell (not only red ones) one row per step
+  until the board is compact again. The player dying ends the game
+  (`YOU DIED` screen with the board still flat).
 
 ## Renderer (`src/render/renderer.h`)
 
@@ -100,8 +115,10 @@ instanced draw.
 
 Logical names only. From a Doom IWAD: monsters `POSS` (zombieman), `TROO`
 (imp), `SARG` (demon), `HEAD` (cacodemon), `BOSS` (baron) with walk / attack /
-pain / death frame runs per the Doom state tables, shotgun `SHTG`/`SHTF`, rocket
-blast `MISL` B-D, fireballs `BAL1`/`BAL2`/`BAL7` (A-B flight, C-E impact),
+pain / death frame runs per the Doom state tables, weapons `SHTG`/`SHTF`,
+`CHGG`/`CHGF`, `MISG`/`MISF`, `PLSG`/`PLSF`, pickups `STIM`, `MEDI`, `CLIP`,
+`ROCK`, `CELL`, `MGUN`, `LAUN`, `PLAS`, rocket `MISL` (A flight, B-D blast),
+plasma `PLSS`/`PLSE`, fireballs `BAL1`/`BAL2`/`BAL7` (A-B flight, C-E impact),
 wall `STARTAN3`, floor `FLOOR4_8`, ceiling `CEIL3_5`, font `STCFN*` (converted
 to white so HUD tints work), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
 `DSFIRSHT`, `DSFIRXPL`, `DSPOPAIN`, `DSBGDTH1`, `DSBGSIT1`, `DSPLPAIN`,

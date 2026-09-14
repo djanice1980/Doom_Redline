@@ -111,9 +111,29 @@ void Assets::loadProcedural(audio::Audio& audio) {
         e.deathSound = "enemy_die";
         e.attackSound = t == 0 ? "shoot" : "fireball";
     }
-    anim(gunIdle, "gun_idle", 1, 1.f, [](int) { return proc::gunFrame(0); });
-    anim(gunFire, "gun_fire", 2, 10.f, [](int i) { return proc::gunFrame(1 + i); });
-    anim(gunFlash, "gun_flash", 1, 10.f, [](int) { return proc::muzzleFlash(48); });
+    const char* weaponNames[kWeaponArt] = {"SHOTGUN", "CHAINGUN", "ROCKET LAUNCHER", "PLASMA RIFLE"};
+    const glm::vec4 weaponTints[kWeaponArt] = {{1.f, 1.f, 1.f, 1.f}, {0.8f, 0.8f, 0.9f, 1.f}, {0.6f, 0.9f, 0.6f, 1.f}, {0.6f, 0.7f, 1.f, 1.f}};
+    const char* weaponSounds[kWeaponArt] = {"shoot", "fire_chain", "fire_rocket", "fire_plasma"};
+    for (int w = 0; w < kWeaponArt; ++w) {
+        WeaponArt& a = weapons[w];
+        a.name = weaponNames[w];
+        a.tint = weaponTints[w];
+        a.fireSound = weaponSounds[w];
+        anim(a.idle, "gun_idle", 1, 1.f, [](int) { return proc::gunFrame(0); });
+        anim(a.fire, "gun_fire", 2, 10.f, [](int i) { return proc::gunFrame(1 + i); });
+        anim(a.flash, "gun_flash", 1, 10.f, [](int) { return proc::muzzleFlash(48); });
+    }
+    const uint8_t pickupCols[kPickupArt][3] = {{200, 60, 60}, {230, 230, 230}, {200, 170, 60}, {120, 120, 120}, {80, 160, 240}, {160, 160, 170}, {90, 140, 90}, {90, 110, 200}};
+    for (int k = 0; k < kPickupArt; ++k) {
+        std::string key = "pickup" + std::to_string(k);
+        Image img = proc::solid(k >= 5 ? 28 : 14, k >= 5 ? 12 : 10, pickupCols[k][0], pickupCols[k][1], pickupCols[k][2]);
+        img.offsetX = img.width / 2;
+        img.offsetY = img.height;
+        atlas_.add(key, img);
+        pickups[k] = {};
+        pickups[k].frames.push_back(key);
+        pickups[k].mirrored.push_back(false);
+    }
     anim(explosion, "explosion", 5, 14.f, [](int i) { return proc::explosionFrame(i, 64); });
     for (int p = 0; p < kProjectileTypes; ++p) {
         anim(projectile[p], "fireball", 1, 1.f, [](int) { return proc::fireball(16); });
@@ -147,6 +167,12 @@ void Assets::loadProcedural(audio::Audio& audio) {
     add("fireball_hit", proc::sndHit());
     add("gameover", proc::sndGameOver());
     add("menu", proc::sndMove());
+    add("menu_select", proc::sndRotate());
+    add("fire_chain", proc::sndHit());
+    add("fire_rocket", proc::sndShoot());
+    add("fire_plasma", proc::sndFireball());
+    add("pickup_item", proc::sndClear());
+    add("pickup_weapon", proc::sndLevelUp());
 }
 
 // ---------------------------------------------------------------------------
@@ -232,15 +258,30 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         e.deathSound = std::string("death") + std::to_string(t);
         e.attackSound = std::string("attack") + std::to_string(t);
     }
-    ok &= addSprite(gunIdle, "SHTG", "A", 1.f);
-    ok &= addSprite(gunFire, "SHTG", "BCDCB", 9.f);
-    ok &= addSprite(gunFlash, "SHTF", "AB", 12.f);
-    ok &= addSprite(explosion, "MISL", "BCD", 12.f);
-    const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7"};
-    for (int p = 0; p < kProjectileTypes; ++p) {
-        ok &= addSprite(projectile[p], balls[p], "AB", 8.f);
-        ok &= addSprite(projectileHit[p], balls[p], "CDE", 14.f);
+    struct WDef { const char* name; const char* gun; const char* idle; const char* fire; float fps; const char* flash; const char* flashFrames; const char* sound; };
+    const WDef wdefs[kWeaponArt] = {
+        {"SHOTGUN", "SHTG", "A", "BCDCB", 9.f, "SHTF", "AB", "shoot"},
+        {"CHAINGUN", "CHGG", "A", "AB", 16.f, "CHGF", "AB", "fire_chain"},
+        {"ROCKET LAUNCHER", "MISG", "A", "BA", 6.f, "MISF", "ABCD", "fire_rocket"},
+        {"PLASMA RIFLE", "PLSG", "A", "B", 12.f, "PLSF", "AB", "fire_plasma"},
+    };
+    for (int w = 0; w < kWeaponArt; ++w) {
+        WeaponArt& a = weapons[w];
+        a.name = wdefs[w].name;
+        a.fireSound = wdefs[w].sound;
+        ok &= addSprite(a.idle, wdefs[w].gun, wdefs[w].idle, 1.f);
+        ok &= addSprite(a.fire, wdefs[w].gun, wdefs[w].fire, wdefs[w].fps);
+        ok &= addSprite(a.flash, wdefs[w].flash, wdefs[w].flashFrames, 12.f);
     }
+    const char* pickupSprites[kPickupArt] = {"STIM", "MEDI", "CLIP", "ROCK", "CELL", "MGUN", "LAUN", "PLAS"};
+    for (int k = 0; k < kPickupArt; ++k) ok &= addSprite(pickups[k], pickupSprites[k], "A", 1.f);
+    ok &= addSprite(explosion, "MISL", "BCD", 12.f);
+    const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7", "MISL", "PLSS"};
+    const char* flight[kProjectileTypes] = {"AB", "AB", "AB", "A", "AB"};
+    for (int p = 0; p < kProjectileTypes; ++p) ok &= addSprite(projectile[p], balls[p], flight[p], 8.f);
+    for (int p = 0; p < 3; ++p) ok &= addSprite(projectileHit[p], balls[p], "CDE", 14.f);
+    ok &= addSprite(projectileHit[3], "MISL", "BCD", 12.f);
+    ok &= addSprite(projectileHit[4], "PLSE", "ABCDE", 16.f);
     if (!ok) {
         std::fprintf(stderr, "[assets] WAD is missing expected sprites; falling back to procedural art\n");
         atlas_ = {};
@@ -302,6 +343,12 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSound("gameover", {"DSPDIEHI", "DSPLDETH"}, proc::sndGameOver());
     addSound("menu", {"DSPSTOP"}, proc::sndMove());
     addSound("menu_select", {"DSPISTOL"}, proc::sndRotate());
+    addSound("fire_chain", {"DSPISTOL"}, proc::sndHit());
+    addSound("fire_rocket", {"DSRLAUNC"}, proc::sndShoot());
+    addSound("fire_plasma", {"DSPLASMA"}, proc::sndFireball());
+    addSound("rocket_hit", {"DSRXPLOD", "DSBAREXP"}, proc::sndExplode());
+    addSound("pickup_item", {"DSITEMUP"}, proc::sndClear());
+    addSound("pickup_weapon", {"DSWPNUP"}, proc::sndLevelUp());
     for (int t = 0; t < kEnemyTiers; ++t) {
         addSound(enemies[t].sightSound, {sightSnd[t]}, proc::sndRedLine());
         addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());
