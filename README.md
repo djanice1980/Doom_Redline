@@ -71,6 +71,16 @@ the boss-level themes during fights, and the ending music over game over.
 Press M to toggle it; `--music-volume 0.3` sets the level; `--no-music`
 keeps only the sound effects.
 
+The 2024 rerelease ships two more soundtracks in `extras.wad` next to the
+IWAD, and the game streams them straight out of that file: **Modern** (Andrew
+Hulshult's 2023 recordings, `H_*`) and **SC-55** (the original score recorded
+on a Roland SC-55, `O_*`, covering most Doom II and a few Doom tracks).
+Cycle Classic / SC-55 / Modern with the N key or the MUSIC item on the title
+and pause menus; the choice is remembered in `settings.txt` next to the high
+scores. `--music classic|sc55|modern` sets it from the command line, and
+`REDLINE_EXTRAS=/path/extras.wad` points at the file if it is elsewhere. Any
+piece a set lacks falls back to the classic version.
+
 By default the tracks go through the built-in OPL3 emulator. If you prefer
 General MIDI, install a soundfont and the game switches to FluidSynth
 automatically (rebuild after installing so CMake picks up the library, which

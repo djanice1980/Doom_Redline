@@ -68,10 +68,21 @@ App::App(Options opts) : opts_(std::move(opts)) {
         }
         bool ok = music_.init(audio_.deviceId(), audio::Audio::kRate, bank, soundfont);
         for (auto& [name, data] : assets_.music) music_.addTrack(name, data);
+        // The recorded soundtracks are mastered hot; bring them level with the synth.
+        if (music_.oggAvailable())
+            for (const Assets::OggLump& l : assets_.oggMusic) music_.addOggTrack(l.name, l.path, l.offset, l.size, l.name[0] == 'H' ? 0.55f : 0.8f);
         music_.setVolume(opts_.musicVolume);
         std::fprintf(stderr, "[music] %s, %zu tracks, backend %s\n", ok ? "ready" : "unavailable", music_.trackNames().size(), music_.backendName());
     }
     highScores_.load();
+    loadSettings();
+    if (!opts_.musicSet.empty()) {
+        if (opts_.musicSet == "classic") musicSet_ = MusicSet::Classic;
+        else if (opts_.musicSet == "sc55") musicSet_ = MusicSet::Sc55;
+        else if (opts_.musicSet == "modern") musicSet_ = MusicSet::Modern;
+        saveSettings();
+    }
+    std::fprintf(stderr, "[music] set: %s\n", musicSetName());
     std::fprintf(stderr, "[app] high scores: %zu entries at %s\n", highScores_.entries().size(), highScores_.path().c_str());
 
     newGame();
@@ -79,8 +90,10 @@ App::App(Options opts) : opts_(std::move(opts)) {
 }
 
 App::~App() {
-    // Order matters: the audio device and streams must go before SDL_Quit
-    // (they are members, so they would otherwise be destroyed after it).
+    // Order matters: the music stream, then the audio device and effect
+    // streams, must go before SDL_Quit (they are members, so they would
+    // otherwise be destroyed after it).
+    music_.shutdown();
     audio_.shutdown();
     renderer_.reset();
     ctx_.reset();
@@ -195,7 +208,7 @@ void App::enterMode(Mode m) {
     menu_ = {};
     switch (m) {
     case Mode::Title:
-        menu_.items = {"START", "QUIT"};
+        menu_.items = {"START", std::string("MUSIC: ") + musicSetName(), "QUIT"};
         break;
     case Mode::Alert:
         play("redline", 1.f);
@@ -237,7 +250,7 @@ void App::enterMode(Mode m) {
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
     case Mode::Paused:
-        menu_.items = {"RESUME", "RESTART", "QUIT"};
+        menu_.items = {"RESUME", std::string("MUSIC: ") + musicSetName(), "RESTART", "QUIT"};
         break;
     default:
         break;
@@ -245,11 +258,77 @@ void App::enterMode(Mode m) {
     updateMusic();
 }
 
+// Settings: the chosen music set persists next to the high scores.
+void App::loadSettings() {
+    if (settingsPath_.empty()) {
+        char* pref = SDL_GetPrefPath("redline", "redline");
+        settingsPath_ = pref ? std::string(pref) + "settings.txt" : "settings.txt";
+        if (pref) SDL_free(pref);
+    }
+    // Default: the modern soundtrack when the rerelease extras are present.
+    bool haveModern = false;
+    for (const Assets::OggLump& l : assets_.oggMusic) if (l.name[0] == 'H') haveModern = true;
+    musicSet_ = haveModern && music_.oggAvailable() ? MusicSet::Modern : MusicSet::Classic;
+    if (std::FILE* f = std::fopen(settingsPath_.c_str(), "r")) {
+        char key[64], val[64];
+        while (std::fscanf(f, "%63[^=]=%63s\n", key, val) == 2) {
+            std::string k = key, v = val;
+            if (k == "music_set") musicSet_ = v == "classic" ? MusicSet::Classic : v == "sc55" ? MusicSet::Sc55 : MusicSet::Modern;
+            else if (k == "music_on") music_.setEnabled(v != "0");
+        }
+        std::fclose(f);
+    }
+}
+
+void App::saveSettings() const {
+    if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\n", musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0);
+        std::fclose(f);
+    }
+}
+
+const char* App::musicSetName() const {
+    switch (musicSet_) {
+    case MusicSet::Classic: return "CLASSIC";
+    case MusicSet::Sc55: return "SC-55";
+    default: return "MODERN";
+    }
+}
+
+void App::cycleMusicSet() {
+    bool haveModern = false, haveSc55 = false;
+    for (const Assets::OggLump& l : assets_.oggMusic) { if (l.name[0] == 'H') haveModern = true; if (l.name[0] == 'O') haveSc55 = true; }
+    if (!music_.oggAvailable()) haveModern = haveSc55 = false;
+    for (int i = 0; i < 3; ++i) {
+        musicSet_ = static_cast<MusicSet>((static_cast<int>(musicSet_) + 1) % 3);
+        if (musicSet_ == MusicSet::Classic) break;
+        if (musicSet_ == MusicSet::Sc55 && haveSc55) break;
+        if (musicSet_ == MusicSet::Modern && haveModern) break;
+    }
+    saveSettings();
+    announce(std::string("MUSIC: ") + musicSetName(), glm::vec4(0.8f, 0.8f, 1.f, 1.f), 0.9f);
+    music_.stop(0.2f);
+    updateMusic();
+}
+
+// Classic (D_) name -> the same piece in the chosen set, falling back to the
+// classic MUS when the set lacks it.
+std::string App::resolveTrack(const std::string& classicName) const {
+    if (classicName.size() < 3) return classicName;
+    std::string suffix = classicName.substr(2);
+    if (musicSet_ == MusicSet::Modern && music_.hasTrack("H_" + suffix)) return "H_" + suffix;
+    if (musicSet_ == MusicSet::Sc55 && music_.hasTrack("O_" + suffix)) return "O_" + suffix;
+    return classicName;
+}
+
 // Music selection: title music on the menu, a stacking track per level, a
 // fight track per red line, the ending music over the game-over screen.
 std::string App::pickTrack(const std::vector<const char*>& prefs, int index) const {
     std::vector<std::string> avail;
-    for (const char* p : prefs) if (music_.hasTrack(p)) avail.push_back(p);
+    for (const char* p : prefs) {
+        std::string r = resolveTrack(p);
+        if (music_.hasTrack(r)) avail.push_back(r);
+    }
     if (avail.empty()) return "";
     return avail[static_cast<size_t>(((index % static_cast<int>(avail.size())) + static_cast<int>(avail.size())) % static_cast<int>(avail.size()))];
 }
@@ -280,7 +359,7 @@ void App::updateMusic() {
     case Mode::Alert: case Mode::FlyIn: case Mode::Countdown: case Mode::Fps: case Mode::FlyOut: {
         want = pickTrack(kFight, game_ ? game_->redLineCount() - 1 : 0);
         if (want.empty()) return;
-        for (const char* f : kFight) if (music_.current() == f) return;   // keep the fight track across the transitions
+        for (const char* f : kFight) if (music_.current() == resolveTrack(f)) return;   // keep the fight track across the transitions
         break;
     }
     case Mode::GameOver:
@@ -345,6 +424,10 @@ void App::menuKey(int key) {
 void App::menuSelect() {
     const std::string& item = menu_.items[static_cast<size_t>(menu_.index)];
     if (item == "QUIT") running_ = false;
+    else if (item.rfind("MUSIC: ", 0) == 0) {
+        cycleMusicSet();
+        menu_.items[static_cast<size_t>(menu_.index)] = std::string("MUSIC: ") + musicSetName();
+    }
     else if (item == "START") enterMode(Mode::Blocks);
     else if (item == "RESUME") enterMode(pausedFrom_);
     else if (item == "RESTART") { newGame(); enterMode(Mode::Blocks); }
@@ -387,7 +470,13 @@ void App::handleEvents() {
             }
             if (k == SDLK_M && !e.key.repeat) {
                 music_.setEnabled(!music_.enabled());
+                saveSettings();
                 announce(music_.enabled() ? "MUSIC ON" : "MUSIC OFF", glm::vec4(0.8f, 0.8f, 1.f, 1.f), 0.9f);
+                break;
+            }
+            if (k == SDLK_N && !e.key.repeat) {
+                cycleMusicSet();
+                for (auto& item : menu_.items) if (item.rfind("MUSIC: ", 0) == 0) item = std::string("MUSIC: ") + musicSetName();
                 break;
             }
             if (k == SDLK_ESCAPE) {
@@ -1230,7 +1319,7 @@ void App::addHud() {
             }
         }
         text(W * 0.5f, H - lh * 1.5f, assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : "ASSETS: PROCEDURAL (NO WAD FOUND)", s * 0.7f, dim, 1);
-        text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : music_.backendName()) + "  (M TOGGLES)", s * 0.6f, dim, 2);
+        text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : (std::string(musicSetName()) + (musicSet_ == MusicSet::Classic ? std::string(" / ") + music_.backendName() : ""))) + "   M MUTE  N SET", s * 0.6f, dim, 2);
     }
     if (mode_ == Mode::Paused) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.5f));

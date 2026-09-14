@@ -228,6 +228,13 @@ Anything missing falls back to `procedural.cpp`. Block tiles are always ours.
   line count over the boss/late themes; game over plays D_BUNNY once. Doom 2
   names are in the same preference lists.
 
+- `oggstream.cpp` streams Ogg Vorbis through libvorbisfile from a byte range
+  of a file (custom read/seek/tell callbacks), linearly resampled to the
+  output rate. `Assets` indexes `extras.wad` by reading only its directory
+  and the 4-byte header of each `H_`/`O_` lump. `App::resolveTrack` maps a
+  classic `D_` name to `H_`/`O_` for the Modern / SC-55 sets with fallback;
+  the set and the mute state persist in `settings.txt` (SDL pref path).
+
 ## High scores (`src/game/highscores.cpp`)
 
 Top 10 in SDL's pref path as whitespace-separated lines; `add()` returns the

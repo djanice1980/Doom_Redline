@@ -73,6 +73,12 @@ public:
     // Music: raw MUS lumps by name (D_E1M1 ...) and the GENMIDI OPL bank.
     std::map<std::string, std::vector<uint8_t>> music;
     std::vector<uint8_t> genmidi;
+    // Streamed Ogg Vorbis music from the rerelease's extras.wad (H_* modern
+    // soundtrack by Andrew Hulshult, O_* original score recorded on an SC-55):
+    // only the directory is read; the data streams at playback time.
+    struct OggLump { std::string name; std::string path; uint64_t offset; uint64_t size; };
+    std::vector<OggLump> oggMusic;
+    std::string extrasPath;
 
     // Font: char -> atlas key. Doom's STCFN font is uppercase only.
     std::map<char, std::string> font;

@@ -11,6 +11,7 @@
 
 #include "audio/genmidi.h"
 #include "audio/mus.h"
+#include "audio/oggstream.h"
 
 struct SDL_AudioStream;
 
@@ -39,8 +40,12 @@ public:
     // deviceId: the SDL audio device already opened by Audio. Returns false if
     // no backend could be created (music stays silent).
     bool init(uint32_t deviceId, uint32_t sampleRate, const GenMidiBank& bank, const std::string& soundfontPath);
+    void shutdown();   // unbind/destroy the stream; must run before the audio device closes and before SDL_Quit
     void addTrack(const std::string& name, std::vector<uint8_t> musData);
-    bool hasTrack(const std::string& name) const { return tracks_.count(name) != 0; }
+    // A streamed Ogg Vorbis track living at a byte range of a file (size 0 = whole file).
+    void addOggTrack(const std::string& name, const std::string& path, uint64_t offset, uint64_t size, float gain = 1.f);
+    bool hasTrack(const std::string& name) const { return tracks_.count(name) != 0 || oggTracks_.count(name) != 0; }
+    bool oggAvailable() const;
     std::vector<std::string> trackNames() const;
 
     // Starts a track (fading in). `loop` repeats it; otherwise the track ends
@@ -59,8 +64,12 @@ private:
     void renderInto(float* out, int frames);
     void dispatch(const MusEvent& ev);
 
+    struct OggInfo { std::string path; uint64_t offset, size; float gain; };
     std::unique_ptr<SynthBackend> backend_;
     std::map<std::string, MusTrack> tracks_;
+    std::map<std::string, OggInfo> oggTracks_;
+    std::unique_ptr<OggStream> ogg_;   // the streaming track when one is playing
+    float oggGain_ = 1.f;
     SDL_AudioStream* stream_ = nullptr;
     uint32_t sampleRate_ = 48000;
     std::mutex mutex_;
@@ -78,6 +87,11 @@ private:
     float volume_ = 0.45f;
     bool enabled_ = true;
     std::vector<float> scratch_;
+    // REDLINE_MUSIC_DUMP=<file.wav>: the first dumpSeconds of the mix are written out (verification aid).
+    std::vector<float> dump_;
+    std::string dumpPath_;
+    size_t dumpFrames_ = 0;
+    bool dumpDone_ = false;
 };
 
 }  // namespace rl::audio

@@ -84,7 +84,8 @@ if(REDLINE_BUILD_GAME)
       src/audio/opl_driver.cpp
       src/audio/genmidi.cpp
       src/audio/mus.cpp
-      src/audio/music.cpp)
+      src/audio/music.cpp
+      src/audio/oggstream.cpp)
   add_dependencies(redline rl_shaders)
   target_include_directories(redline PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR})
   target_link_libraries(redline PRIVATE rl_core Vulkan::Vulkan SDL3::SDL3 glm::glm)
@@ -102,6 +103,12 @@ if(REDLINE_BUILD_GAME)
       target_link_libraries(redline PRIVATE PkgConfig::FLUIDSYNTH)
       target_compile_definitions(redline PRIVATE REDLINE_HAVE_FLUIDSYNTH=1)
       message(STATUS "FluidSynth ${FLUIDSYNTH_VERSION} found: soundfont music backend enabled")
+    endif()
+    pkg_check_modules(VORBISFILE IMPORTED_TARGET vorbisfile)
+    if(VORBISFILE_FOUND)
+      target_link_libraries(redline PRIVATE PkgConfig::VORBISFILE)
+      target_compile_definitions(redline PRIVATE REDLINE_HAVE_VORBIS=1)
+      message(STATUS "libvorbisfile ${VORBISFILE_VERSION} found: streamed Ogg music enabled")
     endif()
   endif()
 

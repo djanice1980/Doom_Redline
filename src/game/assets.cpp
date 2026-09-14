@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "game/procedural.h"
 #ifdef REDLINE_HAVE_WAD
@@ -303,6 +304,42 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         genmidi.assign(bytes.begin(), bytes.end());
     }
     std::fprintf(stderr, "[assets] %zu music tracks, GENMIDI %s\n", music.size(), genmidi.empty() ? "missing" : "loaded");
+
+    // extras.wad (same folder as the IWAD, or $REDLINE_EXTRAS): index the Ogg music without loading 600 MB.
+    {
+        std::vector<fs::path> candidates;
+        if (const char* e = std::getenv("REDLINE_EXTRAS")) candidates.emplace_back(e);
+        candidates.push_back(path.parent_path() / "extras.wad");
+        for (const fs::path& ex : candidates) {
+            std::error_code ec;
+            if (!fs::is_regular_file(ex, ec)) continue;
+            std::FILE* f = std::fopen(ex.string().c_str(), "rb");
+            if (!f) continue;
+            uint8_t hdr[12];
+            if (std::fread(hdr, 1, 12, f) == 12) {
+                uint32_t n = hdr[4] | (hdr[5] << 8) | (hdr[6] << 16) | (static_cast<uint32_t>(hdr[7]) << 24);
+                uint32_t dir = hdr[8] | (hdr[9] << 8) | (hdr[10] << 16) | (static_cast<uint32_t>(hdr[11]) << 24);
+                std::vector<uint8_t> entries(static_cast<size_t>(n) * 16);
+                if (n < 100000 && std::fseek(f, static_cast<long>(dir), SEEK_SET) == 0 && std::fread(entries.data(), 1, entries.size(), f) == entries.size()) {
+                    for (uint32_t i = 0; i < n; ++i) {
+                        const uint8_t* e = entries.data() + static_cast<size_t>(i) * 16;
+                        uint32_t off = e[0] | (e[1] << 8) | (e[2] << 16) | (static_cast<uint32_t>(e[3]) << 24);
+                        uint32_t size = e[4] | (e[5] << 8) | (e[6] << 16) | (static_cast<uint32_t>(e[7]) << 24);
+                        std::string name(reinterpret_cast<const char*>(e + 8), 8);
+                        name = name.c_str();
+                        if (name.size() < 3 || name[1] != '_' || (name[0] != 'H' && name[0] != 'O') || size < 64) continue;
+                        uint8_t head[4];
+                        if (std::fseek(f, static_cast<long>(off), SEEK_SET) != 0 || std::fread(head, 1, 4, f) != 4) continue;
+                        if (std::memcmp(head, "OggS", 4) != 0) continue;
+                        oggMusic.push_back({name, ex.string(), off, size});
+                    }
+                }
+            }
+            std::fclose(f);
+            if (!oggMusic.empty()) { extrasPath = ex.string(); break; }
+        }
+        if (!oggMusic.empty()) std::fprintf(stderr, "[assets] %s: %zu streamed music tracks (modern + SC-55)\n", fs::path(extrasPath).filename().string().c_str(), oggMusic.size());
+    }
 
     if (auto pic = wad::loadPatch(*wad, *pal, "M_DOOM")) {
         atlas_.add("title_doom", *pic);
