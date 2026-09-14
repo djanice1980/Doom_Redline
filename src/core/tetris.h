@@ -58,7 +58,7 @@ struct Rules {
     float lockDelay = 0.40f;          // seconds resting before lock
     float clearAnimTime = 0.30f;      // seconds the cleared row flashes
     float settleStepTime = 0.05f;     // seconds per one-row red-cell fall
-    int linesPerLevel = 10;
+    int linesPerLevel = 0;            // 0 = lines never raise the level; only surviving fights does
     // Corruption: as the stack climbs, normal blocks turn evil. danger() ramps
     // from 0 at `corruptionStartRows` filled rows to 1 at the top; corruption
     // events fire at corruptionRate * danger^2 per second (plus 10 %/level).
@@ -76,6 +76,12 @@ struct Rules {
     // evil spawn a few seconds later.
     float corruptionHoleBias = 0.65f;
     int corruptionHoleMaxEmpties = 2;
+    // Panic: with the stack within `panicRows` of the top, corruption and evil
+    // spawns run at least `panicRate` per second with bigger bursts, so the
+    // board is driven into a fight before it overflows.
+    int panicRows = 4;
+    float panicRate = 6.f;
+    int panicBurst = 3;
     // Evil spawn: an empty cell fully surrounded by red gets filled by a new
     // red block. All four neighbours (left, right, above, below) must be red or
     // turning; on the bottom row the floor stands in for "below", and the side
@@ -171,6 +177,11 @@ public:
     int lastClearPoints() const { return lastClearPoints_; }
     int stackRows() const;                        // filled height of the stack in rows
     float danger() const;                         // 0..1 corruption pressure
+    bool panic() const { return stackRows() >= kBoardH - rules_.panicRows; }
+    // The secret weapon: removes every red block, stops all corruption and
+    // spawning, and cleanses the red minos of the falling and next pieces.
+    // Returns the number of red cells removed.
+    int purgeRed();
     int corruptionTargetRow() const;              // row the next corruption hits, -1 if none
     std::vector<std::pair<int, int>> evilSpawnCandidates() const;   // empty cells evil can fill
     // Normal cells next to a hole in an almost-full row, ordered above/below

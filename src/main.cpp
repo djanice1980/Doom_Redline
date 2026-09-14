@@ -23,6 +23,8 @@ void usage() {
         "  --level <n>          Starting level for --scenario fps (enemy health scaling)\n"
         "  --absorb <sec>       Seconds before a monster may absorb blocks and grow (default 20)\n"
         "  --god                Player takes no damage (testing)\n"
+        "  --keys <letters>@<frame>  Type letters at a frame (testing), e.g. --keys BFG@30\n"
+        "  --stack <rows>       Pre-fill that many holey rows (testing)\n"
         "  --mute\n"
         "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1\n");
 }
@@ -46,6 +48,8 @@ int main(int argc, char** argv) {
         else if (a == "--level") o.level = std::atoi(next());
         else if (a == "--absorb") o.absorbPeriod = static_cast<float>(std::atof(next()));
         else if (a == "--god") o.god = true;
+        else if (a == "--keys") { std::string v = next(); size_t at = v.find('@'); o.keys = v.substr(0, at); if (at != std::string::npos) o.keysFrame = std::atoi(v.c_str() + at + 1); }
+        else if (a == "--stack") o.stackRows = std::atoi(next());
         else if (a == "--mute") o.mute = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }

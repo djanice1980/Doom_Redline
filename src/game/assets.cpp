@@ -173,6 +173,7 @@ void Assets::loadProcedural(audio::Audio& audio) {
     add("fire_plasma", proc::sndFireball());
     add("pickup_item", proc::sndClear());
     add("pickup_weapon", proc::sndLevelUp());
+    add("bfg", proc::sndExplode());
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +352,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSound("rocket_hit", {"DSRXPLOD", "DSBAREXP"}, proc::sndExplode());
     addSound("pickup_item", {"DSITEMUP"}, proc::sndClear());
     addSound("pickup_weapon", {"DSWPNUP"}, proc::sndLevelUp());
+    addSound("bfg", {"DSBFG", "DSRXPLOD"}, proc::sndExplode());
     for (int t = 0; t < kEnemyTiers; ++t) {
         addSound(enemies[t].sightSound, {sightSnd[t]}, proc::sndRedLine());
         addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());

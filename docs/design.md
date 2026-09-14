@@ -38,6 +38,17 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   Red and `CellTurnedRed` fires. A red row formed this way triggers the red
   line immediately; `spawn()` keeps the interrupted active piece so it resumes
   after the fight.
+- **Panic.** `panic()` is true within `panicRows` (4) of the top; corruption
+  and evil-spawn rates are then at least `panicRate` (6/s) and corruption
+  bursts get `panicBurst` (3) extra cells. This is the intended escape from a
+  stack about to overflow.
+- **Levels.** `linesPerLevel` defaults to 0: only `resumeAfterRedLine` raises
+  the level.
+- **Secret: BFG9000.** Typing the letters B, F, G while stacking (once per
+  playthrough, tracked in `App::bfgUsed_`) calls `Game::purgeRed()`: every red
+  block is erased, all flickering and spawning stops, and the red minos of the
+  falling and next pieces become normal. Green flash, DSBFG, "BFG SPENT" in
+  the side panel afterwards. Not mentioned in the README or in-game hints.
 - **Evil spawn.** `evilSpawnCandidates()` lists empty cells whose four
   neighbours are all red or corrupting: the floor and side walls count as red,
   the cell above must be a real block (open sky disqualifies), and at least

@@ -501,7 +501,47 @@ static void testCorruptionBuildsSurround() {
     CHECK(h.holeSurroundTargets().empty());
 }
 
+static void testPanicAndPurge() {
+    Rules r = fastRules();
+    r.corruptionRate = 0.f;      // only panic can drive it
+    r.evilSpawnRate = 0.f;
+    r.corruptionTime = 5.f;
+    Game g(8, r);
+    for (int row = 5; row < 20; ++row) fill(g, row, CellKind::Normal, 0);   // 15 rows: not yet within 4 of the top
+    CHECK(!g.panic());
+    fill(g, 4, CellKind::Normal, 0);                                        // 16 rows: panic
+    CHECK(g.panic());
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    int corrupting = 0;
+    for (int i = 0; i < 100 && g.phase() == Phase::Falling; ++i) {
+        g.tick(0.02f);
+        for (const Event& e : g.drainEvents()) if (e.type == EventType::CellCorrupting) ++corrupting;
+    }
+    CHECK(corrupting >= 4);   // ~2 s at >= 6 events/s with bursts of up to 4 extra
+    // The BFG: every red block and every flicker gone, pieces cleansed.
+    g.setCell(3, 19, Cell{CellKind::Red, 0});
+    g.forcePiece(Shape::T, {true, false, true, false});
+    int removed = g.purgeRed();
+    CHECK(removed >= 1);
+    int reds = 0, flick = 0;
+    for (int row = 0; row < 20; ++row) for (int c = 0; c < 10; ++c) { reds += g.at(c, row).red(); flick += g.at(c, row).corrupt > 0.f; }
+    CHECK(reds == 0 && flick == 0);
+    CHECK(!g.next().red[0] && !g.active()->red[0]);
+    // Lines no longer raise the level by default.
+    Game h(1, fastRules());
+    for (int row = 16; row < 20; ++row) fill(h, row, CellKind::Normal, 0);
+    h.forcePiece(Shape::I, {});
+    h.spawnNow();
+    h.rotateCW();
+    for (int i = 0; i < 6; ++i) h.moveLeft();
+    h.hardDrop();
+    runUntil(h, Phase::Falling);
+    CHECK(h.lines() == 4 && h.level() == 1);
+}
+
 int main() {
+    testPanicAndPurge();
     testCorruptionBuildsSurround();
     testEvilSpawn();
     testRotationKicksOnFloor();

@@ -87,7 +87,9 @@ Up/Down or W/S to pick, Enter or click to confirm.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
 - **Corruption.** Once the stack is 9 rows high, normal blocks start turning
-  evil. Two thirds of the time an event goes after a hole in an almost-full
+  evil. Within four rows of the top it goes into overdrive (at least six
+  events a second, bigger bursts, evil spawns just as fast): a board about to
+  overflow is driven into a fight instead, which is your way out. Two thirds of the time an event goes after a hole in an almost-full
   row (two empties or fewer, something solid above it): the blocks above and
   below the hole turn first, then the ones beside it, so a change builds the
   surround for an evil spawn a few seconds later. Otherwise it picks the row

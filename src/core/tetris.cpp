@@ -293,10 +293,12 @@ void Game::finishClear() {
     score_ += lastClearPoints_;
     lines_ += cleared;
     push(EventType::LinesCleared, cleared, lastClearPoints_);
-    int newLevel = 1 + lines_ / rules_.linesPerLevel;
-    if (newLevel != level_) {
-        level_ = newLevel;
-        push(EventType::LevelUp, level_);
+    if (rules_.linesPerLevel > 0) {
+        int newLevel = 1 + lines_ / rules_.linesPerLevel;
+        if (newLevel > level_) {
+            level_ = newLevel;
+            push(EventType::LevelUp, level_);
+        }
     }
     phase_ = Phase::Settling;
     phaseAcc_ = 0.f;
@@ -373,9 +375,11 @@ void Game::tick(float dt) {
                     }
                 }
             float d = danger();
+            const bool panicking = panic();
             {
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 float spawnRate = rules_.evilSpawnRate * (0.3f + 0.7f * d);
+                if (panicking) spawnRate = std::max(spawnRate, rules_.panicRate);
                 if (u(rng_) < spawnRate * dt) {
                     auto holes = evilSpawnCandidates();
                     if (!holes.empty()) {
@@ -387,9 +391,10 @@ void Game::tick(float dt) {
             }
             if (d > 0.f) {
                 float rate = rules_.corruptionRate * d * d * (1.f + 0.1f * static_cast<float>(level_ - 1));
+                if (panicking) rate = std::max(rate, rules_.panicRate);
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 if (u(rng_) < rate * dt) {
-                    int maxN = 1 + static_cast<int>(d * static_cast<float>(rules_.corruptionBurst));
+                    int maxN = 1 + static_cast<int>(d * static_cast<float>(rules_.corruptionBurst)) + (panicking ? rules_.panicBurst : 0);
                     int n = 1 + static_cast<int>(u(rng_) * static_cast<float>(maxN));   // 1..maxN
                     std::vector<std::pair<int, int>> targets;
                     // Prefer closing a red surround around a hole in an almost-full row.
@@ -599,6 +604,19 @@ std::vector<std::pair<int, int>> Game::evilSpawnCandidates() const {
         }
     }
     return out;
+}
+
+int Game::purgeRed() {
+    int removed = 0;
+    for (auto& row : grid_)
+        for (auto& c : row) {
+            if (c.red()) { c = Cell{}; ++removed; }
+            else if (c.spawning()) { c = Cell{}; }
+            else c.corrupt = 0.f;
+        }
+    if (active_) active_->red = {};
+    next_.red = {};
+    return removed;
 }
 
 void Game::clearAllRed() {
