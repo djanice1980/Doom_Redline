@@ -389,8 +389,11 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
         case FpsEvent::Type::EnemySight: {
-            // Announce the biggest monster in the room.
+            // Announce the biggest monster in the room and log the roster.
             play(art.sightSound, 0.9f);
+            std::string roster;
+            for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.tier, 0, kEnemyTiers - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
+            std::fprintf(stderr, "[fps] level %d roster: %s\n", fps_.level(), roster.c_str());
             break;
         }
         }

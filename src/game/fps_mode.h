@@ -48,6 +48,10 @@ struct EnemyStats {
 };
 constexpr int kMaxTier = 6;   // zombie, imp, demon, cacodemon, baron, cyberdemon, spider mastermind
 const EnemyStats& enemyStats(int tier);
+// Biggest class the level allows to spawn (absorbing may go one higher).
+int maxTierForLevel(int level);
+// Largest red region a class is drawn from; bigger regions split into several monsters.
+int maxRegionSizeForTier(int tier);
 
 // Projectile types index Assets::projectile / projectileHit.
 enum ProjectileType { kProjImp = 0, kProjCaco = 1, kProjBaron = 2, kProjRocket = 3, kProjPlasma = 4, kProjTypeCount = 5 };

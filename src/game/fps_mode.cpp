@@ -43,7 +43,66 @@ int tierForRegion(int size) {
     if (size <= 24) return 5;
     return 6;
 }
+
+// Split a region into k spatially compact groups: farthest-point seeds, then
+// nearest-seed assignment.
+std::vector<std::vector<std::pair<int, int>>> splitRegion(const std::vector<std::pair<int, int>>& cells, int k, std::mt19937& rng) {
+    std::vector<std::vector<std::pair<int, int>>> groups;
+    if (k <= 1 || static_cast<int>(cells.size()) <= k) { groups.push_back(cells); return groups; }
+    std::vector<std::pair<int, int>> seeds;
+    std::uniform_int_distribution<size_t> pick(0, cells.size() - 1);
+    seeds.push_back(cells[pick(rng)]);
+    while (static_cast<int>(seeds.size()) < k) {
+        std::pair<int, int> best = cells[0];
+        int bestD = -1;
+        for (auto& c : cells) {
+            int d = 1 << 30;
+            for (auto& sd : seeds) d = std::min(d, (c.first - sd.first) * (c.first - sd.first) + (c.second - sd.second) * (c.second - sd.second));
+            if (d > bestD) { bestD = d; best = c; }
+        }
+        seeds.push_back(best);
+    }
+    groups.assign(seeds.size(), {});
+    for (auto& c : cells) {
+        size_t bi = 0;
+        int bestD = 1 << 30;
+        for (size_t i = 0; i < seeds.size(); ++i) {
+            int d = (c.first - seeds[i].first) * (c.first - seeds[i].first) + (c.second - seeds[i].second) * (c.second - seeds[i].second);
+            if (d < bestD) { bestD = d; bi = i; }
+        }
+        groups[bi].push_back(c);
+    }
+    groups.erase(std::remove_if(groups.begin(), groups.end(), [](auto& g) { return g.empty(); }), groups.end());
+    return groups;
+}
+
+std::pair<int, int> anchorOf(const std::vector<std::pair<int, int>>& cells) {
+    float sc = 0.f, sr = 0.f;
+    for (auto [x, y] : cells) { sc += static_cast<float>(x); sr += static_cast<float>(y); }
+    sc /= static_cast<float>(cells.size());
+    sr /= static_cast<float>(cells.size());
+    std::pair<int, int> best = cells[0];
+    float bd = 1e9f;
+    for (auto [x, y] : cells) {
+        float d = (x - sc) * (x - sc) + (y - sr) * (y - sr);
+        if (d < bd) { bd = d; best = {x, y}; }
+    }
+    return best;
+}
 }  // namespace
+
+int maxTierForLevel(int level) {
+    if (level <= 1) return 2;   // up to demons
+    if (level <= 2) return 3;   // cacodemons
+    if (level <= 4) return 4;   // barons
+    if (level <= 6) return 5;   // cyberdemons
+    return kMaxTier;            // spider masterminds
+}
+
+int maxRegionSizeForTier(int tier) {
+    static const int sizes[kMaxTier + 1] = {1, 3, 6, 11, 17, 24, 1000};
+    return sizes[std::clamp(tier, 0, kMaxTier)];
+}
 
 const EnemyStats& enemyStats(int tier) { return kStats[std::clamp(tier, 0, kMaxTier)]; }
 const WeaponDef& weaponDef(int id) { return kWeapons[std::clamp(id, 0, kWeaponCount - 1)]; }
@@ -98,29 +157,41 @@ void FpsMode::begin(core::Game& game, int level) {
     float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(level - 1), 0.45f, 2.5f);
     float upgradeChance = std::min(0.5f, 0.08f * static_cast<float>(level - 1));
 
+    const int capTier = maxTierForLevel(level);
     for (const core::RedRegion& region : core::findRedRegions(game)) {
-        Enemy e;
-        int tier = tierForRegion(region.size());
-        float roll = u(rng_);
-        if (roll < upgradeChance && tier < kMaxTier) ++tier;               // random nastier
-        else if (roll > 0.85f && tier > 0 && region.size() > 1) --tier;    // random lucky break
-        e.tier = tier;
-        const EnemyStats& st = enemyStats(tier);
-        e.cells = region.cells;
-        e.pos = flatCellFloor(region.anchorCol, region.anchorRow);
-        e.pos.y = st.flies ? 0.8f : 0.f;
-        e.maxHp = e.hp = st.hp * hpScale;
-        e.radius = st.radius;
-        e.height = st.height;
-        e.attackTimer = (1.2f + 2.0f * u(rng_)) * 1.5f;
-        e.breakTimer = st.breakInterval * (0.8f + 0.6f * u(rng_));
-        e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level) * (0.9f + 0.2f * u(rng_));
-        e.bobPhase = u(rng_) * 6.28f;
-        e.stateT = -0.12f * static_cast<float>(enemies_.size());   // stagger the emergence
-        // The region's cells become the monster's body: clear them so the
-        // pocket it stands in is open.
-        for (auto [c, r] : region.cells) game.clearCell(c, r);
-        enemies_.push_back(e);
+        // Big regions become several monsters: enough that none exceeds the
+        // level's biggest allowed class, plus a coin flip to split anyway so a
+        // full red row is a crowd rather than one boss.
+        int maxSize = maxRegionSizeForTier(capTier);
+        int k = (region.size() + maxSize - 1) / maxSize;
+        if (k == 1 && region.size() >= 7 && u(rng_) < 0.5f) k = 2;
+        if (k == 1 && region.size() >= 15 && u(rng_) < 0.5f) k = 2;
+        for (const auto& cells : splitRegion(region.cells, k, rng_)) {
+            Enemy e;
+            int tier = tierForRegion(static_cast<int>(cells.size()));
+            float roll = u(rng_);
+            if (roll < upgradeChance && tier < capTier) ++tier;               // random nastier
+            else if (roll > 0.85f && tier > 0 && cells.size() > 1) --tier;    // random lucky break
+            tier = std::min(tier, capTier);
+            e.tier = tier;
+            const EnemyStats& st = enemyStats(tier);
+            e.cells = cells;
+            auto [ac, ar] = anchorOf(cells);
+            e.pos = flatCellFloor(ac, ar);
+            e.pos.y = st.flies ? 0.8f : 0.f;
+            e.maxHp = e.hp = st.hp * hpScale;
+            e.radius = st.radius;
+            e.height = st.height;
+            e.attackTimer = (1.2f + 2.0f * u(rng_)) * 1.5f;
+            e.breakTimer = st.breakInterval * (0.8f + 0.6f * u(rng_));
+            e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level) * (0.9f + 0.2f * u(rng_));
+            e.bobPhase = u(rng_) * 6.28f;
+            e.stateT = -0.12f * static_cast<float>(enemies_.size());   // stagger the emergence
+            // The region's cells become the monster's body: clear them so the
+            // pocket it stands in is open.
+            for (auto [c, r] : cells) game.clearCell(c, r);
+            enemies_.push_back(e);
+        }
     }
 
     // Player start: the highest empty cell nearest the centre column.
@@ -413,6 +484,15 @@ void FpsMode::dropLoot(const Enemy& e) {
     std::uniform_real_distribution<float> u(0.f, 1.f);
     int count = 1 + e.tier / 2 + (u(rng_) < 0.25f ? 1 : 0);
     bool anyExtraWeapon = slots_[kChaingun].owned || slots_[kRocketLauncher].owned || slots_[kPlasmaRifle].owned;
+    // Big monsters are worth the trouble: cacodemons and up always drop a
+    // medikit, barons and up almost always drop a weapon as well.
+    if (e.tier >= 3) spawnPickup(PickupKind::Medikit, e.pos + glm::vec3(0.f, 0.8f, 0.f), glm::vec3(e.pos.x, 0.f, e.pos.z));
+    if (e.tier >= 4 && u(rng_) < 0.9f) {
+        float w = u(rng_) + 0.25f * static_cast<float>(e.tier - 3);
+        PickupKind kind = w < 0.6f ? PickupKind::Chaingun : (w < 1.2f ? PickupKind::RocketLauncher : PickupKind::PlasmaGun);
+        spawnPickup(kind, e.pos + glm::vec3(0.f, 0.8f, 0.f), glm::vec3(e.pos.x, 0.f, e.pos.z));
+    }
+    if (e.tier >= 5) spawnPickup(PickupKind::Medikit, e.pos + glm::vec3(0.f, 0.8f, 0.f), glm::vec3(e.pos.x, 0.f, e.pos.z));
     for (int i = 0; i < count; ++i) {
         float roll = u(rng_);
         PickupKind kind;
@@ -504,7 +584,8 @@ void FpsMode::breakBlock(Enemy& e, core::Game& game) {
 void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     std::uniform_real_distribution<float> u(0.f, 1.f);
     e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level_) * (0.9f + 0.2f * u(rng_));
-    if (e.tier >= kMaxTier || u(rng_) > 0.75f) return;
+    int growCap = std::min(kMaxTier, maxTierForLevel(level_) + 1);
+    if (e.tier >= growCap || u(rng_) > 0.75f) return;
     int ec, er;
     if (!flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er)) return;
     std::vector<std::pair<int, int>> food;

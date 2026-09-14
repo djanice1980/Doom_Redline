@@ -101,6 +101,11 @@ Up/Down or W/S to pick, Enter or click to confirm.
   monster; its class depends on the cluster size (1: zombieman, 2-3: imp, 4-6:
   demon, 7-11: cacodemon, 12-17: baron, 18-24: cyberdemon, 25+: spider
   mastermind) with a level-dependent chance of being bumped up a class.
+  Each level caps the biggest class that can spawn (level 1: demons, 2:
+  cacodemons, 3-4: barons, 5-6: cyberdemons, 7+: spider masterminds); a red
+  region too big for the cap is split into several monsters, and regions of 7+
+  cells split half the time anyway, so a full red row is a crowd, not one
+  boss. Absorbing can grow a monster one class past the cap.
   Cyberdemon rockets have splash damage and blow up the blocks they hit. Monster health scales with the level (x0.45 at level 1,
   +0.15 per level, capped at x2.5), and so does their attack cadence.
 - Killing a monster explodes every cell of its cluster, destroying the *normal*
@@ -123,7 +128,8 @@ Up/Down or W/S to pick, Enter or click to confirm.
   for the gun you are holding.
 - Dying monsters drop loot: stimpacks and medikits, ammo, and weapons
   (chaingun, rocket launcher, plasma rifle) that pop out and land next to the
-  body. Bigger monsters drop more. Walk over an item to take it; weapons you
+  body. Bigger monsters drop more: cacodemons and up always drop a medikit,
+  barons and up almost always a weapon too, cyberdemons and up two medikits. Walk over an item to take it; weapons you
   already own give ammo instead. Weapons persist for the rest of the game.
 - The shotgun never runs out. The chaingun is fast hitscan, the plasma rifle
   fires fast bolts, and rockets have splash damage that also blasts the blocks

@@ -86,7 +86,11 @@ instanced draw.
   4-6 demon, 7-11 cacodemon, 12-17 baron, 18-24 cyberdemon (rockets with 2 m
   splash that also break blocks), 25+ spider mastermind (chaingun hitscan);
   a level-scaled roll can bump a tier up (8 % per level, max 50 %) or down.
-  `kMaxTier = 6` caps both spawning and absorbing. The region's red cells are removed from
+  `maxTierForLevel` caps spawns (2/3/4/5/6 at levels 1, 2, 3-4, 5-6, 7+);
+  a region larger than `maxRegionSizeForTier(cap)` is split with
+  `splitRegion` (farthest-point seeds, nearest-seed assignment) into enough
+  compact groups, and regions of 7+ (and 15+) cells get a 50 % split anyway.
+  Absorbing is capped one class above the level cap. The region's red cells are removed from
   the grid (the monster is standing in the pocket) and remembered on the enemy.
 - Stats table in `fps_mode.cpp` (`kStats`): hp, hit cylinder, attack kind
   (hitscan / projectile type / melee), speed, flies, cadence, damage, score.
