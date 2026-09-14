@@ -18,6 +18,7 @@ constexpr float kPi = 3.14159265f;
 constexpr float kAlertTime = 1.4f;
 constexpr float kFlyInTime = 2.2f;
 constexpr float kFlyOutTime = 1.6f;
+constexpr float kCountdownTime = 3.0f;
 
 const glm::vec3 kPieceColors[7] = {
     {0.25f, 0.85f, 0.95f},   // I cyan
@@ -99,6 +100,8 @@ void App::applyScenario() {
         for (int i = 0; i < 200 && game_->phase() != core::Phase::RedLine; ++i) game_->tick(0.05f);
         if (opts_.scenario == "fps") {
             game_->setLevel(opts_.level);
+            fps_.setAbsorbPeriod(opts_.absorbPeriod);
+            fps_.setGodMode(opts_.god);
             fps_.begin(*game_, opts_.level);
             enterMode(Mode::Fps);
         }
@@ -106,13 +109,13 @@ void App::applyScenario() {
 }
 
 void App::enterMode(Mode m) {
-    static const char* names[] = {"Title", "Blocks", "Alert", "FlyIn", "Fps", "FlyOut", "GameOver", "Paused"};
+    static const char* names[] = {"Title", "Blocks", "Alert", "FlyIn", "Countdown", "Fps", "FlyOut", "GameOver", "Paused"};
     std::fprintf(stderr, "[app] mode %s -> %s (frame %d, score %d, level %d)\n", names[static_cast<int>(mode_)], names[static_cast<int>(m)], frameCount_,
                  game_ ? game_->score() : 0, game_ ? game_->level() : 0);
     modeT_ = 0.f;
     Mode prev = mode_;
     mode_ = m;
-    bool wantMouse = (m == Mode::Fps);
+    bool wantMouse = (m == Mode::Fps || m == Mode::Countdown);
     if (wantMouse != mouseCaptured_) {
         SDL_SetWindowRelativeMouseMode(window_, wantMouse);
         mouseCaptured_ = wantMouse;
@@ -127,8 +130,14 @@ void App::enterMode(Mode m) {
         break;
     case Mode::FlyIn:
         flyFrom_ = blocksCamera();
+        fps_.setAbsorbPeriod(opts_.absorbPeriod);
+        fps_.setGodMode(opts_.god);
         fps_.begin(*game_, game_->level());
         flyTo_ = fpsCamera();
+        break;
+    case Mode::Countdown:
+        fpsIn_ = {};
+        countdownLast_ = -1;
         break;
     case Mode::Fps:
         fpsIn_ = {};
@@ -216,7 +225,7 @@ void App::handleEvents() {
             ctx_->requestResize();
             break;
         case SDL_EVENT_MOUSE_MOTION:
-            if (mode_ == Mode::Fps) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
+            if (mode_ == Mode::Fps || mode_ == Mode::Countdown) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (e.button.button == SDL_BUTTON_LEFT) {
@@ -237,7 +246,7 @@ void App::handleEvents() {
                 break;
             }
             if (k == SDLK_ESCAPE) {
-                if (mode_ == Mode::Blocks || mode_ == Mode::Fps) { pausedFrom_ = mode_; enterMode(Mode::Paused); }
+                if (mode_ == Mode::Blocks || mode_ == Mode::Fps || mode_ == Mode::Countdown) { pausedFrom_ = mode_; enterMode(Mode::Paused); }
                 else if (mode_ == Mode::Paused) enterMode(pausedFrom_);
                 else if (mode_ == Mode::Title) running_ = false;
                 break;
@@ -332,6 +341,13 @@ void App::handleFpsEvents() {
         }
         case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
         case FpsEvent::Type::RocketBlast: std::fprintf(stderr, "[fps] rocket blast destroyed %d blocks\n", ev.a); play("rocket_hit", 1.f); shakeT_ = 0.35f; break;
+        case FpsEvent::Type::BlockBroken: play("lock", 0.7f, 0.8f); shakeT_ = std::max(shakeT_, 0.08f); break;
+        case FpsEvent::Type::Absorb:
+            std::fprintf(stderr, "[fps] a monster absorbed %d blocks and became a %s\n", ev.a, art.name.c_str());
+            play(art.sightSound, 1.f, 0.8f);
+            play("explode", 0.6f, 0.6f);
+            shakeT_ = 0.4f;
+            break;
         case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f); break;
         case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f); break;
         case FpsEvent::Type::EnemyDied: play(art.deathSound, 1.f); break;
@@ -369,8 +385,21 @@ void App::update(float dt) {
         if (modeT_ >= kAlertTime) enterMode(Mode::FlyIn);
         break;
     case Mode::FlyIn:
-        if (modeT_ >= kFlyInTime) enterMode(Mode::Fps);
+        if (modeT_ >= kFlyInTime) enterMode(Mode::Countdown);
         break;
+    case Mode::Countdown: {
+        // Monsters rise, the player can look around, nothing shoots yet.
+        FpsInput in;
+        in.lookDX = fpsIn_.dx;
+        in.lookDY = fpsIn_.dy;
+        in.warmup = true;
+        fps_.update(dt, in, *game_);
+        handleFpsEvents();
+        int n = static_cast<int>(std::ceil(kCountdownTime - modeT_));
+        if (n != countdownLast_) { countdownLast_ = n; play("menu", 0.8f, n <= 0 ? 1.6f : 1.f + 0.1f * static_cast<float>(3 - n)); }
+        if (modeT_ >= kCountdownTime) { play("levelup", 0.8f, 1.2f); enterMode(Mode::Fps); }
+        break;
+    }
     case Mode::Fps: {
         FpsInput in;
         in.moveZ = (fpsIn_.fwd ? 1.f : 0.f) - (fpsIn_.back ? 1.f : 0.f);
@@ -446,10 +475,10 @@ void App::update(float dt) {
 float App::boardTilt() const {
     switch (mode_) {
     case Mode::FlyIn: return smoothstep(modeT_ / kFlyInTime);
-    case Mode::Fps: return 1.f;
+    case Mode::Fps: case Mode::Countdown: return 1.f;
     case Mode::FlyOut: return 1.f - smoothstep(modeT_ / kFlyOutTime);
     case Mode::GameOver: return diedInFps_ ? 1.f : 0.f;
-    case Mode::Paused: return pausedFrom_ == Mode::Fps ? 1.f : 0.f;
+    case Mode::Paused: return (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown) ? 1.f : 0.f;
     default: return 0.f;
     }
 }
@@ -488,7 +517,7 @@ App::Camera App::currentCamera() const {
         return c;
     };
     switch (mode_) {
-    case Mode::Fps: return fpsCamera();
+    case Mode::Fps: case Mode::Countdown: return fpsCamera();
     case Mode::FlyIn: {
         // Swing high over the tipping board, then settle to eye level.
         float t = smoothstep(modeT_ / kFlyInTime);
@@ -503,7 +532,7 @@ App::Camera App::currentCamera() const {
         return c;
     }
     case Mode::Paused:
-        return pausedFrom_ == Mode::Fps ? fpsCamera() : blocksCamera();
+        return (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown) ? fpsCamera() : blocksCamera();
     case Mode::GameOver:
         return diedInFps_ ? fpsCamera() : blocksCamera();
     case Mode::Alert: {
@@ -606,10 +635,10 @@ void App::addBoard() {
     }
     // While the board tips over, the regions that will become monsters are
     // still shown as red blocks; they sink away as the monsters rise.
-    if (mode_ == Mode::FlyIn || mode_ == Mode::Fps) {
+    if (mode_ == Mode::FlyIn || mode_ == Mode::Fps || mode_ == Mode::Countdown) {
         for (const Enemy& e : fps_.enemies()) {
-            if (mode_ == Mode::Fps && !(e.state == Enemy::State::Emerging && e.stateT < 0.45f)) continue;
-            float sink = (mode_ == Mode::Fps) ? std::clamp(e.stateT / 0.45f, 0.f, 1.f) : 0.f;
+            if (mode_ != Mode::FlyIn && !(e.state == Enemy::State::Emerging && e.stateT < 0.45f)) continue;
+            float sink = (mode_ != Mode::FlyIn) ? std::clamp(e.stateT / 0.45f, 0.f, 1.f) : 0.f;
             for (auto [c, r] : e.cells) {
                 glm::vec3 pos = boardPos(static_cast<float>(c), static_cast<float>(r));
                 pos.y -= sink * 1.2f;
@@ -678,6 +707,11 @@ void App::addFpsActors() {
         case Enemy::State::Dying: anim = &art.death; loop = false; t = e.stateT; break;
         case Enemy::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
         }
+        if (e.alive() && e.absorbTimer < 4.f) {   // warning: pulsing red as it gets ready to absorb
+            float f = 0.5f + 0.5f * std::sin(time_ * (10.f + (4.f - e.absorbTimer) * 4.f));
+            tint = glm::mix(tint, glm::vec4(1.f, 0.2f, 0.2f, 1.f), 0.6f * f);
+        }
+        if (e.growT > 0.f) tint = glm::mix(tint, glm::vec4(1.f, 1.f, 1.f, 1.f), e.growT);
         bool flip = false;
         const std::string& key = animFrame(*anim, t, loop, &flip);
         if (!key.empty()) billboard(key, e.pos, art.metresPerPixel, tint, true, flip);
@@ -723,7 +757,7 @@ void App::addLights() {
                 float pulse = 0.8f + 0.2f * std::sin(time_ * 6.f + c * 0.7f + r);
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});
             }
-    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_));
+    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_));
     if (inFps) {
         for (const Enemy& e : fps_.enemies()) {
             if (e.state == Enemy::State::Dead) continue;
@@ -743,6 +777,8 @@ void App::addLights() {
         }
         for (const Pickup& p : fps_.pickups())
             if (p.landed) cands.push_back({glm::length(p.pos - cam), {p.pos + glm::vec3(0.f, 0.4f, 0.f), 1.5f, {0.6f, 0.8f, 1.f}, 0.5f}});
+        for (const Enemy& e : fps_.enemies())
+            if (e.growT > 0.f) cands.push_back({-120.f, {e.pos + glm::vec3(0.f, 1.f, 0.f), 6.f, {1.f, 0.3f, 0.3f}, 4.f * e.growT}});
         if (muzzleLight_ > 0.f && mode_ == Mode::Fps) cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, {1.f, 0.8f, 0.4f}, 3.f * muzzleLight_}});
     }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
@@ -794,7 +830,7 @@ void App::addHud() {
     float s = std::max(1.f, std::round(H / 300.f));   // font scale
     glm::vec4 white(1.f), red(1.f, 0.25f, 0.2f, 1.f), dim(0.8f, 0.8f, 0.8f, 1.f), yellow(1.f, 0.9f, 0.3f, 1.f);
     float lh = (assets_.fontHeight + 4) * s;
-    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::Paused && pausedFrom_ == Mode::Fps) || (mode_ == Mode::GameOver && diedInFps_));
+    bool inFps = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)) || (mode_ == Mode::GameOver && diedInFps_));
 
     if (!inFps) {
         float x = 24.f, y = 24.f;
@@ -830,7 +866,7 @@ void App::addHud() {
         text(W * 0.5f, H * 0.42f + lh * 2.4f, "THE BOARD IS FALLING", s, white, 1);
     }
     if (inFps) {
-        if (mode_ == Mode::Fps) {
+        if (mode_ == Mode::Fps || mode_ == Mode::Countdown) {
             const WeaponArt& wa = assets_.weapons[std::clamp(fps_.currentWeapon(), 0, kWeaponArt - 1)];
             bool flip = false;
             const std::string& gun = fps_.gunFiring() ? animFrame(wa.fire, fps_.gunAnimT(), false, &flip) : animFrame(wa.idle, 0.f, true, &flip);
@@ -870,7 +906,28 @@ void App::addHud() {
                 wx -= static_cast<float>(assets_.textWidth(label, s * 0.7f)) + 18.f * s;
             }
         }
-        if (mode_ == Mode::Fps && fps_.elapsed() < 3.f) text(W * 0.5f, H * 0.3f, "MOUSE LOOK  WASD MOVE  CLICK FIRE  1-4/WHEEL WEAPONS", s * 0.8f, white, 1);
+        if (mode_ == Mode::Countdown) {
+            float remaining = kCountdownTime - modeT_;
+            int n = static_cast<int>(std::ceil(remaining));
+            float frac = remaining - std::floor(remaining);          // 1 -> 0 within the second
+            float pop = 1.f + 0.6f * frac;                            // number shrinks as its second runs out
+            text(W * 0.5f, H * 0.28f, "GET READY", s * 1.2f, white, 1);
+            text(W * 0.5f, H * 0.38f, std::to_string(std::max(1, n)), s * 4.f * pop, glm::vec4(1.f, 0.25f, 0.2f, 1.f), 1);
+            text(W * 0.5f, H * 0.62f, "MOUSE LOOK  WASD MOVE  CLICK FIRE  1-4/WHEEL WEAPONS", s * 0.8f, dim, 1);
+            text(W * 0.5f, H * 0.62f + lh * 1.2f, "DEMONS EAT YOUR COVER. LEAVE ONE ALIVE TOO LONG AND IT GROWS.", s * 0.7f, dim, 1);
+        }
+        if (mode_ == Mode::Fps && fps_.elapsed() < 0.7f) {
+            float f = 1.f - fps_.elapsed() / 0.7f;
+            text(W * 0.5f, H * 0.38f, "FIGHT", s * 3.5f * (1.f + 0.5f * (1.f - f)), glm::vec4(1.f, 0.9f, 0.3f, f), 1);
+        }
+        if (mode_ == Mode::Fps) {
+            bool warning = false;
+            for (const Enemy& e : fps_.enemies()) if (e.alive() && e.absorbTimer < 4.f) warning = true;
+            if (warning) {
+                float f = 0.5f + 0.5f * std::sin(time_ * 12.f);
+                text(W * 0.5f, H * 0.2f, "A DEMON IS ABOUT TO GROW", s * 0.9f, glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 1.f), 1);
+            }
+        }
     }
 
     // Menus ----------------------------------------------------------------
@@ -938,7 +995,7 @@ void App::buildScene() {
     }
 
     addBoard();
-    bool actors = (mode_ == Mode::Fps || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_) || (mode_ == Mode::Paused && pausedFrom_ == Mode::Fps));
+    bool actors = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_) || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)));
     if (actors) addFpsActors();
     addLights();
     addHud();

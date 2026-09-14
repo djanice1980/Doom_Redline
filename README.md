@@ -97,6 +97,18 @@ Up/Down or W/S to pick, Enter or click to confirm.
 - Blocks are chest-high: you can see and shoot over them; fireballs aimed at
   your body are stopped by them. Zombies hitscan, imps/cacodemons/barons throw
   fireballs, demons charge and bite.
+- Before the fight starts there is a three-second GET READY countdown: the
+  monsters rise out of the board, you can look around, nobody shoots.
+- Monsters eat your cover. Each one periodically destroys a block, preferring
+  the one that hides you: zombies every ~11 s, imps ~7.5 s, demons ~5 s,
+  cacodemons ~3.5 s, barons every ~2.5 s and three blocks at a time. Blocks are
+  cover for a limited time only.
+- Leave a monster alive too long (about 20 s at level 1, one second less per
+  level, floor 8 s) and there is a 75 % chance it absorbs every normal block
+  within 2.5 cells and comes back one class bigger at full health. It pulses
+  red for the last four seconds and the HUD warns you.
+- Wounded monsters sometimes (12 %, at most once per 2.5 s each) shed ammo
+  for the gun you are holding.
 - Dying monsters drop loot: stimpacks and medikits, ammo, and weapons
   (chaingun, rocket launcher, plasma rifle) that pop out and land next to the
   body. Bigger monsters drop more. Walk over an item to take it; weapons you
@@ -117,6 +129,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --wad <file>        --no-wad           --size WxH        --fullscreen
 --igpu              --seed <n>         --scenario title|blocks|redline|fps
 --screenshot <png>  --frames <n>       --bot              --mute
+--level <n>         --absorb <sec>     --god
 ```
 
 `--scenario redline` starts with a nearly complete red row plus a few red

@@ -42,6 +42,8 @@ struct EnemyStats {
     float damage;
     float projSpeed;
     int scoreValue;
+    float breakInterval;   // seconds between block-destroying acts (cover erodes faster for big monsters)
+    int breakRadius;       // 0 = one block, 1 = the block and its neighbours
 };
 const EnemyStats& enemyStats(int tier);
 
@@ -98,6 +100,10 @@ struct Enemy {
     float radius = 0.45f;
     float height = 1.6f;
     float flashT = 0.f;      // muzzle flash light (hitscan)
+    float breakTimer = 5.f;  // next block-destroying act
+    float absorbTimer = 20.f;// when it hits zero the monster may absorb nearby blocks and grow a tier
+    float ammoDropCooldown = 0.f;
+    float growT = 0.f;       // visual flash after growing
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 
@@ -125,6 +131,8 @@ struct Debris {
     float ttl = 1.5f;
     float size = 0.2f;
     bool red = false;
+    bool homing = false;     // flies to `target` instead of falling (absorbed blocks)
+    glm::vec3 target{0.f};
 };
 
 struct FpsInput {
@@ -133,11 +141,12 @@ struct FpsInput {
     bool fire = false;
     int selectWeapon = -1;            // 0..3 to switch, -1 none
     int wheel = 0;                    // +1 next / -1 previous weapon
+    bool warmup = false;              // countdown: look around only, monsters rise but do nothing
 };
 
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
-                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit } type;
+                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb } type;
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
@@ -149,6 +158,10 @@ public:
     // Turns every red region of the board into a monster (removing those red
     // cells from the grid) and places the player in the empty part of the board.
     void begin(core::Game& game, int level);
+    // Tuning knobs (defaults are the shipped values; the CLI can override for testing).
+    void setAbsorbPeriod(float seconds) { absorbPeriod_ = seconds; }
+    void setGodMode(bool on) { god_ = on; }
+    float absorbPeriod() const { return absorbPeriod_; }
     void update(float dt, const FpsInput& in, core::Game& game);
     bool finished() const { return finished_; }
     bool playerDead() const { return health_ <= 0.f; }
@@ -194,7 +207,11 @@ private:
     void damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos);
     void explodeEnemy(Enemy& e, core::Game& game);
     void dropLoot(const Enemy& e);
+    void spawnPickup(PickupKind kind, glm::vec3 from, glm::vec3 home);
     void applyPickup(const Pickup& p);
+    void breakBlock(Enemy& e, core::Game& game);
+    void tryAbsorb(Enemy& e, core::Game& game);
+    void breakCell(int c, int r, core::Game& game);
     void rocketBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
     void moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, const core::Game& game) const;
     bool lineOfSight(glm::vec3 a, glm::vec3 b, const core::Game& game) const;
@@ -221,6 +238,8 @@ private:
     int level_ = 1;
     bool finished_ = false;
     float finishDelay_ = 0.f;
+    float absorbPeriod_ = 20.f;
+    bool god_ = false;
 };
 
 }  // namespace rl::game

@@ -13,14 +13,16 @@ constexpr float kPlayerRadius = 0.3f;
 constexpr float kExplosionRadius = 1.5f;   // cells, around every cell of the region
 constexpr float kBlockTop = 1.0f;          // blocks are unit cubes on the floor
 
-//               name         hp     r      h     attack                 proj        speed flies interval dmg   pspd  score
+//               name         hp     r      h     attack                 proj        speed flies interval dmg   pspd  score break r
 const EnemyStats kStats[] = {
-    {"ZOMBIE",     20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1,         0.f,  false, 2.2f, 5.f,  0.f,  100},
-    {"IMP",        60.f, 0.40f, 1.7f, AttackKind::Projectile, kProjImp,   0.f,  false, 2.6f, 10.f, 8.f,  200},
-    {"DEMON",     150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,         3.6f, false, 1.0f, 14.f, 0.f,  350},
-    {"CACODEMON", 400.f, 0.65f, 1.8f, AttackKind::Projectile, kProjCaco,  1.8f, true,  2.4f, 16.f, 10.f, 600},
-    {"BARON",    1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron, 1.2f, false, 2.8f, 28.f, 10.f, 1200},
+    {"ZOMBIE",     20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1,         0.f,  false, 2.2f, 5.f,  0.f,  100,  11.f, 0},
+    {"IMP",        60.f, 0.40f, 1.7f, AttackKind::Projectile, kProjImp,   0.f,  false, 2.6f, 10.f, 8.f,  200,  7.5f, 0},
+    {"DEMON",     150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,         3.6f, false, 1.0f, 14.f, 0.f,  350,  5.f,  0},
+    {"CACODEMON", 400.f, 0.65f, 1.8f, AttackKind::Projectile, kProjCaco,  1.8f, true,  2.4f, 16.f, 10.f, 600,  3.5f, 0},
+    {"BARON",    1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron, 1.2f, false, 2.8f, 28.f, 10.f, 1200, 2.5f, 1},
 };
+
+float absorbPeriodForLevel(float base, int level) { return std::max(8.f, base - 1.f * static_cast<float>(level - 1)); }
 
 //                 name              cycle  dmg   proj   type          speed  blast ammo max  spread
 const WeaponDef kWeapons[kWeaponCount] = {
@@ -107,6 +109,8 @@ void FpsMode::begin(core::Game& game, int level) {
         e.radius = st.radius;
         e.height = st.height;
         e.attackTimer = (1.2f + 2.0f * u(rng_)) * 1.5f;
+        e.breakTimer = st.breakInterval * (0.8f + 0.6f * u(rng_));
+        e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level) * (0.9f + 0.2f * u(rng_));
         e.bobPhase = u(rng_) * 6.28f;
         e.stateT = -0.12f * static_cast<float>(enemies_.size());   // stagger the emergence
         // The region's cells become the monster's body: clear them so the
@@ -206,7 +210,7 @@ void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int coun
 }
 
 void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
-    if (health_ <= 0.f) return;
+    if (health_ <= 0.f || god_) return;
     health_ = std::max(0.f, health_ - dmg);
     damageFlash_ = 1.f;
     push(FpsEvent::Type::PlayerHit, from);
@@ -230,6 +234,19 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos) {
         e.state = Enemy::State::Pain;
         e.stateT = 0.f;
         e.attacked = false;
+        // Wounded monsters sometimes shed ammo (for the gun you are holding).
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        if (e.ammoDropCooldown <= 0.f && u(rng_) < 0.12f) {
+            e.ammoDropCooldown = 2.5f;
+            PickupKind kind = PickupKind::Bullets;
+            if (weapon_ == kRocketLauncher) kind = PickupKind::Rockets;
+            else if (weapon_ == kPlasmaRifle) kind = PickupKind::Cells;
+            else if (weapon_ == kShotgun) {
+                const PickupKind any[3] = {PickupKind::Bullets, PickupKind::Rockets, PickupKind::Cells};
+                kind = any[static_cast<int>(u(rng_) * 3.f) % 3];
+            }
+            spawnPickup(kind, e.pos + glm::vec3(0.f, 0.9f, 0.f), glm::vec3(e.pos.x, 0.f, e.pos.z));
+        }
     }
 }
 
@@ -383,13 +400,116 @@ void FpsMode::dropLoot(const Enemy& e) {
         } else {
             continue;   // nothing
         }
-        Pickup p;
-        p.kind = kind;
-        p.home = glm::vec3(e.pos.x, 0.f, e.pos.z);
-        p.pos = e.pos + glm::vec3(0.f, 0.8f, 0.f);
-        p.vel = glm::vec3((u(rng_) - 0.5f) * 3.f, 3.f + u(rng_) * 2.f, (u(rng_) - 0.5f) * 3.f);
-        pickups_.push_back(p);
+        spawnPickup(kind, e.pos + glm::vec3(0.f, 0.8f, 0.f), glm::vec3(e.pos.x, 0.f, e.pos.z));
     }
+}
+
+void FpsMode::spawnPickup(PickupKind kind, glm::vec3 from, glm::vec3 home) {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    Pickup p;
+    p.kind = kind;
+    p.home = home;
+    p.pos = from;
+    p.vel = glm::vec3((u(rng_) - 0.5f) * 3.f, 3.f + u(rng_) * 2.f, (u(rng_) - 0.5f) * 3.f);
+    pickups_.push_back(p);
+}
+
+// ---------------------------------------------------------------------------
+// Monsters erode the player's cover. The block that hides the player goes
+// first; otherwise something nearby.
+void FpsMode::breakCell(int c, int r, core::Game& game) {
+    if (c < 0 || c >= core::kBoardW || r < 0 || r >= core::kBoardH) return;
+    if (game.at(c, r).kind != core::CellKind::Normal) return;
+    game.clearCell(c, r);
+    spawnDebris(flatCellCentre(c, r), {0.85f, 0.85f, 0.85f}, 5, false);
+    Explosion ex;
+    ex.pos = flatCellCentre(c, r);
+    ex.radius = 0.9f;
+    ex.duration = 0.35f;
+    explosions_.push_back(ex);
+}
+
+void FpsMode::breakBlock(Enemy& e, core::Game& game) {
+    const EnemyStats& st = enemyStats(e.tier);
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    glm::vec3 from = e.pos + glm::vec3(0.f, 1.2f, 0.f);
+    glm::vec3 to = playerPos_ + glm::vec3(0.f, 0.6f, 0.f);
+    glm::vec3 d = to - from;
+    float len = glm::length(d);
+    int c = -1, r = -1;
+    if (len > 1e-3f) {
+        float t = rayBlockDistance(from, d / len, len, game);
+        if (t < len - 1e-3f) {
+            glm::vec3 p = from + (d / len) * (t + 0.03f);
+            if (!flatToCell(glm::vec3(p.x, 0.5f, p.z), c, r) || game.at(c, r).kind != core::CellKind::Normal) c = -1;
+        }
+    }
+    if (c < 0) {
+        // Nothing between us: chew on a random block within two cells (half the time).
+        if (u(rng_) < 0.5f) return;
+        int ec, er;
+        if (!flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er)) return;
+        std::vector<std::pair<int, int>> near;
+        for (int y = er - 2; y <= er + 2; ++y)
+            for (int x = ec - 2; x <= ec + 2; ++x)
+                if (x >= 0 && x < core::kBoardW && y >= 0 && y < core::kBoardH && game.at(x, y).kind == core::CellKind::Normal) near.push_back({x, y});
+        if (near.empty()) return;
+        auto [x, y] = near[static_cast<size_t>(u(rng_) * static_cast<float>(near.size())) % near.size()];
+        c = x; r = y;
+    }
+    int count = 0;
+    for (int y = r - st.breakRadius; y <= r + st.breakRadius; ++y)
+        for (int x = c - st.breakRadius; x <= c + st.breakRadius; ++x) {
+            if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
+            if (game.at(x, y).kind == core::CellKind::Normal) { breakCell(x, y, game); ++count; }
+        }
+    if (count > 0) push(FpsEvent::Type::BlockBroken, flatCellCentre(c, r), e.tier, count);
+}
+
+// Left alive too long, a monster may pull the surrounding blocks into itself
+// and come back a tier bigger, at full health.
+void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level_) * (0.9f + 0.2f * u(rng_));
+    if (e.tier >= 4 || u(rng_) > 0.75f) return;
+    int ec, er;
+    if (!flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er)) return;
+    std::vector<std::pair<int, int>> food;
+    for (int y = er - 3; y <= er + 3; ++y)
+        for (int x = ec - 3; x <= ec + 3; ++x) {
+            if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
+            float dx = static_cast<float>(x - ec), dy = static_cast<float>(y - er);
+            if (dx * dx + dy * dy > 2.5f * 2.5f) continue;
+            if (game.at(x, y).kind == core::CellKind::Normal) food.push_back({x, y});
+        }
+    if (food.empty()) return;
+    for (auto [x, y] : food) {
+        game.clearCell(x, y);
+        e.cells.push_back({x, y});   // its death blast now covers them too
+        for (int i = 0; i < 3; ++i) {
+            Debris d;
+            d.pos = flatCellCentre(x, y) + glm::vec3(u(rng_) - 0.5f, u(rng_) - 0.5f, u(rng_) - 0.5f) * 0.4f;
+            d.target = e.pos + glm::vec3(0.f, 0.9f, 0.f);
+            d.vel = (d.target - d.pos) / 0.55f;
+            d.homing = true;
+            d.ttl = 0.55f;
+            d.size = 0.22f;
+            d.color = {0.9f, 0.9f, 0.9f};
+            debris_.push_back(d);
+        }
+    }
+    ++e.tier;
+    const EnemyStats& st = enemyStats(e.tier);
+    float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(level_ - 1), 0.45f, 2.5f);
+    e.maxHp = e.hp = st.hp * hpScale;
+    e.radius = st.radius;
+    e.height = st.height;
+    e.growT = 1.f;
+    e.breakTimer = st.breakInterval * 0.5f;
+    e.attackTimer = 1.0f;
+    e.state = Enemy::State::Idle;
+    e.stateT = 0.f;
+    push(FpsEvent::Type::Absorb, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, static_cast<int>(food.size()));
 }
 
 void FpsMode::applyPickup(const Pickup& p) {
@@ -427,7 +547,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     glm::vec3 right(-std::cos(yaw_), 0.f, std::sin(yaw_));   // forward x up
     glm::vec3 move = fwd * in.moveZ + right * in.moveX;
     if (glm::length(move) > 1.f) move = glm::normalize(move);
-    if (health_ > 0.f) moveWithCollision(playerPos_, move * kMoveSpeed * dt, kPlayerRadius, game);
+    if (health_ > 0.f && !in.warmup) moveWithCollision(playerPos_, move * kMoveSpeed * dt, kPlayerRadius, game);
     playerPos_.y = 0.f;
     damageFlash_ = std::max(0.f, damageFlash_ - dt * 2.5f);
     pickupFlash_ = std::max(0.f, pickupFlash_ - dt * 3.f);
@@ -441,7 +561,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         }
     }
     gunT_ += dt;
-    if (in.fire && gunT_ >= weaponDef(weapon_).cycle && health_ > 0.f) fire(game);
+    if (in.fire && !in.warmup && gunT_ >= weaponDef(weapon_).cycle && health_ > 0.f) fire(game);
 
     // --- enemies ---------------------------------------------------------
     std::uniform_real_distribution<float> u(0.f, 1.f);
@@ -454,6 +574,21 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         e.stateT += dt;
         e.animT += dt;
         e.flashT = std::max(0.f, e.flashT - dt * 6.f);
+        e.growT = std::max(0.f, e.growT - dt * 1.5f);
+        e.ammoDropCooldown = std::max(0.f, e.ammoDropCooldown - dt);
+        if (in.warmup && e.state != Enemy::State::Emerging) {   // countdown: hold position
+            e.pos.y = st.flies ? 0.8f : 0.f;
+            continue;
+        }
+        if (e.alive() && e.state != Enemy::State::Emerging && health_ > 0.f) {
+            e.breakTimer -= dt;
+            if (e.breakTimer <= 0.f) {
+                e.breakTimer = st.breakInterval * cadence * (0.8f + 0.4f * u(rng_));
+                breakBlock(e, game);
+            }
+            e.absorbTimer -= dt;
+            if (e.absorbTimer <= 0.f) tryAbsorb(e, game);
+        }
         float restY = st.flies ? 0.8f + 0.15f * std::sin(elapsed_ * 2.f + e.bobPhase) : 0.f;
         glm::vec3 toPlayer = playerPos_ - e.pos;
         toPlayer.y = 0.f;
@@ -615,16 +750,21 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     }
     for (size_t i = 0; i < debris_.size();) {
         Debris& d = debris_[i];
-        d.vel.y -= 14.f * dt;
-        d.pos += d.vel * dt;
-        if (d.pos.y < d.size * 0.5f) { d.pos.y = d.size * 0.5f; d.vel.y *= -0.35f; d.vel.x *= 0.7f; d.vel.z *= 0.7f; }
+        if (d.homing) {
+            d.pos += d.vel * dt;
+            d.size = std::max(0.02f, d.size - dt * 0.3f);
+        } else {
+            d.vel.y -= 14.f * dt;
+            d.pos += d.vel * dt;
+            if (d.pos.y < d.size * 0.5f) { d.pos.y = d.size * 0.5f; d.vel.y *= -0.35f; d.vel.x *= 0.7f; d.vel.z *= 0.7f; }
+        }
         d.ttl -= dt;
         if (d.ttl <= 0.f) { debris_[i] = debris_.back(); debris_.pop_back(); }
         else ++i;
     }
 
     // --- end conditions ----------------------------------------------------
-    if (!finished_ && enemiesLeft() == 0) {
+    if (!finished_ && !in.warmup && enemiesLeft() == 0) {
         finishDelay_ += dt;
         if (finishDelay_ >= 1.2f) {
             finished_ = true;

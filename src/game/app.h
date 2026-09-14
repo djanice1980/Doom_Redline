@@ -32,6 +32,8 @@ struct Options {
     bool bot = false;                  // auto-aim/fire in FPS mode (smoke testing)
     bool mute = false;
     int level = 1;                     // starting level (scenarios)
+    float absorbPeriod = 20.f;         // seconds before a monster may absorb blocks and grow
+    bool god = false;                  // no damage to the player (testing)
 };
 
 class App {
@@ -41,7 +43,7 @@ public:
     int run();
 
 private:
-    enum class Mode { Title, Blocks, Alert, FlyIn, Fps, FlyOut, GameOver, Paused };
+    enum class Mode { Title, Blocks, Alert, FlyIn, Countdown, Fps, FlyOut, GameOver, Paused };
     struct Camera { glm::vec3 eye{0.f}; glm::vec3 target{0.f}; float fov = 50.f; };
     struct Menu { std::vector<std::string> items; int index = 0; };
 
@@ -114,6 +116,7 @@ private:
     float shakeT_ = 0.f;
     float botBlockedT_ = 0.f;
     float botSide_ = 1.f;
+    int countdownLast_ = -1;
 };
 
 }  // namespace rl::game

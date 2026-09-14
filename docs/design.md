@@ -53,7 +53,9 @@ instanced draw.
   centre column, facing -Z towards the stack. 80 deg FOV.
 - Transitions: `Alert` (1.4 s, red row flashes, ambient pulses red), `FlyIn`
   (2.2 s: tilt 0 -> 1 with smoothstep while the camera arcs from the overview to
-  the player's eye, rising 6 m mid-way), `FlyOut` (1.6 s, the reverse).
+  the player's eye, rising 6 m mid-way), `Countdown` (3 s: `FpsInput::warmup`,
+  monsters emerge and then hold, mouse look only, big 3-2-1 with a tick per
+  second and a FIGHT flash), `FlyOut` (1.6 s, the reverse of the fly-in).
 
 ## FPS phase (`src/game/fps_mode.h`)
 
@@ -77,6 +79,21 @@ instanced draw.
 - Death: `explodeEnemy` calls `Game::explodeAt(cell, 1.5)` for every cell of the
   cluster, spawns debris per destroyed block, a blast sprite and light, and
   hurts the player within `2 + 0.5 tier` m. Each kill heals 5.
+- **Cover erosion** (`breakBlock`): every monster has a `breakTimer` seeded
+  from its tier's `breakInterval` (11 / 7.5 / 5 / 3.5 / 2.5 s, scaled by the
+  level cadence). When it fires, the block that blocks its line of sight to
+  the player is destroyed (barons take the 3x3 around it); with a clear line
+  it chews a random block within two cells half the time.
+- **Absorb** (`tryAbsorb`): `absorbTimer` starts at `max(8, period - (level-1))`
+  seconds (period 20 by default, `--absorb` overrides). On expiry, 75 % chance
+  (if below baron and there are normal blocks within 2.5 cells) to clear those
+  blocks, fly them into the monster as homing debris, add them to its `cells`
+  (so its death blast covers them), bump the tier, and reset hp/radius/height
+  to the new class at full health. The sprite pulses red for the last 4 s and
+  flashes white while `growT` decays; the HUD shows a warning.
+- **Ammo on wound** (`damageEnemy`): a non-lethal hit has a 12 % chance,
+  gated by a 2.5 s per-monster cooldown, to spawn ammo for the current weapon
+  (random ammo when holding the shotgun).
 - **Weapons** (`kWeapons` in `fps_mode.cpp`): shotgun (infinite, 40 dmg,
   0.75 s), chaingun (12 dmg hitscan, 0.1 s, 60 rounds per pickup, 200 max),
   rocket launcher (projectile 22 m/s, 110 dmg, 2.2 m splash that also clears
