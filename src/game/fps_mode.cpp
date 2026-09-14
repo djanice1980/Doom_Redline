@@ -7,7 +7,9 @@ namespace rl::game {
 
 namespace {
 constexpr float kPi = 3.14159265f;
-constexpr float kMoveSpeed = 4.5f;
+constexpr float kMoveSpeed = 5.0f;
+constexpr float kRunMultiplier = 1.75f;
+constexpr int kBossTier = 5;   // cyberdemon and up: at most one alive at a time
 constexpr float kMouseSens = 0.0022f;
 constexpr float kPlayerRadius = 0.3f;
 constexpr float kExplosionRadius = 1.5f;   // cells, around every cell of the region
@@ -173,6 +175,9 @@ void FpsMode::begin(core::Game& game, int level) {
             if (roll < upgradeChance && tier < capTier) ++tier;               // random nastier
             else if (roll > 0.85f && tier > 0 && cells.size() > 1) --tier;    // random lucky break
             tier = std::min(tier, capTier);
+            // Never more than one boss (cyberdemon / spider) in a fight: extras become barons.
+            if (tier >= kBossTier)
+                for (const Enemy& other : enemies_) if (other.tier >= kBossTier) { tier = kBossTier - 1; break; }
             e.tier = tier;
             const EnemyStats& st = enemyStats(tier);
             e.cells = cells;
@@ -585,6 +590,8 @@ void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     std::uniform_real_distribution<float> u(0.f, 1.f);
     e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level_) * (0.9f + 0.2f * u(rng_));
     int growCap = std::min(kMaxTier, maxTierForLevel(level_) + 1);
+    if (e.tier + 1 >= kBossTier)   // growing into a boss is only allowed if none is alive
+        for (const Enemy& other : enemies_) if (&other != &e && other.alive() && other.tier >= kBossTier) return;
     if (e.tier >= growCap || u(rng_) > 0.75f) return;
     int ec, er;
     if (!flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er)) return;
@@ -661,7 +668,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     glm::vec3 right(-std::cos(yaw_), 0.f, std::sin(yaw_));   // forward x up
     glm::vec3 move = fwd * in.moveZ + right * in.moveX;
     if (glm::length(move) > 1.f) move = glm::normalize(move);
-    if (health_ > 0.f && !in.warmup) moveWithCollision(playerPos_, move * kMoveSpeed * dt, kPlayerRadius, game);
+    if (health_ > 0.f && !in.warmup) moveWithCollision(playerPos_, move * kMoveSpeed * (in.run ? kRunMultiplier : 1.f) * dt, kPlayerRadius, game);
     playerPos_.y = 0.f;
     damageFlash_ = std::max(0.f, damageFlash_ - dt * 2.5f);
     pickupFlash_ = std::max(0.f, pickupFlash_ - dt * 3.f);

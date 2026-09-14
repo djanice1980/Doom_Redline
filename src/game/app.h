@@ -77,8 +77,8 @@ private:
     void panel(float x, float y, float w, float h, glm::vec4 color);
     void announce(const std::string& text, glm::vec4 color, float scale = 1.2f);
     const std::string& animFrame(const SpriteAnim& a, float t, bool loop, bool* flip = nullptr) const;
-    void play(const char* name, float gain = 1.f, float pitch = 1.f);
-    void play(const std::string& name, float gain = 1.f, float pitch = 1.f) { play(name.c_str(), gain, pitch); }
+    void play(const char* name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45);
+    void play(const std::string& name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45) { play(name.c_str(), gain, pitch, minIntervalMs); }
 
     Options opts_;
     SDL_Window* window_ = nullptr;
@@ -105,7 +105,7 @@ private:
 
     // Blocks-mode input state (DAS)
     struct { bool left = false, right = false, down = false; float dasT = 0.f; int dasDir = 0; bool dasActive = false; } keys_;
-    struct { float dx = 0.f, dy = 0.f; bool fire = false; bool fwd = false, back = false, left = false, right = false; int select = -1; int wheel = 0; } fpsIn_;
+    struct { float dx = 0.f, dy = 0.f; bool fire = false; bool fwd = false, back = false, left = false, right = false; bool run = false; int select = -1; int wheel = 0; } fpsIn_;
 
     // Per-frame draw lists
     std::vector<render::CubeInstance> envCubes_;

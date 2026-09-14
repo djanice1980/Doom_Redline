@@ -36,12 +36,16 @@ void Audio::addSound(const std::string& name, int sampleRate, std::vector<float>
     sounds_[name] = Sound{sampleRate, std::move(monoSamples)};
 }
 
-void Audio::play(const std::string& name, float gain, float pitch) {
+void Audio::play(const std::string& name, float gain, float pitch, int minIntervalMs) {
     if (!ok_) return;
     auto it = sounds_.find(name);
     if (it == sounds_.end()) return;
     const Sound& snd = it->second;
     if (snd.samples.empty()) return;
+    uint64_t now = SDL_GetTicks();
+    auto last = lastStart_.find(name);
+    if (last != lastStart_.end() && now - last->second < static_cast<uint64_t>(minIntervalMs)) return;
+    lastStart_[name] = now;
     // Cap simultaneous voices so a burst of events cannot pile up streams.
     if (active_.size() > 24) {
         SDL_DestroyAudioStream(active_.front());

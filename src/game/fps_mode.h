@@ -148,6 +148,7 @@ struct FpsInput {
     int selectWeapon = -1;            // 0..3 to switch, -1 none
     int wheel = 0;                    // +1 next / -1 previous weapon
     bool warmup = false;              // countdown: look around only, monsters rise but do nothing
+    bool run = false;                 // sprint
 };
 
 struct FpsEvent {

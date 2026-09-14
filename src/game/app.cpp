@@ -65,7 +65,7 @@ App::~App() {
     SDL_Quit();
 }
 
-void App::play(const char* name, float gain, float pitch) { audio_.play(name, gain, pitch); }
+void App::play(const char* name, float gain, float pitch, int minIntervalMs) { audio_.play(name, gain, pitch, minIntervalMs); }
 
 void App::newGame() {
     uint32_t seed = opts_.seed ? opts_.seed : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xFFFFFFFFu);
@@ -296,6 +296,7 @@ void App::handleEvents() {
                 case SDLK_A: case SDLK_LEFT: fpsIn_.left = true; break;
                 case SDLK_D: case SDLK_RIGHT: fpsIn_.right = true; break;
                 case SDLK_SPACE: case SDLK_LCTRL: fpsIn_.fire = true; break;
+                case SDLK_LSHIFT: case SDLK_RSHIFT: fpsIn_.run = true; break;
                 case SDLK_1: fpsIn_.select = 0; break;
                 case SDLK_2: fpsIn_.select = 1; break;
                 case SDLK_3: fpsIn_.select = 2; break;
@@ -315,6 +316,7 @@ void App::handleEvents() {
             case SDLK_DOWN: case SDLK_S: keys_.down = false; fpsIn_.back = false; game_->setSoftDrop(false); break;
             case SDLK_UP: case SDLK_W: fpsIn_.fwd = false; break;
             case SDLK_SPACE: case SDLK_LCTRL: fpsIn_.fire = false; break;
+            case SDLK_LSHIFT: case SDLK_RSHIFT: fpsIn_.run = false; break;
             default: break;
             }
             break;
@@ -342,8 +344,8 @@ void App::updateBlocksInput(float dt) {
 void App::handleGameEvents() {
     for (const core::Event& ev : game_->drainEvents()) {
         switch (ev.type) {
-        case core::EventType::PieceMoved: play("move", 0.5f); break;
-        case core::EventType::PieceRotated: play("rotate", 0.6f); break;
+        case core::EventType::PieceMoved: play("move", 0.5f, 1.f, 70); break;
+        case core::EventType::PieceRotated: play("rotate", 0.6f, 1.f, 80); break;
         case core::EventType::PieceLocked: play("lock", 0.8f); break;
         case core::EventType::HardDrop: shakeT_ = 0.15f; break;
         case core::EventType::LinesCleared: {
@@ -356,11 +358,11 @@ void App::handleGameEvents() {
             announce(label + "  +" + std::to_string(ev.b), col, ev.a >= 4 || game_->chain() > 0 ? 1.6f : 1.2f);
             break;
         }
-        case core::EventType::RedCellFell: play("lock", 0.4f, 1.6f); break;
+        case core::EventType::RedCellFell: play("lock", 0.4f, 1.6f, 90); break;
         case core::EventType::LevelUp: play("levelup", 1.f); announce("LEVEL " + std::to_string(ev.a), glm::vec4(0.6f, 0.9f, 1.f, 1.f), 1.4f); break;
-        case core::EventType::CellCorrupting: play("redline", 0.35f, 1.6f); break;
-        case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f); shakeT_ = std::max(shakeT_, 0.1f); break;
-        case core::EventType::EvilSpawning: play("redline", 0.5f, 0.7f); break;
+        case core::EventType::CellCorrupting: play("redline", 0.35f, 1.6f, 250); break;
+        case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f, 120); shakeT_ = std::max(shakeT_, 0.1f); break;
+        case core::EventType::EvilSpawning: play("redline", 0.5f, 0.7f, 250); break;
         case core::EventType::EvilSpawned: play("explode", 0.5f, 1.4f); shakeT_ = std::max(shakeT_, 0.15f); announce("EVIL SPAWNED", glm::vec4(1.f, 0.3f, 0.2f, 1.f), 1.f); break;
         default: break;
         }
@@ -380,7 +382,7 @@ void App::handleFpsEvents() {
         }
         case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
         case FpsEvent::Type::RocketBlast: std::fprintf(stderr, "[fps] rocket blast destroyed %d blocks\n", ev.a); play("rocket_hit", 1.f); shakeT_ = 0.35f; break;
-        case FpsEvent::Type::BlockBroken: play("lock", 0.7f, 0.8f); shakeT_ = std::max(shakeT_, 0.08f); break;
+        case FpsEvent::Type::BlockBroken: play("lock", 0.7f, 0.8f, 100); shakeT_ = std::max(shakeT_, 0.08f); break;
         case FpsEvent::Type::Score: announce(art.name + "  +" + std::to_string(ev.a), ev.tier >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : glm::vec4(1.f), ev.tier >= 4 ? 1.5f : 1.1f); break;
         case FpsEvent::Type::Absorb:
             std::fprintf(stderr, "[fps] a monster absorbed %d blocks and became a %s\n", ev.a, art.name.c_str());
@@ -388,13 +390,13 @@ void App::handleFpsEvents() {
             play("explode", 0.6f, 0.6f);
             shakeT_ = 0.4f;
             break;
-        case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f); break;
-        case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f); break;
+        case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f, 80); break;
+        case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f, 1.f, 120); break;
         case FpsEvent::Type::EnemyDied: play(art.deathSound, 1.f); break;
         case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
         case FpsEvent::Type::Explosion: play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; break;
         case FpsEvent::Type::PlayerHit: play("pain", 1.f); shakeT_ = 0.25f; break;
-        case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f); break;
+        case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f, 1.f, 80); break;
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
         case FpsEvent::Type::EnemySight: {
@@ -454,6 +456,7 @@ void App::update(float dt) {
         in.fire = fpsIn_.fire;
         in.selectWeapon = fpsIn_.select;
         in.wheel = fpsIn_.wheel;
+        in.run = fpsIn_.run;
         if (opts_.bot) {
             // Aim at the nearest living enemy's chest; advance when it is far or hidden.
             const Enemy* target = nullptr;
@@ -484,6 +487,7 @@ void App::update(float dt) {
                 if (clear) {
                     botBlockedT_ = 0.f;
                     in.moveZ = len > 7.f ? 1.f : 0.f;
+                    in.run = len > 7.f;
                     in.moveX = std::sin(time_ * 1.7f) * 0.6f;
                 } else {
                     // Shot blocked by a block: sidestep, flipping direction every so often.
@@ -989,7 +993,7 @@ void App::addHud() {
             float pop = 1.f + 0.6f * frac;                            // number shrinks as its second runs out
             text(W * 0.5f, H * 0.28f, "GET READY", s * 1.2f, white, 1);
             text(W * 0.5f, H * 0.38f, std::to_string(std::max(1, n)), s * 4.f * pop, glm::vec4(1.f, 0.25f, 0.2f, 1.f), 1);
-            text(W * 0.5f, H * 0.62f, "MOUSE LOOK  WASD MOVE  CLICK FIRE  1-4/WHEEL WEAPONS", s * 0.8f, dim, 1);
+            text(W * 0.5f, H * 0.62f, "MOUSE LOOK  WASD MOVE  SHIFT RUN  CLICK FIRE  1-4/WHEEL WEAPONS", s * 0.8f, dim, 1);
             text(W * 0.5f, H * 0.62f + lh * 1.2f, "DEMONS EAT YOUR COVER. LEAVE ONE ALIVE TOO LONG AND IT GROWS.", s * 0.7f, dim, 1);
         }
         if (mode_ == Mode::Fps && fps_.elapsed() < 0.7f) {

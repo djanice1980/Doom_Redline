@@ -75,8 +75,8 @@ Block mode:
 | Esc | pause menu (resume / restart / quit) |
 | F12 | screenshot to `redline-screenshot.png` |
 
-First-person mode: mouse to look, WASD to move, left click / Space to fire,
-1-4 or mouse wheel (Q/E) to switch weapons. Menus (title, pause, game over):
+First-person mode: mouse to look, WASD to move, Shift to run, left click /
+Space to fire, 1-4 or mouse wheel (Q/E) to switch weapons. Menus (title, pause, game over):
 Up/Down or W/S to pick, Enter or click to confirm.
 
 ## Rules that differ from classic
@@ -118,7 +118,10 @@ Up/Down or W/S to pick, Enter or click to confirm.
   cacodemons, 3-4: barons, 5-6: cyberdemons, 7+: spider masterminds); a red
   region too big for the cap is split into several monsters, and regions of 7+
   cells split half the time anyway, so a full red row is a crowd, not one
-  boss. Absorbing can grow a monster one class past the cap.
+  boss. Absorbing can grow a monster one class past the cap. There is never
+  more than one boss (cyberdemon or spider mastermind) alive at once: extra
+  ones spawn as barons, and a monster will not grow into a boss while one
+  lives.
   Cyberdemon rockets have splash damage and blow up the blocks they hit. Monster health scales with the level (x0.45 at level 1,
   +0.15 per level, capped at x2.5), and so does their attack cadence.
 - Killing a monster explodes every cell of its cluster, destroying the *normal*
