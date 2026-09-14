@@ -913,7 +913,7 @@ void App::addHud() {
         float f = 0.5f + 0.5f * std::sin(time_ * (3.f + 6.f * d));
         panel(0.f, 0.f, W, lh * 0.5f, glm::vec4(1.f, 0.1f, 0.05f, 0.35f * d * f));
         panel(0.f, H - lh * 0.5f, W, lh * 0.5f, glm::vec4(1.f, 0.1f, 0.05f, 0.35f * d * f));
-        text(W * 0.5f, lh * 0.9f, d < 0.5f ? "THE STACK IS TURNING EVIL" : "EVIL RISING", s * 0.9f, glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 0.4f + 0.6f * d), 1);
+        text(W * 0.5f, H * 0.2f, d < 0.5f ? "THE STACK IS TURNING EVIL" : "EVIL RISING", s * 0.9f, glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 0.4f + 0.6f * d), 1);
     }
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 16.f);
