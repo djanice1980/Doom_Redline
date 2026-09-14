@@ -105,6 +105,20 @@ void App::applyScenario() {
             if (cell.kind == core::CellKind::Normal) { cell.corrupt = 0.4f + 0.5f * static_cast<float>(pc[0] % 3); game_->setCell(pc[0], pc[1], cell); }
         }
     }
+    if (opts_.scenario == "prize") {
+        // A tetris straight into a red line: rows 15-18 full except column 0,
+        // row 19 all red. The I piece fills column 0, clears four lines, and
+        // the red row underneath triggers the fight with the prizes banked.
+        const int H = core::kBoardH;
+        for (int r = H - 5; r < H - 1; ++r)
+            for (int c = 1; c < core::kBoardW; ++c) game_->setCell(c, r, core::Cell{core::CellKind::Normal, static_cast<uint8_t>((c + r) % 7)});
+        for (int c = 0; c < core::kBoardW; ++c) game_->setCell(c, H - 1, core::Cell{core::CellKind::Red, 0});
+        game_->forcePiece(core::Shape::I, {});
+        game_->spawnNow();
+        game_->rotateCW();
+        for (int i = 0; i < 6; ++i) game_->moveLeft();
+        game_->hardDrop();
+    }
     if (opts_.scenario == "redline" || opts_.scenario == "fps") {
         // A nearly complete red floor row plus assorted red regions of
         // different sizes (one enemy of each class) and normal blocks around
@@ -167,7 +181,12 @@ void App::enterMode(Mode m) {
         flyFrom_ = blocksCamera();
         fps_.setAbsorbPeriod(opts_.absorbPeriod);
         fps_.setGodMode(opts_.god);
-        fps_.begin(*game_, game_->level());
+        {
+            core::Prizes p = game_->takePrizes();
+            fps_.begin(*game_, game_->level(), p);
+            std::fprintf(stderr, "[fps] prizes: +%d health, %d armour, %d%% invuln -> %s\n", static_cast<int>(p.bonusHealth), static_cast<int>(p.shield),
+                         static_cast<int>(p.invulnChance * 100.f), fps_.startedInvulnerable() ? "INVULNERABLE" : "no");
+        }
         flyTo_ = fpsCamera();
         break;
     case Mode::Countdown:
@@ -381,6 +400,14 @@ void App::handleGameEvents() {
             else if (game_->combo() > 1) label = "COMBO X" + std::to_string(game_->combo()) + "  " + label;
             glm::vec4 col = ev.a >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : (game_->chain() > 0 ? glm::vec4(1.f, 0.5f, 0.2f, 1.f) : glm::vec4(1.f));
             announce(label + "  +" + std::to_string(ev.b), col, ev.a >= 4 || game_->chain() > 0 ? 1.6f : 1.2f);
+            {
+                const core::Prizes& pr = game_->lastClearPrizes();
+                std::string prize;
+                if (pr.bonusHealth > 0.f) prize += "+" + std::to_string(static_cast<int>(pr.bonusHealth)) + " HEALTH  ";
+                if (pr.shield > 0.f) prize += "+" + std::to_string(static_cast<int>(pr.shield)) + " ARMOR  ";
+                if (pr.invulnChance > 0.f) prize += "+" + std::to_string(static_cast<int>(pr.invulnChance * 100.f)) + "% INVULN";
+                if (!prize.empty()) announce(prize, glm::vec4(0.6f, 0.9f, 1.f, 1.f), 0.9f);
+            }
             break;
         }
         case core::EventType::RedCellFell: play("lock", 0.4f, 1.6f, 90); break;
@@ -430,6 +457,7 @@ void App::handleFpsEvents() {
             std::string roster;
             for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.tier, 0, kEnemyTiers - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
             std::fprintf(stderr, "[fps] level %d roster: %s\n", fps_.level(), roster.c_str());
+            if (fps_.startedInvulnerable()) { announce("INVULNERABLE", glm::vec4(1.f, 0.95f, 0.5f, 1.f), 1.8f); play("levelup", 1.f, 0.7f); }
             break;
         }
         }
@@ -956,6 +984,14 @@ void App::addHud() {
         text(x, y, "RED LINES " + std::to_string(redLinesSurvived_), s, red); y += lh;
         if (game_->combo() > 1) { text(x, y, "COMBO X" + std::to_string(game_->combo()), s, yellow); }
         y += lh * 1.4f;
+        if (game_->prizes().any()) {
+            const core::Prizes& pr = game_->prizes();
+            text(x, y, "NEXT FIGHT", s * 0.7f, dim); y += lh * 0.8f;
+            if (pr.bonusHealth > 0.f) { text(x, y, "+" + std::to_string(static_cast<int>(pr.bonusHealth)) + " HEALTH", s * 0.7f, glm::vec4(0.6f, 0.9f, 1.f, 1.f)); y += lh * 0.8f; }
+            if (pr.shield > 0.f) { text(x, y, std::to_string(static_cast<int>(pr.shield)) + " ARMOR", s * 0.7f, glm::vec4(0.6f, 0.9f, 1.f, 1.f)); y += lh * 0.8f; }
+            if (pr.invulnChance > 0.f) { text(x, y, std::to_string(static_cast<int>(pr.invulnChance * 100.f)) + "% INVULN", s * 0.7f, yellow); y += lh * 0.8f; }
+            y += lh * 0.4f;
+        }
         text(x, y, "NEXT", s, dim); y += lh;
         const core::Piece& n = game_->next();
         float cellPx = 12.f * s;
@@ -1016,7 +1052,14 @@ void App::addHud() {
         if (fps_.damageFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.f, 0.f, 0.45f * fps_.damageFlash()));
         panel(0.f, H - lh * 1.6f, W, lh * 1.6f, glm::vec4(0.f, 0.f, 0.f, 0.55f));
         float hy = H - lh * 1.3f;
-        text(24.f, hy, "HEALTH " + std::to_string(static_cast<int>(std::ceil(fps_.health()))) + "%", s, fps_.health() < 30.f ? red : white);
+        std::string hp = "HEALTH " + std::to_string(static_cast<int>(std::ceil(fps_.health()))) + "%";
+        if (fps_.shield() > 0.f) hp += "  ARMOR " + std::to_string(static_cast<int>(std::ceil(fps_.shield())));
+        text(24.f, hy, hp, s, fps_.health() < 30.f ? red : (fps_.health() > 100.f ? glm::vec4(0.6f, 0.9f, 1.f, 1.f) : white));
+        if (fps_.invulnerable()) {
+            float f = 0.5f + 0.5f * std::sin(time_ * 8.f);
+            panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.95f, 0.6f, 0.10f + 0.06f * f));
+            text(W * 0.5f, H * 0.12f, "INVULNERABLE " + std::to_string(static_cast<int>(std::ceil(fps_.invulnLeft()))), s * 1.1f, glm::vec4(1.f, 0.95f, 0.5f, 0.8f + 0.2f * f), 1);
+        }
         text(W * 0.5f, hy, "DEMONS " + std::to_string(fps_.enemiesLeft()) + "/" + std::to_string(fps_.totalEnemies()), s, yellow, 1);
         text(W - 24.f, hy, "LEVEL " + std::to_string(game_->level()) + "   SCORE " + std::to_string(game_->score()), s, white, 2);
         // Weapon roster: owned weapons with ammo, current one highlighted.

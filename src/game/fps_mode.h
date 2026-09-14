@@ -164,7 +164,7 @@ public:
     FpsMode();
     // Turns every red region of the board into a monster (removing those red
     // cells from the grid) and places the player in the empty part of the board.
-    void begin(core::Game& game, int level);
+    void begin(core::Game& game, int level, const core::Prizes& prizes = {});
     // Tuning knobs (defaults are the shipped values; the CLI can override for testing).
     void setAbsorbPeriod(float seconds) { absorbPeriod_ = seconds; }
     void setGodMode(bool on) { god_ = on; }
@@ -181,6 +181,10 @@ public:
     float yaw() const { return yaw_; }
     float pitch() const { return pitch_; }
     float health() const { return health_; }
+    float shield() const { return shield_; }
+    float invulnLeft() const { return invulnT_; }
+    bool invulnerable() const { return invulnT_ > 0.f; }
+    bool startedInvulnerable() const { return startedInvuln_; }
     float damageFlash() const { return damageFlash_; }
     float pickupFlash() const { return pickupFlash_; }
     float gunAnimT() const { return gunT_; }
@@ -237,6 +241,9 @@ private:
     float yaw_ = 3.14159265f;   // facing -Z (towards the stack)
     float pitch_ = 0.f;
     float health_ = 100.f;
+    float shield_ = 0.f;
+    float invulnT_ = 0.f;
+    bool startedInvuln_ = false;
     float damageFlash_ = 0.f;
     float pickupFlash_ = 0.f;
     float gunT_ = 10.f;

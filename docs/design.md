@@ -38,6 +38,12 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   Red and `CellTurnedRed` fires. A red row formed this way triggers the red
   line immediately; `spawn()` keeps the interrupted active piece so it resumes
   after the fight.
+- **Prizes.** `finishClear` adds `prizeHealth/Shield/Invuln[n] * mult` to
+  `prizes_` (caps 100 / 200 / 0.9). `App` calls `takePrizes()` at FlyIn and
+  passes them to `FpsMode::begin`: health = 100 + bonus (cap 200), shield,
+  and one roll against `invulnChance` for `invulnSeconds` of immunity.
+  `hurtPlayer` ignores damage while invulnerable and lets armour absorb half
+  of a hit first. Health pickups never raise health above 100.
 - **Panic.** `panic()` is true within `panicRows` (4) of the top; corruption
   and evil-spawn rates are then at least `panicRate` (6/s) and corruption
   bursts get `panicBurst` (3) extra cells. This is the intended escape from a

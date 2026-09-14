@@ -131,7 +131,7 @@ void FpsMode::selectWeapon(int id) {
 }
 
 // ---------------------------------------------------------------------------
-void FpsMode::begin(core::Game& game, int level) {
+void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
     enemies_.clear();
     projectiles_.clear();
     explosions_.clear();
@@ -141,7 +141,8 @@ void FpsMode::begin(core::Game& game, int level) {
     finished_ = false;
     finishDelay_ = 0.f;
     elapsed_ = 0.f;
-    health_ = 100.f;
+    health_ = std::min(200.f, 100.f + prizes.bonusHealth);
+    shield_ = std::min(200.f, prizes.shield);
     damageFlash_ = 0.f;
     pickupFlash_ = 0.f;
     gunT_ = 10.f;
@@ -154,6 +155,9 @@ void FpsMode::begin(core::Game& game, int level) {
     if (!slots_[weapon_].owned || (weaponDef(weapon_).ammoPerPickup > 0 && slots_[weapon_].ammo <= 0)) weapon_ = kShotgun;
     rng_.seed(game.seed() * 7919u + static_cast<uint32_t>(game.redLineCount()) * 104729u);
     std::uniform_real_distribution<float> u(0.f, 1.f);
+    // The invulnerability prize is a roll made as the monsters rise.
+    startedInvuln_ = prizes.invulnChance > 0.f && u(rng_) < prizes.invulnChance;
+    invulnT_ = startedInvuln_ ? game.rules().invulnSeconds : 0.f;
 
     // Difficulty scaling with level: health, chance of upgrading a tier, cadence.
     float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(level - 1), 0.45f, 2.5f);
@@ -290,7 +294,13 @@ void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int coun
 }
 
 void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
-    if (health_ <= 0.f || god_) return;
+    if (health_ <= 0.f || god_ || invulnT_ > 0.f) return;
+    // Armour soaks half of any hit until it is spent.
+    if (shield_ > 0.f) {
+        float absorbed = std::min(shield_, dmg * 0.5f);
+        shield_ -= absorbed;
+        dmg -= absorbed;
+    }
     health_ = std::max(0.f, health_ - dmg);
     damageFlash_ = 1.f;
     push(FpsEvent::Type::PlayerHit, from);
@@ -304,7 +314,7 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos) {
     push(FpsEvent::Type::EnemyHit, hitPos, e.tier);
     spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
     if (e.hp <= 0.f) {
-        health_ = std::min(100.f, health_ + 5.f);   // small heal per kill keeps long fights winnable
+        health_ = std::max(health_, std::min(100.f, health_ + 5.f));   // small heal per kill keeps long fights winnable
         e.state = Enemy::State::Dying;
         e.stateT = 0.f;
         e.animT = 0.f;
@@ -644,8 +654,8 @@ void FpsMode::applyPickup(const Pickup& p) {
         slots_[id].ammo = std::min(weaponDef(id).maxAmmo, slots_[id].ammo + static_cast<int>(weaponDef(id).ammoPerPickup * mult));
     };
     switch (p.kind) {
-    case PickupKind::Stim: health_ = std::min(100.f, health_ + 10.f); break;
-    case PickupKind::Medikit: health_ = std::min(100.f, health_ + 25.f); break;
+    case PickupKind::Stim: health_ = std::max(health_, std::min(100.f, health_ + 10.f)); break;
+    case PickupKind::Medikit: health_ = std::max(health_, std::min(100.f, health_ + 25.f)); break;
     case PickupKind::Bullets: giveAmmo(kChaingun, 1.f); break;
     case PickupKind::Rockets: giveAmmo(kRocketLauncher, 1.f); break;
     case PickupKind::Cells: giveAmmo(kPlasmaRifle, 1.f); break;
@@ -672,6 +682,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     playerPos_.y = 0.f;
     damageFlash_ = std::max(0.f, damageFlash_ - dt * 2.5f);
     pickupFlash_ = std::max(0.f, pickupFlash_ - dt * 3.f);
+    if (!in.warmup) invulnT_ = std::max(0.f, invulnT_ - dt);
 
     // --- weapon ----------------------------------------------------------
     if (in.selectWeapon >= 0) selectWeapon(in.selectWeapon);

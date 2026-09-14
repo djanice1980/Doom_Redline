@@ -152,6 +152,13 @@ Up/Down or W/S to pick, Enter or click to confirm.
 - The shotgun never runs out. The chaingun is fast hitscan, the plasma rifle
   fires fast bolts, and rockets have splash damage that also blasts the blocks
   around the impact (and you, if you are too close).
+- **Prizes.** Every line clear banks something for the next fight, shown
+  under NEXT FIGHT in the side panel: a single gives 5 armour; a double 10
+  health and 10 armour; a triple 20 / 20 and a 10 % chance of
+  invulnerability; a tetris 40 / 40 and 25 %. Combo and chain multipliers
+  apply. Health above 100 (cap 200) is bonus you cannot refill; armour soaks
+  half of every hit until spent (cap 200); the invulnerability roll happens
+  as the monsters rise and gives 10 s of immunity (golden screen, countdown).
 - **Scoring.** Line clears pay 100 / 300 / 600 / 1000 for 1 / 2 / 3 / 4 lines,
   times the level. Consecutive clearing pieces build a combo (+50 % per
   step); a clear caused by a collapse after a fight is a chain (+100 % per

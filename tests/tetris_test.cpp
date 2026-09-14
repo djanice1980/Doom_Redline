@@ -540,7 +540,28 @@ static void testPanicAndPurge() {
     CHECK(h.lines() == 4 && h.level() == 1);
 }
 
+static void testPrizes() {
+    Game g(1, fastRules());
+    CHECK(!g.prizes().any());
+    for (int r = 16; r < 20; ++r) fill(g, r, CellKind::Normal, 0);
+    dropIInColumn0(g);                                   // tetris
+    CHECK(g.prizes().bonusHealth == 40.f && g.prizes().shield == 40.f);
+    CHECK(g.prizes().invulnChance > 0.24f && g.prizes().invulnChance < 0.26f);
+    for (int r = 17; r < 20; ++r) fill(g, r, CellKind::Normal, 0);
+    dropIInColumn0(g);                                   // triple, combo x1.5
+    CHECK(g.prizes().bonusHealth == 70.f);               // 40 + 20 * 1.5
+    CHECK(g.prizes().shield == 70.f);
+    CHECK(g.prizes().invulnChance > 0.39f && g.prizes().invulnChance < 0.41f);   // 0.25 + 0.10 * 1.5
+    Prizes taken = g.takePrizes();
+    CHECK(taken.shield == 70.f && !g.prizes().any());
+    Game h(1, fastRules());
+    fill(h, 19, CellKind::Normal, 0);
+    dropIInColumn0(h);                                   // single: only a little armour
+    CHECK(h.prizes().bonusHealth == 0.f && h.prizes().shield == 5.f && h.prizes().invulnChance == 0.f);
+}
+
 int main() {
+    testPrizes();
     testPanicAndPurge();
     testCorruptionBuildsSurround();
     testEvilSpawn();

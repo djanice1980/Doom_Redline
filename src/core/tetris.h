@@ -93,6 +93,14 @@ struct Rules {
     float evilSpawnTime = 1.2f;       // seconds of warning before the block appears
     // Scoring
     int lineScore[5] = {0, 100, 300, 600, 1000};   // x level x combo/chain multipliers
+    // Prizes banked for the next fight, per clear of 1..4 lines (combo/chain
+    // multiplier applies): bonus health above 100 (cap 200), armour points
+    // (absorb half of any damage until spent, cap 200), and a chance to start
+    // the fight invulnerable.
+    float prizeHealth[5] = {0.f, 0.f, 10.f, 20.f, 40.f};
+    float prizeShield[5] = {0.f, 5.f, 10.f, 20.f, 40.f};
+    float prizeInvuln[5] = {0.f, 0.f, 0.f, 0.10f, 0.25f};
+    float invulnSeconds = 10.f;
     float comboStep = 0.5f;           // +50 % per consecutive clearing piece
     float chainStep = 1.0f;           // +100 % per cascade step (clear caused by a collapse)
 };
@@ -127,6 +135,14 @@ struct Event {
     EventType type;
     int a = 0;
     int b = 0;
+};
+
+// What line clears have banked for the next fight.
+struct Prizes {
+    float bonusHealth = 0.f;
+    float shield = 0.f;
+    float invulnChance = 0.f;   // 0..1
+    bool any() const { return bonusHealth > 0.f || shield > 0.f || invulnChance > 0.f; }
 };
 
 class Game {
@@ -175,6 +191,9 @@ public:
     int combo() const { return combo_; }          // consecutive clearing pieces (0 = none active)
     int chain() const { return chain_; }          // cascade depth of the last clear
     int lastClearPoints() const { return lastClearPoints_; }
+    const Prizes& prizes() const { return prizes_; }   // banked so far
+    Prizes takePrizes();                               // hand them to the fight and reset
+    const Prizes& lastClearPrizes() const { return lastPrizes_; }
     int stackRows() const;                        // filled height of the stack in rows
     float danger() const;                         // 0..1 corruption pressure
     bool panic() const { return stackRows() >= kBoardH - rules_.panicRows; }
@@ -242,6 +261,7 @@ private:
     int chain_ = 0;
     bool clearFromSettle_ = false;   // the pending clear was produced by a collapse, not a lock
     int lastClearPoints_ = 0;
+    Prizes prizes_, lastPrizes_;
     std::vector<Shape> bag_;
 };
 

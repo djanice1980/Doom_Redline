@@ -291,6 +291,11 @@ void Game::finishClear() {
     float mult = (1.f + rules_.comboStep * static_cast<float>(std::max(0, combo_ - 1))) * (1.f + rules_.chainStep * static_cast<float>(chain_));
     lastClearPoints_ = static_cast<int>(static_cast<float>(rules_.lineScore[std::min(cleared, 4)] * level_) * mult);
     score_ += lastClearPoints_;
+    int n = std::min(cleared, 4);
+    lastPrizes_ = {rules_.prizeHealth[n] * mult, rules_.prizeShield[n] * mult, rules_.prizeInvuln[n] * mult};
+    prizes_.bonusHealth = std::min(100.f, prizes_.bonusHealth + lastPrizes_.bonusHealth);
+    prizes_.shield = std::min(200.f, prizes_.shield + lastPrizes_.shield);
+    prizes_.invulnChance = std::min(0.9f, prizes_.invulnChance + lastPrizes_.invulnChance);
     lines_ += cleared;
     push(EventType::LinesCleared, cleared, lastClearPoints_);
     if (rules_.linesPerLevel > 0) {
@@ -604,6 +609,12 @@ std::vector<std::pair<int, int>> Game::evilSpawnCandidates() const {
         }
     }
     return out;
+}
+
+Prizes Game::takePrizes() {
+    Prizes p = prizes_;
+    prizes_ = {};
+    return p;
 }
 
 int Game::purgeRed() {
