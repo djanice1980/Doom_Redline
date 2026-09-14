@@ -425,8 +425,9 @@ static void testEvilSpawn() {
     r.evilSpawnTime = 0.05f;
     r.corruptionRate = 0.f;
     Game g(4, r);
-    fill(g, 19, CellKind::Red, 5);                     // bottom row all red except the hole at column 5
-    for (int c = 0; c < 10; ++c) if (c != 5) g.setCell(c, 17, Cell{CellKind::Normal, 0});
+    fill(g, 19, CellKind::Red, 5);                     // bottom row all red except the hole at column 5 ...
+    g.setCell(5, 18, Cell{CellKind::Red, 0});          // ... with red above it: left/right/top red, floor below
+    for (int c = 0; c < 10; ++c) if (c != 5 && c != 4 && c != 6) g.setCell(c, 17, Cell{CellKind::Normal, 0});
     auto holes = g.evilSpawnCandidates();
     CHECK(holes.size() == 1 && holes[0].first == 5 && holes[0].second == 19);
     g.forcePiece(Shape::O, {});
@@ -442,13 +443,27 @@ static void testEvilSpawn() {
     CHECK(sawSpawning && sawSpawned);
     CHECK(g.at(5, 19).red());
     CHECK(g.phase() == Phase::RedLine);               // the filled hole completed a red row
-    // A hole with only normal neighbours is left alone; one boxed in by red is not.
+    // Open sky above never qualifies, even as the last gap in a red row.
     Game h(4, r);
-    fill(h, 19, CellKind::Normal, 4);
+    fill(h, 19, CellKind::Red, 5);
     CHECK(h.evilSpawnCandidates().empty());
-    h.setCell(3, 19, Cell{CellKind::Red, 0});
-    h.setCell(5, 19, Cell{CellKind::Red, 0});
-    CHECK(h.evilSpawnCandidates().size() == 1);        // floor below counts as red, sky above is fine
+    // Normal neighbours never qualify; a full red surround does, with the floor as "below".
+    Game k(4, r);
+    fill(k, 19, CellKind::Normal, 4);
+    k.setCell(4, 18, Cell{CellKind::Red, 0});
+    CHECK(k.evilSpawnCandidates().empty());
+    k.setCell(3, 19, Cell{CellKind::Red, 0});
+    k.setCell(5, 19, Cell{CellKind::Red, 0});
+    CHECK(k.evilSpawnCandidates().size() == 1);
+    // Mid-board: all four must be red; a normal block below breaks it.
+    Game m(4, r);
+    m.setCell(3, 10, Cell{CellKind::Red, 0});
+    m.setCell(5, 10, Cell{CellKind::Red, 0});
+    m.setCell(4, 9, Cell{CellKind::Red, 0});
+    m.setCell(4, 11, Cell{CellKind::Normal, 0});
+    CHECK(m.evilSpawnCandidates().empty());
+    m.setCell(4, 11, Cell{CellKind::Red, 0});
+    CHECK(m.evilSpawnCandidates().size() == 1 && m.evilSpawnCandidates()[0].first == 4 && m.evilSpawnCandidates()[0].second == 10);
 }
 
 int main() {

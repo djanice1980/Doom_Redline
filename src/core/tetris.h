@@ -69,11 +69,13 @@ struct Rules {
     float corruptionRate = 0.7f;
     float corruptionTime = 1.6f;      // seconds of flashing before the switch
     int corruptionBurst = 4;          // extra blocks per event at full danger
-    // Evil spawn: an empty cell hemmed in by red (every existing left/right/
-    // below/above neighbour red or turning, walls count, at least two red
-    // neighbours), or the last hole in an otherwise red row, gets filled by a
-    // new red block. Fires more readily than corruption and does not need a
-    // high stack: rate = evilSpawnRate * (0.3 + 0.7 * danger) per second.
+    // Evil spawn: an empty cell fully surrounded by red gets filled by a new
+    // red block. All four neighbours (left, right, above, below) must be red or
+    // turning; on the bottom row the floor stands in for "below", and the side
+    // walls stand in for a missing left/right, but at least two of the
+    // neighbours must be real red blocks and there must be a block above.
+    // Fires more readily than corruption and does not need a high stack:
+    // rate = evilSpawnRate * (0.3 + 0.7 * danger) per second.
     float evilSpawnRate = 1.4f;
     float evilSpawnTime = 1.2f;       // seconds of warning before the block appears
     // Scoring

@@ -83,8 +83,9 @@ void App::applyScenario() {
             for (int c = 0; c < core::kBoardW; ++c)
                 if ((c * 7 + r * 3) % 5 != 0) game_->setCell(c, r, core::Cell{core::CellKind::Normal, static_cast<uint8_t>((c + r) % 7)});
         game_->setLevel(std::max(opts_.level, 4));
-        // A hole boxed in by red at the bottom: evil is already filling it.
+        // A hole boxed in by red at the bottom (red left, right and above; floor below): evil is already filling it.
         for (int c = 0; c < core::kBoardW; ++c) if (c != 5) game_->setCell(c, core::kBoardH - 1, core::Cell{core::CellKind::Red, 0});
+        game_->setCell(5, core::kBoardH - 2, core::Cell{core::CellKind::Red, 0});
         { core::Cell hole; hole.corrupt = 0.9f; game_->setCell(5, core::kBoardH - 1, hole); }
         const int pre[4][2] = {{2, 12}, {6, 15}, {8, 9}, {4, 18}};
         for (auto& pc : pre) {

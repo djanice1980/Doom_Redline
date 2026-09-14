@@ -96,10 +96,12 @@ Up/Down or W/S to pick, Enter or click to confirm.
   towards a fight rather than merely sprinkled with red. If a turned block
   completes a red row, the fight starts right away and the piece in the air
   resumes afterwards.
-- **Evil spawns.** A hole boxed in by red (left, right and below all red or
-  turning, walls and the floor count, at least two real red neighbours), or
-  the last empty cell of an otherwise all-red row, gets filled by evil: a red
-  block grows out of nothing over 1.2 s and then is simply there. This fires
+- **Evil spawns.** A hole fully surrounded by red (left, right, above and
+  below all red or turning) gets filled by evil: a red block grows out of
+  nothing over 1.2 s and then is simply there. On the bottom row the floor
+  counts as the block below, so left, right and top must be red; the side
+  walls count for a missing left or right, but there must always be a real
+  block above and at least two real red neighbours. This fires
   more readily than corruption and does not need a tall stack (it only gets
   faster as the stack rises), so a red row with one gap will close itself
   unless you fill it first.

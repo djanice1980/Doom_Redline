@@ -525,32 +525,26 @@ int Game::corruptionTargetRow() const {
     return best;
 }
 
-// Holes evil may fill: empty cells (not already spawning) whose existing
-// neighbours are all red or turning with at least two real red neighbours
-// (walls and the floor count as red), plus the last hole of a row that is
-// otherwise entirely red.
+// Holes evil may fill: empty cells (not already spawning) whose four
+// neighbours are all red or turning. The floor counts as red below the bottom
+// row and the side walls count left/right, but the cell above must be a real
+// block (open sky never qualifies) and at least two neighbours must be real
+// red blocks.
 std::vector<std::pair<int, int>> Game::evilSpawnCandidates() const {
     std::vector<std::pair<int, int>> out;
     auto redLike = [&](int c, int r) { return grid_[r][c].red() || grid_[r][c].corrupting(); };
     for (int r = 0; r < kBoardH; ++r) {
-        int empties = 0, reds = 0;
-        for (int c = 0; c < kBoardW; ++c) {
-            if (grid_[r][c].empty()) ++empties;
-            else if (redLike(c, r)) ++reds;
-        }
-        bool lastHole = (empties == 1 && reds == kBoardW - 1);
         for (int c = 0; c < kBoardW; ++c) {
             const Cell& cell = grid_[r][c];
             if (!cell.empty() || cell.spawning()) continue;
-            if (lastHole) { out.push_back({c, r}); continue; }
             int redNeighbours = 0;
             bool ok = true;
-            auto look = [&](int nc, int nr, bool required) {
-                if (nc < 0 || nc >= kBoardW || nr >= kBoardH) return;       // wall / floor: counts as red
-                if (nr < 0) return;                                        // open sky above the board
+            auto look = [&](int nc, int nr, bool edgeCounts) {
+                if (nc < 0 || nc >= kBoardW || nr >= kBoardH) { if (!edgeCounts) ok = false; return; }   // wall / floor
+                if (nr < 0) { ok = false; return; }                                                      // open sky above
                 const Cell& n = grid_[nr][nc];
-                if (n.empty()) { if (required) ok = false; return; }
-                if (redLike(nc, nr)) ++redNeighbours; else ok = false;
+                if (n.empty() || !redLike(nc, nr)) { ok = false; return; }
+                ++redNeighbours;
             };
             look(c - 1, r, true);
             look(c + 1, r, true);
