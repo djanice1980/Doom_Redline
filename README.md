@@ -59,6 +59,10 @@ The game looks for an IWAD in this order and uses the first that exists:
 5. `./wads/*.wad` and `<exe folder>/wads/*.wad` (git-ignored; drop or symlink a WAD there)
 6. The Steam / GOG install of Ultimate Doom / Doom II on Linux or Windows
 
+REDLINE never touches the network: there is no update check, no telemetry
+and no online score submission in this build (the plan for an opt-in
+leaderboard is in `docs/online-and-releases.md`).
+
 If nothing is found, the title screen asks: **REDLINE NEEDS DOOM** offers a
 native file browser, a typed path, or playing on with placeholder art. The
 chosen WAD is checked, swapped in live (art, sounds, music) and remembered;
@@ -335,7 +339,7 @@ src/game      assets (WAD -> atlas/sounds), FPS simulation, ambient brawlers, KV
 src/audio     SDL3 stream mixer, MUS sequencer, GENMIDI, OPL3 emulator, FluidSynth backend
 shaders       GLSL, compiled by glslc at build time and embedded
 tests         tetris_test, wad_test, opl_test, music_test, kvx_test
-tools         wadinfo, embed.cmake
+tools         wadinfo, embed.cmake, musrender
 packaging     linux (desktop entry, icon), windows (Inno Setup script, icon), arch (PKGBUILD)
 docs          design.md (rules and scene layout), packaging.md (installers), online-and-releases.md (GitHub releases + leaderboard notes), remix.md (RTX Remix plan)
 ```

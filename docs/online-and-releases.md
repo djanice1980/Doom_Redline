@@ -13,18 +13,12 @@ answers first, details below.
 
 ## 1. Pushing to GitHub
 
-Ready as it stands. Do these first:
-
-- `tools/build_deck.js` hard-codes `/home/davidj/Claude Data/redline` in two
-  places (the repo path and a slide's command line). Change the first to
-  `path.resolve(__dirname, "..")` and the slide text to a plain `cd redline`.
-- Decide whether `docs/REDLINE-build-story.pptx` (1.6 MB) stays in git or
-  moves to a Release asset. It is fine either way; it just grows the clone.
-- The `.gitignore` already excludes `build/`, `*.wad`, `wads/`. Keep the
-  Voxel Doom pack out too (it is found in `~/Downloads`, never copied).
-- Add a `SECURITY`-style line to the README saying the game never contacts
-  the network unless the leaderboard option is turned on (true today: there is
-  no network code at all).
+Clean-up done 2026-09-15: the build-story deck and its generator are
+untracked (side project; they stay on disk under `docs/` and `tools/` and are
+git-ignored), no machine paths remain in tracked files, and the README states
+that the game never touches the network. `.gitignore` excludes `build/`,
+`*.wad`, `wads/`; the Voxel Doom pack is found in `~/Downloads`, never copied.
+Ready to `git remote add origin ... && git push -u origin master`.
 
 ## 2. Releases from GitHub Actions
 
@@ -126,7 +120,38 @@ page in the game later.
   identifiers, no IP stored beyond rate limiting. Say all of this in one
   sentence on the opt-in prompt and in the README.
 
-## 6. Order of work when you pick this up
+## 6. Telemetry: what can be collected, and what should be
+
+Technically almost everything is one call away, most of it through SDL3 and
+Vulkan which the game already links. Whether it *should* be collected is a
+separate question; the middle column is my recommendation.
+
+| Data | How | Collect? |
+|---|---|---|
+| Input method (keyboard+mouse vs. gamepad, and the mix) | count which device produced moves, rotates, drops and shots per run; the game already routes both | Yes: this is the question you actually asked and it is not personal |
+| Gamepad model | `SDL_GetGamepadName`, vendor/product ids | Yes (model only) |
+| OS family and version | `SDL_GetPlatform`; `/etc/os-release` on Linux (distro name, e.g. CachyOS); `RtlGetVersion` or `SDL_GetVersion` plus the registry on Windows | Yes, family + version, no build numbers or hostnames |
+| GPU model, driver version, Vulkan version | already read from `VkPhysicalDeviceProperties` for the log | Yes |
+| CPU core count, RAM | `SDL_GetNumLogicalCPUCores`, `SDL_GetSystemRAM` | Yes, bucketed (8 GB / 16 GB / 32 GB+) |
+| Display resolution, refresh, fullscreen mode, VSync | already known to the app | Yes |
+| Voxels on/off, music set, sound on/off, resolution chosen | settings | Yes |
+| Language / country | `SDL_GetPreferredLocales` | Coarse only (language, country) |
+| Session length, launches, crashes | app timers; a crash marker file left at start and cleared at clean exit | Yes |
+| Logged-in user name | `getenv("USER")` / `USERNAME` | **No.** It is personal data, it is often a real name, and it adds nothing the install id does not already give you. The typed profile name is the only name that should ever leave the machine. |
+| Hostname, MAC address, serial numbers, IP | trivial | **No.** Hardware identifiers are the definition of tracking; the random install id groups a player's runs without any of them. Keep the IP for rate limiting only and do not store it. |
+| Steam account, file paths, the WAD location | known to the app | **No.** Paths contain the user name and say where their games live. |
+
+Mechanics: add a `SessionRecord` (machine profile above, written once per
+launch) next to the `RunRecord` from section 3, both JSON in the save folder,
+both shown to the player under an OPTIONS > DATA screen with a "SEND
+GAMEPLAY STATS: OFF/ON" toggle. Send only when ON. Treat the machine profile
+as a dimension of the leaderboard (filter by GPU, OS, input method) rather
+than as a per-person log; aggregate views such as "38% of runs on a gamepad"
+are the useful output. This keeps you on the right side of GDPR-style rules
+if anyone in the EU plays, and it is exactly what Steam's hardware survey
+does: hardware and software facts, opt-in, no identity.
+
+## 7. Order of work when you pick this up
 
 1. Clean-ups in section 1, push, tag `v0.1.0`, and get the release workflow
    green (expect a round of Windows compile fixes).
