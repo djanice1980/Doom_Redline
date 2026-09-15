@@ -123,6 +123,10 @@ private:
     // Profiles: one directory per player holding settings, scores and trophies.
     std::string profilesRoot() const;
     std::vector<std::string> listProfiles() const;
+    // Top scores across every profile on this machine, with the player's name (title screen).
+    struct NamedScore { HighScore score; std::string player; };
+    std::vector<NamedScore> allProfileScores_;
+    void refreshAllScores();
     void switchProfile(const std::string& name);
     void openScreen(int screen);
     void closeScreen();

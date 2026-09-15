@@ -350,6 +350,7 @@ void App::enterMode(Mode m) {
     switch (m) {
     case Mode::Title:
         menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "CREDITS", "QUIT"};
+        refreshAllScores();
         if (nameRequired_ && profileName_.empty() && screen_ == kScreenNone) openScreen(kScreenNameEntry);
         break;
     case Mode::Alert:
@@ -454,6 +455,17 @@ std::vector<std::string> App::listProfiles() const {
         if (entry.is_directory(ec)) out.push_back(entry.path().filename().string());
     std::sort(out.begin(), out.end());
     return out;
+}
+
+void App::refreshAllScores() {
+    allProfileScores_.clear();
+    for (const std::string& p : listProfiles()) {
+        HighScores hs;
+        hs.load(profilesRoot() + p + "/highscores.txt");
+        for (const HighScore& h : hs.entries()) allProfileScores_.push_back({h, p});
+    }
+    std::stable_sort(allProfileScores_.begin(), allProfileScores_.end(), [](const NamedScore& a, const NamedScore& b) { return a.score.score > b.score.score; });
+    if (allProfileScores_.size() > 8) allProfileScores_.resize(8);
 }
 
 void App::switchProfile(const std::string& name) {
@@ -2257,16 +2269,16 @@ void App::addHud() {
             std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
             text(W * 0.5f, ty + static_cast<float>(i) * lh * 1.25f, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1);
         }
-        if (!highScores_.entries().empty()) {
-            // Right-hand column so the menu keeps its room.
-            float hy = H * 0.21f;   // top right, under the key hints
+        if (!allProfileScores_.empty()) {
+            // Right-hand column, top right under the key hints: the best runs of every player on this machine.
+            float hy = H * 0.21f;
             text(W - 24.f, hy, "HIGH SCORES", s * 0.8f, yellow, 2);
             hy += lh * 0.9f;
             int shown = 0;
-            for (const HighScore& h : highScores_.entries()) {
-                if (shown++ >= 5) break;
-                std::string line = std::to_string(shown) + ". " + std::to_string(h.score) + "  LVL " + std::to_string(h.level) + "  RED " + std::to_string(h.redLines);
-                text(W - 24.f, hy, line, s * 0.65f, dim, 2);
+            for (const NamedScore& n : allProfileScores_) {
+                if (shown++ >= 8) break;
+                std::string line = std::to_string(shown) + ". " + std::to_string(n.score.score) + "  " + n.player + "  LVL " + std::to_string(n.score.level) + "  RED " + std::to_string(n.score.redLines);
+                text(W - 24.f, hy, line, s * 0.65f, n.player == profileName_ ? glm::vec4(0.85f, 0.9f, 1.f, 1.f) : dim, 2);
                 hy += lh * 0.75f;
             }
         }
