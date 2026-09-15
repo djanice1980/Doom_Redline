@@ -19,7 +19,7 @@ constexpr float kBlockTop = 1.0f;          // blocks are unit cubes on the floor
 const EnemyStats kStats[] = {
     {"ZOMBIE",      20.f, 0.35f, 1.5f, AttackKind::Hitscan,    -1,          0.f,  false, 2.2f, 5.f,  0.f,  100,  11.f, 0, 0.f},
     {"IMP",         60.f, 0.40f, 1.7f, AttackKind::Projectile, kProjImp,    0.f,  false, 2.6f, 10.f, 8.f,  200,  7.5f, 0, 0.f},
-    {"DEMON",      150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,          3.6f, false, 1.0f, 14.f, 0.f,  350,  5.f,  0, 0.f},
+    {"DEMON",      150.f, 0.50f, 1.6f, AttackKind::Melee,      -1,          2.4f, false, 1.0f, 14.f, 0.f,  350,  5.f,  0, 0.f},   // pinky: a third slower than before, the arena is small
     {"CACODEMON",  400.f, 0.65f, 1.8f, AttackKind::Projectile, kProjCaco,   1.8f, true,  2.4f, 16.f, 10.f, 600,  3.5f, 0, 0.f},
     {"BARON",     1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron,  1.2f, false, 2.8f, 28.f, 10.f, 1200, 2.5f, 1, 0.f},
     {"CYBERDEMON",2200.f, 0.90f, 3.3f, AttackKind::Projectile, kProjRocket, 1.6f, false, 3.0f, 40.f, 14.f, 2500, 2.0f, 1, 2.0f},
