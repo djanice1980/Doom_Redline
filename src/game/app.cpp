@@ -1167,13 +1167,7 @@ void App::update(float dt) {
 
     if (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::GameOver && !diedInFps_)) {
         ambient_.update(dt);
-        for (const BrawlEvent& ev : ambient_.drainEvents()) {
-            const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
-            // Quiet, throttled: they are scenery, not the fight.
-            if (ev.type == BrawlEvent::Type::Attack) play(art.attackSound, 0.22f, 1.f, 300);
-            else if (ev.type == BrawlEvent::Type::Pain) play(art.painSound, 0.18f, 1.f, 300);
-            else play(art.deathSound, 0.28f, 1.f, 300);
-        }
+        ambient_.drainEvents();   // silent scenery: the brawl makes no sound over the Tetris game
     }
     switch (mode_) {
     case Mode::Title:
@@ -2133,7 +2127,7 @@ void App::addHud() {
             if (!nameRequired_ || !profileName_.empty()) text(W * 0.5f, H * 0.64f, "ESC CANCEL", s * 0.7f, dim, 1);
         }
     }
-    if (mode_ == Mode::Paused) {
+    if (mode_ == Mode::Paused && screen_ == kScreenNone) {   // trophies/options opened from here draw on top instead
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.5f));
         text(W * 0.5f, H * 0.22f, "PAUSED", s * 2.f, white, 1);
         // The run so far.
