@@ -1,0 +1,137 @@
+# Notes: GitHub releases and an online leaderboard
+
+Written 2026-09-15 as an assessment before any of this work starts. Short
+answers first, details below.
+
+| Question | Answer |
+|---|---|
+| Is the project ready to push to GitHub? | Yes, with two small clean-ups (below). No Doom data or secrets are tracked; the repo is 2.5 MB of tracked files. |
+| Is it scoped and ready for a web leaderboard? | The game side is *not* yet: it has no network code, no player identity beyond a typed name, and no per-run record. All of that is a bounded amount of work (about a day) and is listed below. |
+| Is enough information available to publish? | Almost. Score, level, lines, red lines, trophies with dates, kills, blocks destroyed, pickups, fight time and damage are already counted. Missing: kills by monster class, run duration, weapons used, cause of death, the seed, the game version and a per-install id. All are one-liners to add. |
+| Can we gather it appropriately? | Yes. Everything is gameplay statistics plus the name the player typed. No email or system information is needed. Make it opt-in and say what is sent. |
+| Will GitHub publish a Windows installer and a CachyOS installer? | Yes. GitHub Actions can build both on every tagged release: `redline-x.y.z-setup.exe` (Inno Setup is on the Windows runners) and `redline-x.y.z-1-x86_64.pkg.tar.zst` (built in an Arch container, installs on CachyOS with `pacman -U`). An AppImage for other distros is a third job. GitHub Releases hosts the files for free. |
+
+## 1. Pushing to GitHub
+
+Ready as it stands. Do these first:
+
+- `tools/build_deck.js` hard-codes `/home/davidj/Claude Data/redline` in two
+  places (the repo path and a slide's command line). Change the first to
+  `path.resolve(__dirname, "..")` and the slide text to a plain `cd redline`.
+- Decide whether `docs/REDLINE-build-story.pptx` (1.6 MB) stays in git or
+  moves to a Release asset. It is fine either way; it just grows the clone.
+- The `.gitignore` already excludes `build/`, `*.wad`, `wads/`. Keep the
+  Voxel Doom pack out too (it is found in `~/Downloads`, never copied).
+- Add a `SECURITY`-style line to the README saying the game never contacts
+  the network unless the leaderboard option is turned on (true today: there is
+  no network code at all).
+
+## 2. Releases from GitHub Actions
+
+One workflow, `.github/workflows/release.yml`, triggered by tags matching
+`v*`, with three jobs uploading to the same GitHub Release:
+
+**Windows** (`windows-latest`): install the Vulkan SDK (the LunarG installer
+supports `--accept-licenses --default-answer --confirm-command install` for
+unattended runs; cache `C:\VulkanSDK`), `vcpkg` comes preinstalled with
+`VCPKG_ROOT` set, then exactly the steps in `docs/packaging.md`:
+`cmake --preset windows-release`, build, `ctest`, `cmake --install`, then
+`ISCC.exe packaging\windows\redline.iss`. Upload `build-win\redline-*-setup.exe`.
+Expect the first run to surface Windows compile errors, since the Windows
+build has never been compiled; fix them in the code, not the workflow.
+
+**Arch / CachyOS** (`ubuntu-latest` running `container: archlinux:base-devel`):
+`pacman -Syu --noconfirm cmake ninja sdl3 glm vulkan-headers vulkan-icd-loader shaderc libvorbis pkgconf git`,
+create a non-root user (`makepkg` refuses root), `cd packaging/arch && makepkg -s --noconfirm`,
+upload the `.pkg.tar.zst`. CachyOS is Arch; the package installs with
+`sudo pacman -U redline-*.pkg.tar.zst`. The PKGBUILD depends on `sdl3`, which
+is in the Arch repos since 2025.
+
+**Other Linux** (`ubuntu-24.04`): Ubuntu 24.04 has no `libsdl3-dev`, so
+either use `ubuntu-25.04`/later runners when available or build SDL3 from
+source in the job, then `cpack -G TGZ` and, better, an AppImage with
+`linuxdeploy` so SDL3 and libvorbis travel with the binary. Skip `.deb`
+until a runner has SDL3 packages; a `.deb` that depends on a library the
+distro does not have is worse than a tarball.
+
+Release notes: `softprops/action-gh-release` with `generate_release_notes: true`
+and the three artefacts. Version comes from the tag; wire `PROJECT_VERSION`
+into the code (a generated `version.h`) so the title screen, the log and the
+leaderboard submissions all report the same string.
+
+## 3. Leaderboard: what exists, what is missing
+
+Already counted per run (`src/game/app.cpp`, `highscores.h`, `trophies.h`):
+score, level, lines, red lines survived, trophies with unlock dates, per-fight
+kills / blocks destroyed / pickups, per-level card (kills, blocks, seconds,
+damage taken, score), blocks destroyed and pickups per game, the seed
+(`opts_.seed` or the time-based one in `newGame`), BFG used, died in FPS or
+in the stack, profile name.
+
+Missing, all cheap to add in `App`:
+- kills by monster tier (seven counters) and the highest tier killed
+- run duration in seconds, number of fights, pieces placed, tetrises, best chain
+- weapons picked up, shots fired per weapon (accuracy is a nice stat)
+- cause of game over (stack overflow vs. killed, and by what)
+- game version, platform (`linux`/`windows`), and whether voxels were on
+- a random install id (UUID written once to `<pref>/install.txt`), so one
+  player's runs can be grouped without an account
+
+Package all of it into one `RunRecord` struct filled at game over, written as
+JSON to `<pref>/runs/<timestamp>.json` **regardless** of online status. That
+file is the unit of submission and doubles as a local history for a stats
+page in the game later.
+
+## 4. Leaderboard: proposed shape
+
+- **Supabase** (free tier): Postgres with tables `players` (install_id uuid
+  primary key, display_name, created_at, country optional), `runs` (id, player,
+  submitted_at, version, platform, score, level, lines, red_lines, fights,
+  duration_s, kills jsonb by tier, blocks, pickups, damage, bfg, death_cause,
+  seed, voxels), `trophies` (player, trophy_id, unlocked_at). Row-level
+  security on: **no direct inserts from the game**. Views for the boards:
+  top scores all-time / this week, most fights survived, fastest to level 10,
+  trophy completion percentage per trophy.
+- **Vercel** (free tier): a Next.js site with `/` (top 100), `/player/[id]`,
+  `/trophies`, `/stats`, and one API route `POST /api/submit` that holds the
+  Supabase service key, validates the JSON against a schema, applies sanity
+  limits (score per minute, level vs. fights, lines vs. duration), rate-limits
+  by install id and IP, and inserts. The game only ever talks to this route.
+  Supabase Edge Functions can host the same logic if you prefer everything in
+  one place; Vercel is the better fit for the pages.
+- **Domain**: `redline-<something>.vercel.app` is free and fine to start. A
+  real domain is about $10/year (Cloudflare or Porkbun); genuinely free ones
+  (`eu.org`, `is-a.dev`) take weeks and look odd on a leaderboard. Vercel
+  handles the certificate either way.
+- **Game side**: an HTTP client. SDL3 has none. `libcurl` is the standard
+  choice on both platforms (`curl` in vcpkg; `curl` is already on every Arch
+  system). Submit at game over on a background thread; on failure leave the
+  JSON in `<pref>/runs/pending/` and retry next launch. OPTIONS gains
+  `ONLINE LEADERBOARD: OFF/ON` (default OFF) and the first game over asks once.
+  Show the player's rank on the game-over screen when the submit succeeds.
+
+## 5. Fairness and privacy
+
+- Anything the client sends can be forged; a shared secret in the binary only
+  deters casual edits. Two real mitigations are available here and worth
+  noting: the block phase is fully deterministic from the seed and the input
+  log (the rules engine in `src/core` has no dependencies and could be
+  compiled to WebAssembly for server-side replay), while the FPS phase is
+  not deterministic (frame-time driven), so replay verification would cover
+  lines, red lines and level progression but not kills. Server-side sanity
+  limits plus a "verified" badge for replay-checked runs is a reasonable
+  first design; ban-by-install-id handles the rest.
+- Collect only what is listed above. The display name is the profile name the
+  player typed; add a profanity filter server-side. No email, no hardware
+  identifiers, no IP stored beyond rate limiting. Say all of this in one
+  sentence on the opt-in prompt and in the README.
+
+## 6. Order of work when you pick this up
+
+1. Clean-ups in section 1, push, tag `v0.1.0`, and get the release workflow
+   green (expect a round of Windows compile fixes).
+2. `RunRecord` + JSON on disk + version header (no network yet). Tag `v0.2.0`.
+3. Supabase project and schema; Vercel site reading it (seed it by hand from a
+   few JSON files to build the pages before the game can submit).
+4. `libcurl` submit with opt-in, pending queue, rank on the game-over screen.
+5. Replay log for the block phase and the verified badge, if wanted.

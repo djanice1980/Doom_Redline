@@ -337,7 +337,7 @@ shaders       GLSL, compiled by glslc at build time and embedded
 tests         tetris_test, wad_test, opl_test, music_test, kvx_test
 tools         wadinfo, embed.cmake
 packaging     linux (desktop entry, icon), windows (Inno Setup script, icon), arch (PKGBUILD)
-docs          design.md (rules and scene layout), packaging.md (installers), remix.md (RTX Remix plan)
+docs          design.md (rules and scene layout), packaging.md (installers), online-and-releases.md (GitHub releases + leaderboard notes), remix.md (RTX Remix plan)
 ```
 
 ## RTX Remix
