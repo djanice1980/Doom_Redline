@@ -144,6 +144,7 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
     health_ = std::min(200.f, 100.f + prizes.bonusHealth);
     shield_ = std::min(200.f, prizes.shield);
     damageFlash_ = 0.f;
+    damageTaken_ = 0.f;
     pickupFlash_ = 0.f;
     gunT_ = 10.f;
     level_ = level;
@@ -295,6 +296,7 @@ void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int coun
 
 void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
     if (health_ <= 0.f || god_ || invulnT_ > 0.f) return;
+    damageTaken_ += dmg;
     // Armour soaks half of any hit until it is spent.
     if (shield_ > 0.f) {
         float absorbed = std::min(shield_, dmg * 0.5f);
@@ -491,6 +493,7 @@ void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
     int points = static_cast<int>(static_cast<float>(st.scoreValue) * (1.f + 0.1f * static_cast<float>(level_ - 1))) + 25 * destroyed;
     game.addScore(points);
     push(FpsEvent::Type::Score, e.pos + glm::vec3(0.f, 1.5f, 0.f), e.tier, points);
+    if (e.grown) push(FpsEvent::Type::KilledGrown, e.pos, e.tier, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +639,7 @@ void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     e.radius = st.radius;
     e.height = st.height;
     e.growT = 1.f;
+    e.grown = true;
     e.breakTimer = st.breakInterval * 0.5f;
     e.attackTimer = 1.0f;
     e.state = Enemy::State::Idle;

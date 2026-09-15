@@ -110,6 +110,7 @@ struct Enemy {
     float absorbTimer = 20.f;// when it hits zero the monster may absorb nearby blocks and grow a tier
     float ammoDropCooldown = 0.f;
     float growT = 0.f;       // visual flash after growing
+    bool grown = false;      // has absorbed blocks at least once
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 
@@ -153,7 +154,7 @@ struct FpsInput {
 
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
-                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score } type;
+                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown } type;
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
@@ -186,6 +187,7 @@ public:
     bool invulnerable() const { return invulnT_ > 0.f; }
     bool startedInvulnerable() const { return startedInvuln_; }
     float damageFlash() const { return damageFlash_; }
+    float damageTaken() const { return damageTaken_; }   // this fight, before armour
     float pickupFlash() const { return pickupFlash_; }
     float gunAnimT() const { return gunT_; }
     bool gunFiring() const { return gunT_ < weaponDef(weapon_).cycle * 1.2f && gunT_ < 0.6f; }
@@ -245,6 +247,7 @@ private:
     float invulnT_ = 0.f;
     bool startedInvuln_ = false;
     float damageFlash_ = 0.f;
+    float damageTaken_ = 0.f;
     float pickupFlash_ = 0.f;
     float gunT_ = 10.f;
     int weapon_ = kShotgun;

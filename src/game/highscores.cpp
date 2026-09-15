@@ -10,8 +10,9 @@
 
 namespace rl::game {
 
-void HighScores::load() {
+void HighScores::load(const std::string& path) {
     entries_.clear();
+    if (!path.empty()) path_ = path;
     if (path_.empty()) {
         char* pref = SDL_GetPrefPath("redline", "redline");
         if (pref) {

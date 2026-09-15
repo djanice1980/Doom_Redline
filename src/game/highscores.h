@@ -17,7 +17,7 @@ struct HighScore {
 class HighScores {
 public:
     static constexpr size_t kMax = 10;
-    void load();
+    void load(const std::string& path = "");   // default: SDL pref path
     void save() const;
     // Inserts if it ranks; returns the 1-based rank or 0 if it did not make the table.
     int add(const HighScore& entry);

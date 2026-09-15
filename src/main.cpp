@@ -28,6 +28,7 @@ void usage() {
         "  --mute               No sound at all\n"
         "  --no-music           Sound effects only\n"
         "  --music-volume <0-1> Music level (default 0.45)\n"
+        "  --profile <name>     Player profile to use (created if new)\n"
         "  --music <set>        classic (OPL) | sc55 (original score recordings) | modern (Andrew Hulshult); remembered\n"
         "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1, REDLINE_SOUNDFONT=<file.sf2>\n");
 }
@@ -66,6 +67,7 @@ int main(int argc, char** argv) {
         else if (a == "--no-music") o.noMusic = true;
         else if (a == "--music-volume") o.musicVolume = static_cast<float>(std::atof(next()));
         else if (a == "--music") o.musicSet = next();
+        else if (a == "--profile") o.profile = next();
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }

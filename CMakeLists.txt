@@ -79,6 +79,7 @@ if(REDLINE_BUILD_GAME)
       src/game/app.cpp
       src/game/fps_mode.cpp
       src/game/highscores.cpp
+      src/game/trophies.cpp
       src/audio/audio.cpp
       src/audio/opl3.cpp
       src/audio/opl_driver.cpp

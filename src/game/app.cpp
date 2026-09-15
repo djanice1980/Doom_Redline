@@ -20,6 +20,7 @@ constexpr float kAlertTime = 1.4f;
 constexpr float kFlyInTime = 2.2f;
 constexpr float kFlyOutTime = 1.6f;
 constexpr float kCountdownTime = 3.0f;
+constexpr float kLevelCardTime = 4.0f;
 
 const glm::vec3 kPieceColors[7] = {
     {0.25f, 0.85f, 0.95f},   // I cyan
@@ -36,7 +37,7 @@ float smoothstep(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3.f - 2
 
 // ---------------------------------------------------------------------------
 App::App(Options opts) : opts_(std::move(opts)) {
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
     Uint32 flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
     if (opts_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
     window_ = SDL_CreateWindow("REDLINE", opts_.width, opts_.height, flags);
@@ -74,8 +75,24 @@ App::App(Options opts) : opts_(std::move(opts)) {
         music_.setVolume(opts_.musicVolume);
         std::fprintf(stderr, "[music] %s, %zu tracks, backend %s\n", ok ? "ready" : "unavailable", music_.trackNames().size(), music_.backendName());
     }
-    highScores_.load();
-    loadSettings();
+    // Profiles: pick up the last player, or ask for a name on first launch.
+    {
+        std::string last;
+        char* pref = SDL_GetPrefPath("redline", "redline");
+        std::string base = pref ? pref : "";
+        if (pref) SDL_free(pref);
+        if (std::FILE* f = std::fopen((base + "profile.txt").c_str(), "r")) {
+            char buf[64] = {};
+            if (std::fgets(buf, sizeof buf, f)) { last = buf; while (!last.empty() && (last.back() == '\n' || last.back() == '\r')) last.pop_back(); }
+            std::fclose(f);
+        }
+        std::vector<std::string> profiles = listProfiles();
+        if (!opts_.profile.empty()) last = opts_.profile;
+        if (last.empty() && !profiles.empty()) last = profiles.front();
+        if (last.empty() && opts_.scenario != "title") last = "PLAYER";   // scripted runs never see the prompt
+        if (!last.empty()) switchProfile(last);
+        else nameRequired_ = true;
+    }
     if (!opts_.musicSet.empty()) {
         if (opts_.musicSet == "classic") musicSet_ = MusicSet::Classic;
         else if (opts_.musicSet == "sc55") musicSet_ = MusicSet::Sc55;
@@ -109,6 +126,9 @@ void App::newGame() {
     fps_ = FpsMode();
     redLinesSurvived_ = 0;
     diedInFps_ = false;
+    fightStats_ = {};
+    gameBlocks_ = gamePickups_ = 0;
+    levelCardT_ = 99.f;
     bfgUsed_ = false;
     bfgFlash_ = 0.f;
     bfgHoldT_ = 0.f;
@@ -208,7 +228,8 @@ void App::enterMode(Mode m) {
     menu_ = {};
     switch (m) {
     case Mode::Title:
-        menu_.items = {"START", std::string("MUSIC: ") + musicSetName(), "QUIT"};
+        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "QUIT"};
+        if (nameRequired_ && profileName_.empty() && screen_ == kScreenNone) openScreen(kScreenNameEntry);
         break;
     case Mode::Alert:
         play("redline", 1.f);
@@ -236,9 +257,12 @@ void App::enterMode(Mode m) {
         flyFrom_ = fpsCamera();
         flyTo_ = blocksCamera();
         ++redLinesSurvived_;
+        trophy("red_line");
+        if (fps_.damageTaken() <= 0.f) trophy("untouchable");
+        if (redLinesSurvived_ >= 5) trophy("survivor");
         break;
     case Mode::Blocks:
-        if (prev == Mode::FlyOut) game_->resumeAfterRedLine();
+        if (prev == Mode::FlyOut) { game_->resumeAfterRedLine(); beginLevelCard(); }
         break;
     case Mode::GameOver:
         play("gameover", 1.f);
@@ -246,11 +270,12 @@ void App::enterMode(Mode m) {
         highScore_ = std::max(highScore_, game_->score());
         lastRank_ = highScores_.add({game_->score(), game_->level(), redLinesSurvived_, game_->lines(), ""});
         if (lastRank_ > 0) std::fprintf(stderr, "[app] new high score rank %d: %d\n", lastRank_, game_->score());
+        if (lastRank_ == 1) trophy("doom_slayer");
         menu_.items = {"RESTART", "QUIT"};
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
     case Mode::Paused:
-        menu_.items = {"RESUME", std::string("MUSIC: ") + musicSetName(), "RESTART", "QUIT"};
+        menu_.items = {"RESUME", "OPTIONS", "RESTART", "QUIT"};
         break;
     default:
         break;
@@ -269,15 +294,289 @@ void App::loadSettings() {
     bool haveModern = false;
     for (const Assets::OggLump& l : assets_.oggMusic) if (l.name[0] == 'H') haveModern = true;
     musicSet_ = haveModern && music_.oggAvailable() ? MusicSet::Modern : MusicSet::Classic;
+    padSens_ = 1.f;
+    padInvertY_ = false;
+    padRumble_ = true;
+    music_.setEnabled(true);
+    music_.setVolume(opts_.musicVolume);
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "r")) {
         char key[64], val[64];
         while (std::fscanf(f, "%63[^=]=%63s\n", key, val) == 2) {
             std::string k = key, v = val;
             if (k == "music_set") musicSet_ = v == "classic" ? MusicSet::Classic : v == "sc55" ? MusicSet::Sc55 : MusicSet::Modern;
             else if (k == "music_on") music_.setEnabled(v != "0");
+            else if (k == "music_volume") music_.setVolume(static_cast<float>(std::atof(v.c_str())));
+            else if (k == "pad_sens") padSens_ = std::clamp(static_cast<float>(std::atof(v.c_str())), 0.25f, 3.f);
+            else if (k == "pad_invert") padInvertY_ = v != "0";
+            else if (k == "pad_rumble") padRumble_ = v != "0";
         }
         std::fclose(f);
     }
+}
+
+std::string App::profilesRoot() const {
+    char* pref = SDL_GetPrefPath("redline", "redline");
+    std::string base = pref ? pref : "";
+    if (pref) SDL_free(pref);
+    return base + "profiles/";
+}
+
+std::vector<std::string> App::listProfiles() const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (auto& entry : std::filesystem::directory_iterator(profilesRoot(), ec))
+        if (entry.is_directory(ec)) out.push_back(entry.path().filename().string());
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void App::switchProfile(const std::string& name) {
+    std::string dir = profilesRoot() + name + "/";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    // First profile ever: adopt the files from the flat layout, if any.
+    char* pref = SDL_GetPrefPath("redline", "redline");
+    std::string base = pref ? pref : "";
+    if (pref) SDL_free(pref);
+    for (const char* f : {"settings.txt", "highscores.txt", "trophies.txt"})
+        if (std::filesystem::is_regular_file(base + f, ec) && !std::filesystem::exists(dir + f, ec)) std::filesystem::rename(base + f, dir + f, ec);
+    profileName_ = name;
+    settingsPath_ = dir + "settings.txt";
+    highScores_.load(dir + "highscores.txt");
+    trophies_.load(dir + "trophies.txt");
+    loadSettings();
+    if (std::FILE* f = std::fopen((base + "profile.txt").c_str(), "w")) { std::fputs(name.c_str(), f); std::fclose(f); }
+    std::fprintf(stderr, "[app] profile %s: %zu scores, %d/%d trophies, music %s, pad sens %.2f\n", name.c_str(), highScores_.entries().size(),
+                 trophies_.unlockedCount(), trophies_.total(), musicSetName(), padSens_);
+    updateMusic();
+}
+
+void App::trophy(const char* id) {
+    if (!trophies_.unlock(id)) return;
+    for (const TrophyDef& d : trophyCatalogue())
+        if (std::string(id) == d.id) {
+            announce(std::string("TROPHY: ") + d.name, glm::vec4(1.f, 0.85f, 0.2f, 1.f), 1.5f);
+            announce(d.description, glm::vec4(1.f, 0.95f, 0.7f, 1.f), 0.8f);
+            std::fprintf(stderr, "[app] trophy unlocked: %s\n", d.name);
+        }
+    play("pickup_weapon", 1.f, 1.3f);
+    rumble(0.3f, 0.6f, 200);
+}
+
+// --- gamepad -----------------------------------------------------------------
+void App::openGamepad(uint32_t which) {
+    if (pad_) return;
+    pad_ = SDL_OpenGamepad(which);
+    if (!pad_) return;
+    const char* n = SDL_GetGamepadName(pad_);
+    padName_ = n ? n : "GAMEPAD";
+    std::fprintf(stderr, "[pad] connected: %s\n", padName_.c_str());
+    announce("GAMEPAD: " + padName_, glm::vec4(0.8f, 0.9f, 1.f, 1.f), 0.9f);
+}
+
+void App::rumble(float low, float high, int ms) {
+    if (pad_ && padRumble_) SDL_RumbleGamepad(pad_, static_cast<Uint16>(std::clamp(low, 0.f, 1.f) * 65535.f), static_cast<Uint16>(std::clamp(high, 0.f, 1.f) * 65535.f), static_cast<Uint32>(ms));
+}
+
+void App::padButton(int button, bool down) {
+    auto key = [&](SDL_Keycode k) { screenKey(k, true); };
+    if (screen_ != kScreenNone) {
+        if (!down) return;
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: key(SDLK_UP); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: key(SDLK_DOWN); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT: key(SDLK_LEFT); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: key(SDLK_RIGHT); break;
+        case SDL_GAMEPAD_BUTTON_SOUTH: key(SDLK_RETURN); break;
+        case SDL_GAMEPAD_BUTTON_EAST: key(SDLK_BACKSPACE); break;
+        case SDL_GAMEPAD_BUTTON_START: key(SDLK_TAB); break;      // name entry: confirm
+        case SDL_GAMEPAD_BUTTON_BACK: key(SDLK_ESCAPE); break;
+        default: break;
+        }
+        return;
+    }
+    if (!menu_.items.empty()) {
+        if (!down) return;
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_UP: menuKey(SDLK_UP); break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: menuKey(SDLK_DOWN); break;
+        case SDL_GAMEPAD_BUTTON_SOUTH: menuKey(SDLK_RETURN); break;
+        case SDL_GAMEPAD_BUTTON_EAST: case SDL_GAMEPAD_BUTTON_START:
+            if (mode_ == Mode::Paused) enterMode(pausedFrom_);
+            break;
+        default: break;
+        }
+        return;
+    }
+    if (button == SDL_GAMEPAD_BUTTON_START && down) {
+        if (mode_ == Mode::Blocks || mode_ == Mode::Fps || mode_ == Mode::Countdown) { pausedFrom_ = mode_; enterMode(Mode::Paused); }
+        return;
+    }
+    if (mode_ == Mode::Blocks) {
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+            if (down) { keys_.left = true; keys_.dasDir = -1; keys_.dasT = 0.f; keys_.dasActive = false; game_->moveLeft(); }
+            else { keys_.left = false; if (keys_.dasDir == -1) keys_.dasDir = keys_.right ? 1 : 0; }
+            break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+            if (down) { keys_.right = true; keys_.dasDir = 1; keys_.dasT = 0.f; keys_.dasActive = false; game_->moveRight(); }
+            else { keys_.right = false; if (keys_.dasDir == 1) keys_.dasDir = keys_.left ? -1 : 0; }
+            break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN: keys_.down = down; game_->setSoftDrop(down || padHeld_.down); break;
+        case SDL_GAMEPAD_BUTTON_SOUTH: case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: if (down) game_->rotateCW(); break;
+        case SDL_GAMEPAD_BUTTON_EAST: case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: if (down) game_->rotateCCW(); break;
+        case SDL_GAMEPAD_BUTTON_WEST: case SDL_GAMEPAD_BUTTON_DPAD_UP: if (down) game_->hardDrop(); break;
+        default: break;
+        }
+    } else if (mode_ == Mode::Fps) {
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_SOUTH: fpsIn_.fire = down; break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: case SDL_GAMEPAD_BUTTON_NORTH: if (down) fpsIn_.wheel += 1; break;
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: case SDL_GAMEPAD_BUTTON_WEST: if (down) fpsIn_.wheel -= 1; break;
+        case SDL_GAMEPAD_BUTTON_LEFT_STICK: fpsIn_.run = down; break;
+        default: break;
+        }
+    }
+}
+
+void App::pollGamepad(float dt) {
+    if (!pad_) return;
+    auto axis = [&](SDL_GamepadAxis a) {
+        float v = static_cast<float>(SDL_GetGamepadAxis(pad_, a)) / 32767.f;
+        const float dz = 0.18f;
+        if (std::fabs(v) < dz) return 0.f;
+        float m = (std::fabs(v) - dz) / (1.f - dz);
+        return std::copysign(std::min(1.f, m), v);
+    };
+    float lx = axis(SDL_GAMEPAD_AXIS_LEFTX), ly = axis(SDL_GAMEPAD_AXIS_LEFTY);
+    float rx = axis(SDL_GAMEPAD_AXIS_RIGHTX), ry = axis(SDL_GAMEPAD_AXIS_RIGHTY);
+    float lt = static_cast<float>(SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_LEFT_TRIGGER)) / 32767.f;
+    float rt = static_cast<float>(SDL_GetGamepadAxis(pad_, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)) / 32767.f;
+    if (mode_ == Mode::Blocks && screen_ == kScreenNone) {
+        // Left stick acts like the d-pad with hysteresis so DAS behaves.
+        bool left = padHeld_.left ? lx < -0.35f : lx < -0.55f;
+        bool right = padHeld_.right ? lx > 0.35f : lx > 0.55f;
+        if (left != padHeld_.left) { padHeld_.left = left; padButton(SDL_GAMEPAD_BUTTON_DPAD_LEFT, left); }
+        if (right != padHeld_.right) { padHeld_.right = right; padButton(SDL_GAMEPAD_BUTTON_DPAD_RIGHT, right); }
+        bool downNow = padHeld_.down ? ly > 0.35f : ly > 0.55f;
+        if (downNow != padHeld_.down) { padHeld_.down = downNow; game_->setSoftDrop(downNow || keys_.down); }
+    } else if (mode_ == Mode::Fps || mode_ == Mode::Countdown) {
+        // Dual analogue: left stick moves, right stick looks (squared response), triggers fire and sprint.
+        fpsIn_.padMoveX = lx;
+        fpsIn_.padMoveZ = -ly;
+        float cx = rx * std::fabs(rx), cy = ry * std::fabs(ry);
+        const float yawRate = 3.4f * padSens_, pitchRate = 2.2f * padSens_;   // rad/s at full deflection
+        fpsIn_.dx += cx * yawRate / 0.0022f * dt;
+        fpsIn_.dy += (padInvertY_ ? -cy : cy) * pitchRate / 0.0022f * dt;
+        bool fireNow = rt > 0.5f;
+        if (fireNow != padHeld_.fire) { padHeld_.fire = fireNow; fpsIn_.padFire = fireNow; }
+        fpsIn_.padRun = lt > 0.5f;
+    }
+}
+
+// --- overlay screens ---------------------------------------------------------
+void App::openScreen(int screen) {
+    screen_ = screen;
+    screenIndex_ = 0;
+    if (screen == kScreenProfiles) profileList_ = listProfiles();
+    if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; SDL_StartTextInput(window_); }
+}
+
+void App::closeScreen() {
+    if (screen_ == kScreenNameEntry) SDL_StopTextInput(window_);
+    if (nameRequired_ && profileName_.empty()) { openScreen(kScreenNameEntry); return; }   // no dodging the name
+    screen_ = kScreenNone;
+}
+
+void App::adjustOption(int dir) {
+    switch (screenIndex_) {
+    case 0: {   // music set
+        for (int i = 0; i < 3; ++i) { cycleMusicSet(); if (dir > 0) break; }   // cycling backwards = two forward steps
+        break;
+    }
+    case 1: music_.setVolume(std::clamp(music_.volume() + 0.05f * static_cast<float>(dir), 0.f, 1.f)); break;
+    case 2: music_.setEnabled(!music_.enabled()); break;
+    case 3: padSens_ = std::clamp(padSens_ + 0.1f * static_cast<float>(dir), 0.3f, 3.f); break;
+    case 4: padInvertY_ = !padInvertY_; break;
+    case 5: padRumble_ = !padRumble_; if (padRumble_) rumble(0.5f, 0.5f, 150); break;
+    default: break;
+    }
+    saveSettings();
+    play("menu", 0.6f);
+}
+
+void App::screenKey(int key, bool fromPad) {
+    static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
+    switch (screen_) {
+    case kScreenOptions: {
+        const int n = 7;   // 6 options + BACK
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 6) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 6) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 6) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
+        break;
+    }
+    case kScreenTrophies:
+        if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_BACKSPACE || key == SDLK_SPACE) closeScreen();
+        break;
+    case kScreenProfiles: {
+        int n = static_cast<int>(profileList_.size()) + 1;   // + NEW PLAYER
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+            play("menu_select", 0.7f);
+            if (screenIndex_ < static_cast<int>(profileList_.size())) { switchProfile(profileList_[static_cast<size_t>(screenIndex_)]); nameRequired_ = false; closeScreen(); }
+            else openScreen(kScreenNameEntry);
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
+        break;
+    }
+    case kScreenNameEntry: {
+        if (fromPad) {
+            // Letter picker: up/down scrolls the letter, A adds it, B deletes, Start confirms.
+            int n = static_cast<int>(kLetters.size());
+            if (key == SDLK_UP || key == SDLK_RIGHT) { nameChar_ = (nameChar_ + 1) % n; return; }
+            if (key == SDLK_DOWN || key == SDLK_LEFT) { nameChar_ = (nameChar_ + n - 1) % n; return; }
+            if (key == SDLK_RETURN) { if (nameEntry_.size() < 12) nameEntry_.push_back(kLetters[static_cast<size_t>(nameChar_)]); play("menu", 0.6f); return; }
+            if (key == SDLK_BACKSPACE) { if (!nameEntry_.empty()) nameEntry_.pop_back(); return; }
+            if (key == SDLK_TAB) key = SDLK_KP_ENTER;   // confirm
+            else if (key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) { SDL_StopTextInput(window_); screen_ = kScreenNone; } return; }
+        }
+        if (key == SDLK_KP_ENTER || (!fromPad && key == SDLK_RETURN)) {
+            std::string name = nameEntry_;
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+            if (name.empty()) return;
+            for (char& c : name) if (c == ' ') c = '_';
+            SDL_StopTextInput(window_);
+            screen_ = kScreenNone;
+            nameRequired_ = false;
+            switchProfile(name);
+            play("menu_select", 0.8f);
+            announce("WELCOME, " + name, glm::vec4(0.8f, 0.9f, 1.f, 1.f), 1.2f);
+            if (mode_ == Mode::Title) menu_.items[1] = "PLAYER: " + name;
+        } else if (!fromPad && key == SDLK_BACKSPACE) { if (!nameEntry_.empty()) nameEntry_.pop_back(); }
+        else if (!fromPad && key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) { SDL_StopTextInput(window_); screen_ = kScreenNone; } }
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+void App::beginLevelCard() {
+    levelCardT_ = 0.f;
+    levelCard_.level = game_->level();
+    levelCard_.kills = fightStats_.kills;
+    levelCard_.blocks = fightStats_.blocks;
+    levelCard_.seconds = fps_.elapsed();
+    levelCard_.damage = fps_.damageTaken();
+    levelCard_.score = game_->score();
+    play("levelup", 1.f);
+    play("pickup_weapon", 0.8f, 0.9f);
+    rumble(0.4f, 0.8f, 400);
+    shakeT_ = 0.3f;
 }
 
 void App::saveSettings() const {
@@ -391,7 +690,13 @@ int App::run() {
             for (char ch : opts_.keys) {
                 SDL_Event ev{};
                 ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
-                ev.key.key = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
+                // Letters as themselves; '_' down, '^' up, '<' left, '>' right, '~' return, '`' escape.
+                SDL_Keycode k = SDLK_UNKNOWN;
+                if (std::isalpha(static_cast<unsigned char>(ch))) k = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
+                else if (ch == '_') k = SDLK_DOWN; else if (ch == '^') k = SDLK_UP; else if (ch == '<') k = SDLK_LEFT; else if (ch == '>') k = SDLK_RIGHT;
+                else if (ch == '~') k = SDLK_RETURN; else if (ch == '`') k = SDLK_ESCAPE;
+                if (k == SDLK_UNKNOWN) continue;
+                ev.key.key = k;
                 SDL_PushEvent(&ev);
             }
         }
@@ -424,11 +729,10 @@ void App::menuKey(int key) {
 void App::menuSelect() {
     const std::string& item = menu_.items[static_cast<size_t>(menu_.index)];
     if (item == "QUIT") running_ = false;
-    else if (item.rfind("MUSIC: ", 0) == 0) {
-        cycleMusicSet();
-        menu_.items[static_cast<size_t>(menu_.index)] = std::string("MUSIC: ") + musicSetName();
-    }
-    else if (item == "START") enterMode(Mode::Blocks);
+    else if (item == "OPTIONS") openScreen(kScreenOptions);
+    else if (item == "TROPHIES") openScreen(kScreenTrophies);
+    else if (item.rfind("PLAYER: ", 0) == 0) openScreen(kScreenProfiles);
+    else if (item == "START") { if (profileName_.empty()) openScreen(kScreenNameEntry); else enterMode(Mode::Blocks); }
     else if (item == "RESUME") enterMode(pausedFrom_);
     else if (item == "RESTART") { newGame(); enterMode(Mode::Blocks); }
 }
@@ -448,7 +752,27 @@ void App::handleEvents() {
             ctx_->requestResize();
             break;
         case SDL_EVENT_MOUSE_MOTION:
-            if (mode_ == Mode::Fps || mode_ == Mode::Countdown) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
+            if ((mode_ == Mode::Fps || mode_ == Mode::Countdown) && screen_ == kScreenNone) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
+            break;
+        case SDL_EVENT_GAMEPAD_ADDED:
+            openGamepad(e.gdevice.which);
+            break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            if (pad_ && SDL_GetGamepadID(pad_) == e.gdevice.which) { SDL_CloseGamepad(pad_); pad_ = nullptr; padHeld_ = {}; fpsIn_.padFire = fpsIn_.padRun = false; fpsIn_.padMoveX = fpsIn_.padMoveZ = 0.f; std::fprintf(stderr, "[pad] disconnected\n"); }
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            padButton(e.gbutton.button, true);
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            padButton(e.gbutton.button, false);
+            break;
+        case SDL_EVENT_TEXT_INPUT:
+            if (screen_ == kScreenNameEntry && e.text.text) {
+                for (const char* c = e.text.text; *c; ++c) {
+                    char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(*c)));
+                    if (((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == ' ') && nameEntry_.size() < 12) nameEntry_.push_back(ch);
+                }
+            }
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (e.button.button == SDL_BUTTON_LEFT) {
@@ -468,6 +792,10 @@ void App::handleEvents() {
                 renderer_->screenshot("redline-screenshot.png");
                 break;
             }
+            if (screen_ != kScreenNone) {
+                if (!e.key.repeat || k == SDLK_BACKSPACE) screenKey(k, false);
+                break;
+            }
             if (k == SDLK_M && !e.key.repeat) {
                 music_.setEnabled(!music_.enabled());
                 saveSettings();
@@ -485,6 +813,7 @@ void App::handleEvents() {
                 else if (mode_ == Mode::Title) running_ = false;
                 break;
             }
+            if (k == SDLK_T && mode_ == Mode::Title && !e.key.repeat) { openScreen(kScreenTrophies); break; }
             if (!menu_.items.empty() && !e.key.repeat) { menuKey(k); break; }
             if (k == SDLK_B) keyB_ = true;
             if (k == SDLK_F) keyF_ = true;
@@ -570,6 +899,10 @@ void App::handleGameEvents() {
             else if (game_->combo() > 1) label = "COMBO X" + std::to_string(game_->combo()) + "  " + label;
             glm::vec4 col = ev.a >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : (game_->chain() > 0 ? glm::vec4(1.f, 0.5f, 0.2f, 1.f) : glm::vec4(1.f));
             announce(label + "  +" + std::to_string(ev.b), col, ev.a >= 4 || game_->chain() > 0 ? 1.6f : 1.2f);
+            if (ev.a >= 4) trophy("tetris");
+            if (game_->combo() >= 3) trophy("combo3");
+            if (game_->chain() > 0) trophy("chain");
+            rumble(0.2f * ev.a, 0.15f * ev.a, 120);
             {
                 const core::Prizes& pr = game_->lastClearPrizes();
                 std::string prize;
@@ -581,7 +914,10 @@ void App::handleGameEvents() {
             break;
         }
         case core::EventType::RedCellFell: play("lock", 0.4f, 1.6f, 90); break;
-        case core::EventType::LevelUp: play("levelup", 1.f); announce("LEVEL " + std::to_string(ev.a), glm::vec4(0.6f, 0.9f, 1.f, 1.f), 1.4f); break;
+        case core::EventType::LevelUp:
+            if (ev.a >= 5) trophy("level5");
+            if (ev.a >= 10) trophy("level10");
+            break;   // the level card handles the celebration
         case core::EventType::CellCorrupting: play("redline", 0.35f, 1.6f, 250); break;
         case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f, 120); shakeT_ = std::max(shakeT_, 0.1f); break;
         case core::EventType::EvilSpawning: play("redline", 0.5f, 0.7f, 250); break;
@@ -595,17 +931,36 @@ void App::handleFpsEvents() {
     for (const FpsEvent& ev : fps_.drainEvents()) {
         const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
         switch (ev.type) {
-        case FpsEvent::Type::Shoot: play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f); muzzleLight_ = 1.f; shakeT_ = ev.a == kRocketLauncher ? 0.2f : (ev.a == kShotgun ? 0.12f : 0.04f); break;
+        case FpsEvent::Type::Shoot:
+            play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f); muzzleLight_ = 1.f;
+            shakeT_ = ev.a == kRocketLauncher ? 0.2f : (ev.a == kShotgun ? 0.12f : 0.04f);
+            rumble(ev.a == kChaingun ? 0.15f : 0.3f, ev.a == kRocketLauncher ? 0.8f : 0.5f, ev.a == kChaingun ? 40 : 90);
+            break;
         case FpsEvent::Type::Pickup: {
             static const char* kinds[] = {"stim", "medikit", "bullets", "rockets", "cells", "chaingun", "rocket launcher", "plasma gun"};
             std::fprintf(stderr, "[fps] pickup %s (health %d)\n", kinds[std::clamp(ev.a, 0, 7)], static_cast<int>(fps_.health()));
             play(ev.a >= static_cast<int>(PickupKind::Chaingun) ? "pickup_weapon" : "pickup_item", 0.9f);
+            ++gamePickups_;
+            if (gamePickups_ >= 20) trophy("collector");
+            if (fps_.weapon(kChaingun).owned && fps_.weapon(kRocketLauncher).owned && fps_.weapon(kPlasmaRifle).owned) trophy("arsenal");
             break;
         }
         case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
-        case FpsEvent::Type::RocketBlast: std::fprintf(stderr, "[fps] rocket blast destroyed %d blocks\n", ev.a); play("rocket_hit", 1.f); shakeT_ = 0.35f; break;
+        case FpsEvent::Type::RocketBlast:
+            play("rocket_hit", 1.f); shakeT_ = 0.35f; rumble(0.8f, 0.6f, 300);
+            fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
+            if (gameBlocks_ >= 50) trophy("demolition");
+            break;
         case FpsEvent::Type::BlockBroken: play("lock", 0.7f, 0.8f, 100); shakeT_ = std::max(shakeT_, 0.08f); break;
-        case FpsEvent::Type::Score: announce(art.name + "  +" + std::to_string(ev.a), ev.tier >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : glm::vec4(1.f), ev.tier >= 4 ? 1.5f : 1.1f); break;
+        case FpsEvent::Type::Score:
+            announce(art.name + "  +" + std::to_string(ev.a), ev.tier >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : glm::vec4(1.f), ev.tier >= 4 ? 1.5f : 1.1f);
+            ++fightStats_.kills;
+            trophy("first_blood");
+            if (ev.tier >= 4) trophy("boss");
+            if (ev.tier == 5) trophy("cyber");
+            if (ev.tier == 6) trophy("mastermind");
+            break;
+        case FpsEvent::Type::KilledGrown: trophy("grown"); break;
         case FpsEvent::Type::Absorb:
             std::fprintf(stderr, "[fps] a monster absorbed %d blocks and became a %s\n", ev.a, art.name.c_str());
             play(art.sightSound, 1.f, 0.8f);
@@ -616,8 +971,12 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f, 1.f, 120); break;
         case FpsEvent::Type::EnemyDied: play(art.deathSound, 1.f); break;
         case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
-        case FpsEvent::Type::Explosion: play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; break;
-        case FpsEvent::Type::PlayerHit: play("pain", 1.f); shakeT_ = 0.25f; break;
+        case FpsEvent::Type::Explosion:
+            play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
+            fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
+            if (gameBlocks_ >= 50) trophy("demolition");
+            break;
+        case FpsEvent::Type::PlayerHit: play("pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200); break;
         case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f, 1.f, 80); break;
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
@@ -627,7 +986,8 @@ void App::handleFpsEvents() {
             std::string roster;
             for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.tier, 0, kEnemyTiers - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
             std::fprintf(stderr, "[fps] level %d roster: %s\n", fps_.level(), roster.c_str());
-            if (fps_.startedInvulnerable()) { announce("INVULNERABLE", glm::vec4(1.f, 0.95f, 0.5f, 1.f), 1.8f); play("levelup", 1.f, 0.7f); }
+            if (fps_.startedInvulnerable()) { announce("INVULNERABLE", glm::vec4(1.f, 0.95f, 0.5f, 1.f), 1.8f); play("levelup", 1.f, 0.7f); trophy("invuln"); }
+            fightStats_ = {};
             break;
         }
         }
@@ -653,6 +1013,8 @@ void App::update(float dt) {
             announce("BFG9000", glm::vec4(0.5f, 1.f, 0.5f, 1.f), 2.2f);
             announce(std::to_string(removed) + " RED BLOCKS ERASED", glm::vec4(0.7f, 1.f, 0.7f, 1.f), 1.1f);
             std::fprintf(stderr, "[app] BFG9000 fired: %d red blocks erased\n", removed);
+            trophy("bfg");
+            rumble(1.f, 1.f, 600);
         }
     } else {
         bfgHoldT_ = 0.f;
@@ -660,13 +1022,16 @@ void App::update(float dt) {
     announcements_.erase(std::remove_if(announcements_.begin(), announcements_.end(), [](const Announcement& a) { return a.t > 2.f; }), announcements_.end());
     shakeT_ = std::max(0.f, shakeT_ - dt);
     muzzleLight_ = std::max(0.f, muzzleLight_ - dt * 8.f);
+    pollGamepad(dt);
+    if (levelCardT_ < kLevelCardTime) levelCardT_ += dt;
 
     switch (mode_) {
     case Mode::Title:
         break;
     case Mode::Blocks:
         updateBlocksInput(dt);
-        game_->tick(dt);
+        // While the level card is up the collapse still plays but the next piece waits.
+        if (!(levelCardT_ < kLevelCardTime && (game_->phase() == core::Phase::Falling || game_->phase() == core::Phase::Spawning))) game_->tick(dt);
         handleGameEvents();
         if (game_->phase() == core::Phase::RedLine) enterMode(Mode::Alert);
         else if (game_->phase() == core::Phase::GameOver) enterMode(Mode::GameOver);
@@ -692,14 +1057,14 @@ void App::update(float dt) {
     }
     case Mode::Fps: {
         FpsInput in;
-        in.moveZ = (fpsIn_.fwd ? 1.f : 0.f) - (fpsIn_.back ? 1.f : 0.f);
-        in.moveX = (fpsIn_.right ? 1.f : 0.f) - (fpsIn_.left ? 1.f : 0.f);
+        in.moveZ = (fpsIn_.fwd ? 1.f : 0.f) - (fpsIn_.back ? 1.f : 0.f) + fpsIn_.padMoveZ;
+        in.moveX = (fpsIn_.right ? 1.f : 0.f) - (fpsIn_.left ? 1.f : 0.f) + fpsIn_.padMoveX;
         in.lookDX = fpsIn_.dx;
         in.lookDY = fpsIn_.dy;
-        in.fire = fpsIn_.fire;
+        in.fire = fpsIn_.fire || fpsIn_.padFire;
         in.selectWeapon = fpsIn_.select;
         in.wheel = fpsIn_.wheel;
-        in.run = fpsIn_.run;
+        in.run = fpsIn_.run || fpsIn_.padRun;
         if (opts_.bot) {
             // Aim at the nearest living enemy's chest; advance when it is far or hidden.
             const Enemy* target = nullptr;
@@ -1015,6 +1380,18 @@ void App::addFpsActors() {
         case Enemy::State::Dying: anim = &art.death; loop = false; t = e.stateT; break;
         case Enemy::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
         }
+        // Corpses fade out; cacodemons (a big sprite lying in the way) go quickest.
+        float corpseScale = 1.f;
+        if (e.state == Enemy::State::Dead) {
+            float life = (e.tier == 3) ? 0.35f : (e.tier >= 5 ? 1.2f : 1.6f);
+            float fadeStart = life - 0.35f;
+            if (e.stateT >= life) continue;
+            if (e.stateT > fadeStart) {
+                float k = 1.f - (e.stateT - fadeStart) / 0.35f;
+                corpseScale = 0.15f + 0.85f * k;
+                tint *= glm::vec4(k, k, k, 1.f);
+            }
+        }
         if (e.alive() && e.absorbTimer < 4.f && e.tier < kMaxTier) {   // warning: pulsing red as it gets ready to absorb
             float f = 0.5f + 0.5f * std::sin(time_ * (10.f + (4.f - e.absorbTimer) * 4.f));
             tint = glm::mix(tint, glm::vec4(1.f, 0.2f, 0.2f, 1.f), 0.6f * f);
@@ -1022,7 +1399,7 @@ void App::addFpsActors() {
         if (e.growT > 0.f) tint = glm::mix(tint, glm::vec4(1.f, 1.f, 1.f, 1.f), e.growT);
         bool flip = false;
         const std::string& key = animFrame(*anim, t, loop, &flip);
-        if (!key.empty()) billboard(key, e.pos, art.metresPerPixel, tint, true, flip);
+        if (!key.empty()) billboard(key, e.pos, art.metresPerPixel * corpseScale, tint, true, flip);
     }
     for (const Projectile& p : fps_.projectiles()) {
         bool flip = false;
@@ -1181,7 +1558,7 @@ void App::addHud() {
         text(W - 24.f, 24.f, "ARROWS/WASD MOVE  UP ROTATE  SPACE DROP", s * 0.6f, dim, 2);
         text(W - 24.f, 24.f + lh, "RED BLOCKS REFUSE TO CLEAR.", s * 0.6f, dim, 2);
         text(W - 24.f, 24.f + lh * 2.f, "A FULL RED ROW TIPS THE BOARD OVER.", s * 0.6f, dim, 2);
-        text(W - 24.f, 24.f + lh * 3.f, "ESC MENU  F12 SCREENSHOT", s * 0.6f, dim, 2);
+        text(W - 24.f, 24.f + lh * 3.f, pad_ ? "PAD: STICK/DPAD MOVE  A/B ROTATE  X DROP  START PAUSE" : "ESC MENU  F12 SCREENSHOT", s * 0.6f, dim, 2);
     }
     if (mode_ == Mode::Blocks && game_->danger() > 0.f) {
         // The stack is high enough for blocks to turn evil: a creeping red edge and a warning.
@@ -1245,6 +1622,7 @@ void App::addHud() {
                 wx -= static_cast<float>(assets_.textWidth(label, s * 0.7f)) + 18.f * s;
             }
         }
+        if (mode_ == Mode::Countdown && pad_) text(W * 0.5f, H * 0.7f, "LEFT STICK MOVE  RIGHT STICK LOOK  RT FIRE  LT RUN  BUMPERS WEAPONS", s * 0.7f, dim, 1);
         if (mode_ == Mode::Countdown) {
             float remaining = kCountdownTime - modeT_;
             int n = static_cast<int>(std::ceil(remaining));
@@ -1289,6 +1667,25 @@ void App::addHud() {
         }
     }
 
+    // Level-up card ---------------------------------------------------------
+    if (levelCardT_ < kLevelCardTime && (mode_ == Mode::FlyOut || mode_ == Mode::Blocks)) {
+        float t = levelCardT_;
+        float in = std::min(1.f, t / 0.35f), out = std::min(1.f, (kLevelCardTime - t) / 0.5f);
+        float a = in * out;
+        panel(0.f, H * 0.18f, W, H * 0.5f, glm::vec4(0.f, 0.f, 0.f, 0.6f * a));
+        panel(0.f, H * 0.18f, W, lh * 0.25f, glm::vec4(1.f, 0.85f, 0.2f, 0.9f * a));
+        panel(0.f, H * 0.68f - lh * 0.25f, W, lh * 0.25f, glm::vec4(1.f, 0.85f, 0.2f, 0.9f * a));
+        float pop = 1.f + 0.35f * std::max(0.f, 1.f - t / 0.6f) + 0.05f * std::sin(time_ * 6.f);
+        text(W * 0.5f, H * 0.22f, "LEVEL UP", s * 1.4f, glm::vec4(1.f, 0.85f, 0.2f, a), 1);
+        text(W * 0.5f, H * 0.30f, "LEVEL " + std::to_string(levelCard_.level), s * 3.6f * pop, glm::vec4(1.f, 0.95f, 0.6f, a), 1);
+        float y = H * 0.30f + lh * 4.4f;
+        text(W * 0.5f, y, "DEMONS SLAIN " + std::to_string(levelCard_.kills) + "     BLOCKS DESTROYED " + std::to_string(levelCard_.blocks), s * 0.9f, glm::vec4(1.f, 1.f, 1.f, a), 1); y += lh * 1.1f;
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "FIGHT TIME %.0f S     DAMAGE TAKEN %.0f", levelCard_.seconds, levelCard_.damage);
+        text(W * 0.5f, y, buf, s * 0.9f, glm::vec4(1.f, 1.f, 1.f, a), 1); y += lh * 1.1f;
+        text(W * 0.5f, y, "FASTER GRAVITY   MORE RED   TOUGHER DEMONS", s * 0.75f, glm::vec4(1.f, 0.5f, 0.4f, a), 1);
+    }
+
     // Menus ----------------------------------------------------------------
     auto drawMenu = [&](float y0) {
         for (size_t i = 0; i < menu_.items.size(); ++i) {
@@ -1300,26 +1697,93 @@ void App::addHud() {
     };
     if (mode_ == Mode::Title) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.55f));
-        if (!assets_.title.empty()) screenSprite(assets_.title, W * 0.5f, H * 0.22f, s * 1.2f, glm::vec4(1.f, 0.6f, 0.6f, 1.f), 0.5f, 0.5f);
-        text(W * 0.5f, H * 0.36f, "REDLINE", s * 3.f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
-        text(W * 0.5f, H * 0.36f + lh * 3.4f, "STACK THE BLOCKS. SOME OF THEM ARE RED.", s, white, 1);
-        text(W * 0.5f, H * 0.36f + lh * 4.6f, "WHEN A ROW IS ALL RED THE BOARD TIPS OVER", s, white, 1);
-        text(W * 0.5f, H * 0.36f + lh * 5.8f, "AND EVERY RED CLUSTER BECOMES A DEMON.", s, white, 1);
-        drawMenu(H * 0.36f + lh * 8.f);
+        if (!assets_.title.empty()) screenSprite(assets_.title, W * 0.5f, H * 0.17f, s * 1.1f, glm::vec4(1.f, 0.6f, 0.6f, 1.f), 0.5f, 0.5f);
+        text(W * 0.5f, H * 0.28f, "REDLINE", s * 2.8f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
+        float ty = H * 0.28f + lh * 3.1f;
+        text(W * 0.5f, ty, "STACK THE BLOCKS. SOME OF THEM ARE RED.", s * 0.85f, white, 1); ty += lh * 0.95f;
+        text(W * 0.5f, ty, "WHEN A ROW IS ALL RED THE BOARD TIPS OVER", s * 0.85f, white, 1); ty += lh * 0.95f;
+        text(W * 0.5f, ty, "AND EVERY RED CLUSTER BECOMES A DEMON.", s * 0.85f, white, 1); ty += lh * 1.4f;
+        for (size_t i = 0; i < menu_.items.size(); ++i) {
+            bool sel = static_cast<int>(i) == menu_.index;
+            float f = sel ? (0.7f + 0.3f * std::sin(time_ * 6.f)) : 1.f;
+            std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
+            text(W * 0.5f, ty + static_cast<float>(i) * lh * 1.25f, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1);
+        }
         if (!highScores_.entries().empty()) {
-            float ty = H * 0.36f + lh * 8.f + lh * 1.5f * 2.f + lh * 0.8f;
-            text(W * 0.5f, ty, "HIGH SCORES", s * 0.8f, yellow, 1);
-            ty += lh * 0.9f;
+            // Right-hand column so the menu keeps its room.
+            float hy = H * 0.40f;
+            text(W - 24.f, hy, "HIGH SCORES", s * 0.8f, yellow, 2);
+            hy += lh * 0.9f;
             int shown = 0;
             for (const HighScore& h : highScores_.entries()) {
                 if (shown++ >= 5) break;
-                std::string line = std::to_string(shown) + ".  " + std::to_string(h.score) + "   LVL " + std::to_string(h.level) + "   RED LINES " + std::to_string(h.redLines) + "   " + h.date;
-                text(W * 0.5f, ty, line, s * 0.7f, dim, 1);
-                ty += lh * 0.8f;
+                std::string line = std::to_string(shown) + ". " + std::to_string(h.score) + "  LVL " + std::to_string(h.level) + "  RED " + std::to_string(h.redLines);
+                text(W - 24.f, hy, line, s * 0.65f, dim, 2);
+                hy += lh * 0.75f;
             }
         }
-        text(W * 0.5f, H - lh * 1.5f, assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : "ASSETS: PROCEDURAL (NO WAD FOUND)", s * 0.7f, dim, 1);
+        text(W * 0.5f, H - lh * 1.5f, assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : "ASSETS: PROCEDURAL (NO WAD FOUND)", s * 0.65f, dim, 1);
         text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : (std::string(musicSetName()) + (musicSet_ == MusicSet::Classic ? std::string(" / ") + music_.backendName() : ""))) + "   M MUTE  N SET", s * 0.6f, dim, 2);
+        text(24.f, H - lh * 1.5f, pad_ ? "GAMEPAD: " + padName_ : std::string("NO GAMEPAD"), s * 0.6f, dim);
+        if (!profileName_.empty()) text(24.f, H - lh * 2.4f, "PLAYER " + profileName_ + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()) + "   (T)", s * 0.6f, dim);
+    }
+    // Overlay screens ---------------------------------------------------------
+    if (screen_ != kScreenNone) {
+        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.88f));
+        auto row = [&](float y, const std::string& label, const std::string& value, bool sel) {
+            glm::vec4 c = sel ? yellow : dim;
+            text(W * 0.5f - 20.f, y, (sel ? "> " : "") + label, s, c, 2);
+            text(W * 0.5f + 20.f, y, value, s, sel ? white : dim, 0);
+        };
+        if (screen_ == kScreenOptions) {
+            text(W * 0.5f, H * 0.16f, "OPTIONS", s * 2.f, white, 1);
+            float y = H * 0.30f;
+            char buf[32];
+            row(y, "MUSIC", musicSetName(), screenIndex_ == 0); y += lh * 1.4f;
+            std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(music_.volume() * 100.f)));
+            row(y, "MUSIC VOLUME", buf, screenIndex_ == 1); y += lh * 1.4f;
+            row(y, "MUSIC ENABLED", music_.enabled() ? "ON" : "OFF", screenIndex_ == 2); y += lh * 1.4f;
+            std::snprintf(buf, sizeof buf, "%.1f", padSens_);
+            row(y, "STICK SENSITIVITY", buf, screenIndex_ == 3); y += lh * 1.4f;
+            row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 4); y += lh * 1.4f;
+            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.8f;
+            text(W * 0.5f, y, screenIndex_ == 6 ? "> BACK <" : "BACK", s, screenIndex_ == 6 ? yellow : dim, 1);
+            text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   SAVED TO YOUR PROFILE", s * 0.7f, dim, 1);
+        } else if (screen_ == kScreenTrophies) {
+            text(W * 0.5f, H * 0.12f, "TROPHIES  " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()), s * 1.6f, yellow, 1);
+            const auto& all = trophyCatalogue();
+            size_t half = (all.size() + 1) / 2;
+            for (size_t i = 0; i < all.size(); ++i) {
+                bool got = trophies_.unlocked(all[i].id);
+                float x = (i < half) ? W * 0.05f : W * 0.53f;
+                float y = H * 0.22f + static_cast<float>(i < half ? i : i - half) * lh * 1.55f;
+                text(x, y, std::string(got ? "* " : "- ") + all[i].name, s * 0.9f, got ? yellow : glm::vec4(0.5f, 0.5f, 0.5f, 1.f));
+                text(x + 20.f * s, y + lh * 0.75f, got ? std::string(all[i].description) + "  " + trophies_.unlockDate(all[i].id) : all[i].description, s * 0.6f, got ? dim : glm::vec4(0.4f, 0.4f, 0.4f, 1.f));
+            }
+            text(W * 0.5f, H - lh * 1.5f, "ESC OR B BACK", s * 0.7f, dim, 1);
+        } else if (screen_ == kScreenProfiles) {
+            text(W * 0.5f, H * 0.16f, "PLAYERS", s * 2.f, white, 1);
+            float y = H * 0.30f;
+            for (size_t i = 0; i < profileList_.size(); ++i) {
+                bool sel = static_cast<int>(i) == screenIndex_;
+                text(W * 0.5f, y, (sel ? "> " : "") + profileList_[i] + (profileList_[i] == profileName_ ? "  (CURRENT)" : "") + (sel ? " <" : ""), s, sel ? yellow : dim, 1);
+                y += lh * 1.4f;
+            }
+            bool selNew = screenIndex_ == static_cast<int>(profileList_.size());
+            text(W * 0.5f, y, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1);
+            text(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES AND SETTINGS", s * 0.7f, dim, 1);
+        } else if (screen_ == kScreenNameEntry) {
+            static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
+            text(W * 0.5f, H * 0.22f, "WHAT IS YOUR NAME, MARINE?", s * 1.4f, white, 1);
+            float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
+            text(W * 0.5f, H * 0.36f, nameEntry_ + (f > 0.5f ? "_" : " "), s * 2.2f, yellow, 1);
+            if (pad_) {
+                std::string pick(1, kLetters[static_cast<size_t>(nameChar_)]);
+                text(W * 0.5f, H * 0.50f, "GAMEPAD: UP/DOWN PICK A LETTER  [" + pick + "]  A ADD  B DELETE  START DONE", s * 0.75f, dim, 1);
+            }
+            text(W * 0.5f, H * 0.58f, "TYPE YOUR NAME AND PRESS ENTER", s * 0.8f, dim, 1);
+            if (!nameRequired_ || !profileName_.empty()) text(W * 0.5f, H * 0.64f, "ESC CANCEL", s * 0.7f, dim, 1);
+        }
     }
     if (mode_ == Mode::Paused) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.5f));

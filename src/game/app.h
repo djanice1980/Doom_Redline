@@ -11,6 +11,7 @@
 #include "audio/audio.h"
 #include "audio/music.h"
 #include "game/highscores.h"
+#include "game/trophies.h"
 #include "core/tetris.h"
 #include "game/assets.h"
 #include "game/fps_mode.h"
@@ -18,6 +19,7 @@
 #include "render/vk_context.h"
 
 struct SDL_Window;
+struct SDL_Gamepad;
 
 namespace rl::game {
 
@@ -43,6 +45,7 @@ struct Options {
     bool noMusic = false;
     float musicVolume = 0.45f;
     std::string musicSet;              // "classic" | "sc55" | "modern" (empty = saved preference, default modern when available)
+    std::string profile;               // player profile to use (skips the name prompt)
 };
 
 class App {
@@ -94,6 +97,21 @@ private:
     const char* musicSetName() const;
     void loadSettings();
     void saveSettings() const;
+    // Profiles: one directory per player holding settings, scores and trophies.
+    std::string profilesRoot() const;
+    std::vector<std::string> listProfiles() const;
+    void switchProfile(const std::string& name);
+    void openScreen(int screen);
+    void closeScreen();
+    void screenKey(int key, bool fromPad);
+    void adjustOption(int dir);
+    void trophy(const char* id);
+    void openGamepad(uint32_t which);
+    void pollGamepad(float dt);
+    void rumble(float low, float high, int ms);
+    void padButton(int button, bool down);
+    void addScreens();
+    void beginLevelCard();
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45) { play(name.c_str(), gain, pitch, minIntervalMs); }
 
     Options opts_;
@@ -104,10 +122,32 @@ private:
     audio::Music music_;
     Assets assets_;
     HighScores highScores_;
+    Trophies trophies_;
     int lastRank_ = 0;
     enum class MusicSet { Classic, Sc55, Modern };
     MusicSet musicSet_ = MusicSet::Classic;
     std::string settingsPath_;
+    std::string profileName_;
+    // Overlay screens on top of the title / pause menus.
+    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry };
+    int screen_ = kScreenNone;
+    int screenIndex_ = 0;
+    std::string nameEntry_;
+    int nameChar_ = 0;                 // gamepad letter picker position
+    std::vector<std::string> profileList_;
+    bool nameRequired_ = false;        // first launch: no profile yet
+    // Per-profile controller settings.
+    float padSens_ = 1.f;
+    bool padInvertY_ = false;
+    bool padRumble_ = true;
+    SDL_Gamepad* pad_ = nullptr;
+    std::string padName_;
+    struct { bool left = false, right = false, down = false, fire = false, run = false; } padHeld_;
+    // Level-up card and per-game stats for trophies.
+    float levelCardT_ = 99.f;
+    struct { int level = 0; int kills = 0; int blocks = 0; float seconds = 0.f; float damage = 0.f; int score = 0; } levelCard_;
+    struct { int kills = 0; int blocks = 0; int pickups = 0; } fightStats_;
+    int gameBlocks_ = 0, gamePickups_ = 0;
 
     std::unique_ptr<core::Game> game_;
     FpsMode fps_;
@@ -127,7 +167,7 @@ private:
 
     // Blocks-mode input state (DAS)
     struct { bool left = false, right = false, down = false; float dasT = 0.f; int dasDir = 0; bool dasActive = false; } keys_;
-    struct { float dx = 0.f, dy = 0.f; bool fire = false; bool fwd = false, back = false, left = false, right = false; bool run = false; int select = -1; int wheel = 0; } fpsIn_;
+    struct { float dx = 0.f, dy = 0.f; bool fire = false; bool fwd = false, back = false, left = false, right = false; bool run = false; int select = -1; int wheel = 0; float padMoveX = 0.f, padMoveZ = 0.f; bool padFire = false, padRun = false; } fpsIn_;
 
     // Per-frame draw lists
     std::vector<render::CubeInstance> envCubes_;

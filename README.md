@@ -99,6 +99,45 @@ The top ten (score, level, red lines survived, lines, date) are kept in
 `~/.local/share/redline/redline/highscores.txt`. The title screen shows the
 top five and the game-over screen announces your rank.
 
+## Players, trophies and level-ups
+
+The first launch asks for your name. Each player gets a profile (a folder
+under `~/.local/share/redline/redline/profiles/`) holding their own high
+scores, trophies and settings (music set and volume, stick sensitivity,
+inverted look, rumble). Switch or add players from the PLAYER item on the
+title screen; the last player is remembered.
+
+Trophies are one-time achievements (19 of them, from FIRST BLOOD to DOOM
+SLAYER! for a new #1 high score). Unlocking one pops a gold banner with a
+jingle; the full list with unlock dates is under TROPHIES on the title screen
+(or press T).
+
+Surviving a fight brings up a level-up card: the new level, demons slain,
+blocks destroyed, fight time and damage taken. The collapse plays behind it
+and the next piece waits until the card is gone.
+
+## Gamepad
+
+Plug in any controller SDL recognises (Xbox, PlayStation, Switch Pro, most
+generic pads). Rumble is used for shots, hits, explosions and trophies.
+
+| | Block mode | Fight |
+|---|---|---|
+| Left stick / d-pad | move (auto-repeats), down = soft drop | move |
+| Right stick | | look |
+| A | rotate clockwise | fire |
+| B | rotate counter-clockwise | |
+| X / d-pad up | hard drop | previous weapon |
+| Y | | next weapon |
+| Bumpers | rotate | previous / next weapon |
+| Right trigger | | fire |
+| Left trigger / L3 | | run |
+| Start | pause | pause |
+
+Menus: d-pad to pick, A to confirm, B to back out. Name entry on a pad: up
+and down pick a letter, A adds it, B deletes, Start confirms. Stick
+sensitivity, inverted look and rumble live under OPTIONS.
+
 ## Controls
 
 Block mode:
@@ -110,7 +149,8 @@ Block mode:
 | Z, Left Ctrl | rotate counter-clockwise |
 | Down, S | soft drop |
 | Space | hard drop |
-| Esc | pause menu (resume / restart / quit) |
+| Esc | pause menu (resume / options / restart / quit) |
+| T | trophies (title screen) |
 | F12 | screenshot to `redline-screenshot.png` |
 
 First-person mode: mouse to look, WASD to move, Shift to run, left click /

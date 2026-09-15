@@ -239,3 +239,26 @@ Anything missing falls back to `procedural.cpp`. Block tiles are always ours.
 
 Top 10 in SDL's pref path as whitespace-separated lines; `add()` returns the
 1-based rank (0 = not placed) and saves.
+
+## Profiles, trophies, gamepad (`src/game/app.cpp`, `trophies.cpp`)
+
+- Profiles live in `<pref>/profiles/<NAME>/{settings,highscores,trophies}.txt`;
+  `<pref>/profile.txt` names the last player. `switchProfile` adopts files
+  from the old flat layout the first time. `--profile NAME` skips the prompt;
+  scripted scenarios default to a `PLAYER` profile.
+- Overlay screens (`screen_`): Options (music set/volume/on, stick
+  sensitivity, invert, rumble), Trophies, Players, Name entry (keyboard text
+  input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
+  both keyboard and pad input mapped to key codes.
+- Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks
+  once with a banner, jingle and rumble. Hooks: kills (first blood, boss
+  tiers, grown), fights survived (red line, untouchable, survivor), clears
+  (tetris, combo x3, chain), pickups (collector, arsenal), BFG, invulnerable,
+  level-ups, blocks destroyed, and a #1 high score (doom_slayer).
+- Level card: 4 s after the fly-out; block gravity pauses while a piece would
+  be falling, the collapse still animates.
+- Gamepad: SDL3 gamepad API; axes polled per frame with an 18 % dead zone and
+  squared look response (3.4 / 2.2 rad/s at full stick times sensitivity);
+  left stick emulates the d-pad with hysteresis in block mode so DAS works.
+- Corpses: Dead monsters are drawn for 1.6 s (bosses 1.2 s, cacodemons
+  0.35 s) and shrink/darken over the last 0.35 s.
