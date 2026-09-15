@@ -151,7 +151,45 @@ are the useful output. This keeps you on the right side of GDPR-style rules
 if anyone in the EU plays, and it is exactly what Steam's hardware survey
 does: hardware and software facts, opt-in, no identity.
 
-## 7. Order of work when you pick this up
+## 7. Identity: why not email as the profile id
+
+Proposed 2026-09-15: make the email address the real profile id, show the
+typed name, and publish everything. Recommendation: **do not key on email.**
+
+- An email typed into a game is not verified. Anyone can enter someone else's
+  address and play under their record, or fill the board with fake accounts.
+  Email only means something once a login exists (Supabase Auth's magic link
+  does this well, and that is the moment to ask for it, not before).
+- A public dataset keyed by email is a spam and harassment list. It is also
+  personal data under GDPR / CCPA with the strongest obligations attached:
+  purpose limitation, deletion on request, breach notification. A random id
+  carries none of that.
+- The game is offline-first. A profile has to exist before the network does.
+
+What gives the same outcome safely:
+
+- **`player_id`**: a random UUID minted when a profile is created, stored in
+  the profile folder, never shown. This is the primary key everywhere.
+- **`install_id`**: a random UUID per machine in the save folder. Machines
+  are a *dimension* of a player's data (this run was on machine 3, on a
+  gamepad, for 40 minutes), not identities.
+- **Account (later, optional)**: email + magic link through Supabase Auth
+  links one or more `player_id`s to an account so progress follows the
+  player. The email is a login credential held by the auth provider, stored
+  hashed, never in the public tables, never shown. Public pages show the
+  display name and gameplay statistics only. Cross-machine sync then means
+  the server holds the profile (scores, trophies, settings) and a new
+  machine's `player_id` is merged into it on first login.
+
+Prep that can be done now, before any network code, and that fits either
+design: mint the two UUIDs; count play time per profile and per machine
+(block phase, fight phase, menus); count input by device (keyboard/mouse
+versus gamepad actions, and the pad model); record per-session machine facts
+(OS, GPU, resolution, voxels on) as local JSON; add an optional `email` field
+to the profile file that stays empty and unused until the account feature
+exists. Nothing leaves the machine until the opt-in toggle arrives.
+
+## 8. Order of work when you pick this up
 
 1. Clean-ups in section 1, push, tag `v0.1.0`, and get the release workflow
    green (expect a round of Windows compile fixes).
