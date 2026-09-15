@@ -1537,6 +1537,9 @@ void App::buildProps() {
     }
     prop(assets_.torchGreen, {-9.f, 0.f, 22.85f}, 0.031f, green, 6.f, 1.7f);
     prop(assets_.torchGreen, {9.f, 0.f, 22.85f}, 0.031f, green, 6.f, 1.7f);
+    // Column lamps along the front wall: this is the wall at the player's back
+    // in the fight, so they light the near end of the arena.
+    for (float x : {-11.5f, -4.f, 4.f, 11.5f}) prop(assets_.lamp, {x, 0.f, 22.6f}, 0.031f, white, 14.f, 3.2f);   // tall reach so the floor catches them
     // Candelabras and column lamps on the floor either side of the board; barrels in the corners.
     prop(assets_.candelabra, {-8.5f, 0.f, 2.5f}, 0.031f, warm, 5.f, 1.2f);
     prop(assets_.candelabra, {8.5f, 0.f, 2.5f}, 0.031f, warm, 5.f, 1.2f);
@@ -2355,7 +2358,7 @@ void App::buildScene() {
     frame_.shadowStrength = 0.85f;
     float tilt = boardTilt();
     frame_.sunIntensity = glm::mix(0.9f, 0.55f, tilt);
-    frame_.ambient = glm::mix(glm::vec3(0.30f, 0.30f, 0.34f), glm::vec3(0.16f, 0.13f, 0.13f), tilt);
+    frame_.ambient = glm::mix(glm::vec3(0.30f, 0.30f, 0.34f), glm::vec3(0.21f, 0.17f, 0.17f), tilt);   // the fight stays moody but readable
     frame_.fogDensity = glm::mix(0.012f, 0.035f, tilt);
     frame_.fogColor = glm::mix(glm::vec3(0.03f, 0.03f, 0.05f), glm::vec3(0.06f, 0.02f, 0.02f), tilt);
     frame_.clearColor = frame_.fogColor;
