@@ -5,7 +5,7 @@ answers first, details below.
 
 | Question | Answer |
 |---|---|
-| Is the project ready to push to GitHub? | Yes, with two small clean-ups (below). No Doom data or secrets are tracked; the repo is 2.5 MB of tracked files. |
+| Is the project ready to push to GitHub? | Yes; the clean-up is done (section 1). No Doom data or secrets are tracked; the repo is under 2 MB of tracked files. |
 | Is it scoped and ready for a web leaderboard? | The game side is *not* yet: it has no network code, no player identity beyond a typed name, and no per-run record. All of that is a bounded amount of work (about a day) and is listed below. |
 | Is enough information available to publish? | Almost. Score, level, lines, red lines, trophies with dates, kills, blocks destroyed, pickups, fight time and damage are already counted. Missing: kills by monster class, run duration, weapons used, cause of death, the seed, the game version and a per-install id. All are one-liners to add. |
 | Can we gather it appropriately? | Yes. Everything is gameplay statistics plus the name the player typed. No email or system information is needed. Make it opt-in and say what is sent. |
