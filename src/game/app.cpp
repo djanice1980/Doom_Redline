@@ -2259,7 +2259,7 @@ void App::addHud() {
         }
         if (!highScores_.entries().empty()) {
             // Right-hand column so the menu keeps its room.
-            float hy = H * 0.40f;
+            float hy = H * 0.21f;   // top right, under the key hints
             text(W - 24.f, hy, "HIGH SCORES", s * 0.8f, yellow, 2);
             hy += lh * 0.9f;
             int shown = 0;
@@ -2270,10 +2270,13 @@ void App::addHud() {
                 hy += lh * 0.75f;
             }
         }
-        text(W * 0.5f, H - lh * 1.5f, (assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : std::string("ASSETS: PROCEDURAL (NO WAD FOUND)")) + (useVoxels_ && voxels_.available() ? "  +  VOXEL DOOM" : ""), s * 0.65f, dim, 1);
-        text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : (std::string(musicSetName()) + (musicSet_ == MusicSet::Classic ? std::string(" / ") + music_.backendName() : ""))) + "   M MUTE  N SET", s * 0.6f, dim, 2);
-        text(24.f, H - lh * 1.5f, pad_ ? "GAMEPAD: " + padName_ : std::string("NO GAMEPAD"), s * 0.6f, dim);
-        if (!profileName_.empty()) text(24.f, H - lh * 2.4f, "PLAYER " + profileName_ + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()) + "   (T)" + (stats_.loaded() ? "   PLAYTIME " + PlayerStats::formatDuration(stats_.lifetime().total()) + (stats_.machineCount() > 1 ? " ON " + std::to_string(stats_.machineCount()) + " MACHINES" : "") : ""), s * 0.6f, dim);
+        // Status strip, three rows: player / gamepad + music / assets + key hints.
+        float rowA = H - lh * 3.3f, rowB = H - lh * 2.4f, rowC = H - lh * 1.5f;
+        if (!profileName_.empty()) text(24.f, rowA, "PLAYER " + profileName_ + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()) + (stats_.loaded() ? "   PLAYED " + PlayerStats::formatDuration(stats_.lifetime().total()) + (stats_.machineCount() > 1 ? " (" + std::to_string(stats_.machineCount()) + " MACHINES)" : "") : ""), s * 0.6f, dim);
+        text(24.f, rowB, pad_ ? "GAMEPAD: " + padName_ : std::string("NO GAMEPAD"), s * 0.6f, dim);
+        text(W - 24.f, rowB, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : (std::string(musicSetName()) + (musicSet_ == MusicSet::Classic ? std::string(" / ") + music_.backendName() : ""))), s * 0.6f, dim, 2);
+        text(24.f, rowC, (assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : std::string("ASSETS: PROCEDURAL (NO WAD FOUND)")) + (useVoxels_ && voxels_.available() ? "  +  VOXEL DOOM" : ""), s * 0.6f, dim);
+        text(W - 24.f, rowC, "M MUTE   N MUSIC SET   T TROPHIES", s * 0.6f, dim, 2);
     }
     // Overlay screens ---------------------------------------------------------
     if (screen_ != kScreenNone) {
