@@ -81,6 +81,28 @@ Not yet done on Windows: FluidSynth (optional soundfont backend) is not in
 `vcpkg.json`, so music uses the built-in OPL3 emulator, which is the intended
 default anyway. Add `"fluidsynth"` to the dependency list to include it.
 
+## Windows build from Linux (Docker, no Windows machine needed)
+
+`packaging/windows/cross-build.sh` produces a test build without touching
+Windows: it runs a Fedora container with the mingw-w64 toolchain and Fedora's
+mingw packages for SDL3, libvorbis, libogg and the Vulkan loader, builds with
+the repo's CMake files through a mingw toolchain file, and stages
+`build-win/redline-<version>-win64/` (redline.exe, the test executables, the
+DLLs the exe imports, README, LICENSE, docs) plus a zip of it. Needs Docker
+and, on the first run, the network for the image and packages (about 400 MB);
+a rebuild takes a couple of minutes.
+
+```bash
+packaging/windows/cross-build.sh
+```
+
+The C++ runtime and winpthreads are linked statically, so the only DLLs next
+to the exe are SDL3, vorbis, vorbisfile and ogg. `vulkan-1.dll` is
+deliberately not shipped: on Windows it comes with the graphics driver.
+Unzip anywhere and run `redline.exe`; the first launch asks for the WAD.
+The zip is a plain test build, not the installer; the Inno Setup script above
+still expects the MSVC staging folder, or point its `StageDir` at this one.
+
 ## Linux
 
 Build dependencies: a C++20 compiler, CMake 3.24+, Ninja, SDL3, glm, the
@@ -128,6 +150,13 @@ Verified on this machine (CachyOS): the Linux build, tests, `cmake --install`,
 `cpack -G TGZ`, the first-run screen, the typed-path screen, both config
 files, and the live asset swap. The native file dialog was opened from the
 setup screen without errors but a file was not picked through it
-automatically. The Windows build has been set up (MSVC flags, vcpkg manifest,
-preset, GUI subsystem, icon resource, DLL staging, Inno script) but has not
-been compiled here: the first Windows build may need small fixes.
+automatically.
+
+Windows: the mingw cross-build (`cross-build.sh`) compiles cleanly, all six
+test executables pass under Wine, and `redline.exe` runs under Wine with
+Vulkan on the host GPU: it found the Steam WAD passed on the command line,
+indexed extras.wad, ran a level-3 fight and wrote a screenshot; without a
+WAD it showed the first-run chooser. Not yet verified: the same binary on a
+real Windows install, the native file dialog there, gamepad and fullscreen
+on Windows, and the MSVC + vcpkg path (never compiled). The Inno Setup
+script has not been run.

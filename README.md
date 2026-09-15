@@ -326,6 +326,9 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --extras <file>
 ```
 
+A Windows test build can be cross-compiled from Linux with Docker:
+`packaging/windows/cross-build.sh` (see `docs/packaging.md`).
+
 `--scenario redline` starts with a nearly complete red row plus a few red
 clusters of different sizes and drops the last red piece for you; `--scenario
 fps` skips straight to the fight (`--level N` sets the level for it; 8+ adds a

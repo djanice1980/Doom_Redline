@@ -10,3 +10,4 @@ docs/*.pptx
 tools/build_deck.js
 
 tools/shots/
+build-win/

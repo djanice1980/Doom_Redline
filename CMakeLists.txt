@@ -103,6 +103,8 @@ if(REDLINE_BUILD_GAME)
   target_link_libraries(redline PRIVATE rl_core Vulkan::Vulkan SDL3::SDL3 glm::glm)
   if(WIN32)
     # GUI subsystem (no console window); SDL_main.h in main.cpp supplies WinMain.
+    enable_language(RC)
+    set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -I${CMAKE_SOURCE_DIR}/packaging/windows")
     set_target_properties(redline PROPERTIES WIN32_EXECUTABLE ON)
     target_sources(redline PRIVATE packaging/windows/redline.rc)
   endif()
