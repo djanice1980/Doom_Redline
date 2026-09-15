@@ -28,6 +28,7 @@ namespace rl::game {
 
 struct Options {
     std::optional<std::filesystem::path> wad;
+    std::string extras;                // rerelease extras.wad (soundtracks); empty = auto
     bool noWad = false;
     int width = 1600, height = 900;
     bool fullscreen = false;
@@ -112,9 +113,11 @@ private:
     void saveSettings() const;
     // Doom data: the WAD can be chosen at runtime (first-run screen, OPTIONS) and swapped in live.
     void initMusic();
-    bool reloadAssets(const std::filesystem::path& wad);
-    void browseForWad();
+    bool reloadAssets(const std::filesystem::path& wad, const std::string& extras = "");
+    void browseForWad(bool extras = false);
     void saveWadChoice(const std::string& path) const;
+    void saveExtrasChoice(const std::string& path) const;
+    std::string extrasHint() const;   // --extras, then the saved choice, then redline.cfg
     static void dialogCallback(void* userdata, const char* const* files, int filter);   // SDL_DialogFileCallback
     // Profiles: one directory per player holding settings, scores and trophies.
     std::string profilesRoot() const;
@@ -162,7 +165,8 @@ private:
     std::string wadStatus_;            // last result line on the WAD screens
     std::mutex dialogMutex_;
     std::vector<std::string> dialogFiles_;
-    bool dialogDone_ = false, dialogOpen_ = false;
+    bool dialogDone_ = false, dialogOpen_ = false, dialogForExtras_ = false;
+    std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
     enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath };
     int screen_ = kScreenNone;

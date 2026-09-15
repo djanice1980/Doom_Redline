@@ -60,7 +60,8 @@ App::App(Options opts) : opts_(std::move(opts)) {
         wadMissing_ = true;
         std::fprintf(stderr, "[assets] no Doom WAD found; using procedural art (the game will ask for one; or pass --wad <file> / set REDLINE_WAD)\n");
     }
-    if (!assets_.load(wad, audio_)) throw std::runtime_error("asset build failed");
+    if (!assets_.load(wad, audio_, extrasHint())) throw std::runtime_error("asset build failed");
+    if (wad && assets_.usingWad()) wadPath_ = wad->string();
     renderer_->setAtlas(assets_.atlas().image());
     buildEnvironment();
     buildProps();
@@ -133,9 +134,9 @@ void App::initMusic() {
 
 // Swaps every Doom-derived asset for the ones in `wad`: atlas, sounds, music.
 // Game state is untouched (it only refers to art by logical name).
-bool App::reloadAssets(const std::filesystem::path& wad) {
+bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extras) {
     Assets fresh;
-    if (!fresh.load(wad, audio_) || !fresh.usingWad()) {
+    if (!fresh.load(wad, audio_, extras.empty() ? extrasHint() : extras) || !fresh.usingWad()) {
         std::fprintf(stderr, "[assets] %s is not a usable Doom WAD\n", wad.string().c_str());
         return false;
     }
@@ -147,9 +148,11 @@ bool App::reloadAssets(const std::filesystem::path& wad) {
     music_.stop(0.f);   // updateMusic() restarts the right track from the new set
     wadMissing_ = false;
     wadStatus_.clear();
+    wadPath_ = wad.string();
     if (screen_ == kScreenWadSetup || screen_ == kScreenWadPath) closeScreen();
     saveWadChoice(wad.string());
-    announce("DOOM DATA: " + assets_.wadName(), glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
+    if (!extras.empty()) saveExtrasChoice(extras);
+    announce("DOOM DATA: " + assets_.wadName() + (assets_.oggMusic.empty() ? "" : "  +  SOUNDTRACKS"), glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
     std::fprintf(stderr, "[assets] switched to %s\n", wad.string().c_str());
     return true;
 }
@@ -157,6 +160,17 @@ bool App::reloadAssets(const std::filesystem::path& wad) {
 void App::saveWadChoice(const std::string& path) const {
     if (prefDir_.empty()) return;
     if (std::FILE* f = std::fopen((prefDir_ + "wad.txt").c_str(), "w")) { std::fprintf(f, "%s\n", path.c_str()); std::fclose(f); }
+}
+
+void App::saveExtrasChoice(const std::string& path) const {
+    if (prefDir_.empty()) return;
+    if (std::FILE* f = std::fopen((prefDir_ + "extras.txt").c_str(), "w")) { std::fprintf(f, "%s\n", path.c_str()); std::fclose(f); }
+}
+
+std::string App::extrasHint() const {
+    if (!opts_.extras.empty()) return opts_.extras;
+    if (std::string s = Assets::savedExtrasPath(prefDir_); !s.empty()) return s;
+    return Assets::configExtrasPath(baseDir_);
 }
 
 void App::dialogCallback(void* userdata, const char* const* files, int) {
@@ -170,16 +184,14 @@ void App::dialogCallback(void* userdata, const char* const* files, int) {
 
 // Native "open file" dialog (SDL3: Windows common dialog, GTK/portal/kdialog on
 // Linux). The result arrives through dialogCallback and is applied in update().
-void App::browseForWad() {
+void App::browseForWad(bool extras) {
     if (dialogOpen_) return;
     dialogOpen_ = true;
-    wadStatus_ = "CHOOSE DOOM.WAD IN THE FILE WINDOW";
+    dialogForExtras_ = extras;
+    wadStatus_ = extras ? "CHOOSE EXTRAS.WAD IN THE FILE WINDOW" : "CHOOSE DOOM.WAD IN THE FILE WINDOW";
     static const SDL_DialogFileFilter filters[] = {{"Doom WAD files", "wad;WAD"}, {"All files", "*"}};
     std::string start;
-    if (assets_.usingWad()) {
-        std::string saved = Assets::savedWadPath(prefDir_);
-        if (!saved.empty()) start = std::filesystem::path(saved).parent_path().string();
-    }
+    if (!wadPath_.empty()) start = std::filesystem::path(wadPath_).parent_path().string();
     SDL_ShowOpenFileDialog(&App::dialogCallback, this, window_, filters, 2, start.empty() ? nullptr : start.c_str(), false);
 }
 
@@ -600,6 +612,7 @@ void App::adjustOption(int dir) {
     case 6: displayMode_ = (displayMode_ + 3 + dir) % 3; applyDisplay(); break;
     case 8: if (voxels_.available()) useVoxels_ = !useVoxels_; break;
     case 9: if (dir > 0) browseForWad(); break;
+    case 10: if (dir > 0) browseForWad(true); break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -621,12 +634,12 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 11;   // 10 options + BACK
+        const int n = 12;   // 11 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 10) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 10) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 10) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 11) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 11) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 11) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
@@ -1254,6 +1267,12 @@ void App::update(float dt) {
         { std::lock_guard<std::mutex> lock(dialogMutex_); files.swap(dialogFiles_); dialogDone_ = false; }
         dialogOpen_ = false;
         if (files.empty()) wadStatus_ = wadMissing_ ? "NO FILE CHOSEN" : "";
+        else if (dialogForExtras_) {
+            // The soundtrack file only makes sense with an IWAD loaded; re-run the load with it.
+            if (wadPath_.empty()) wadStatus_ = "CHOOSE DOOM.WAD FIRST";
+            else if (reloadAssets(wadPath_, files.front()) && !assets_.oggMusic.empty()) wadStatus_.clear();
+            else wadStatus_ = "NO SOUNDTRACKS IN " + std::filesystem::path(files.front()).filename().string();
+        }
         else if (reloadAssets(files.front())) {}
         else wadStatus_ = "NOT A DOOM WAD: " + std::filesystem::path(files.front()).filename().string();
     }
@@ -2215,8 +2234,9 @@ void App::addHud() {
             std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
             row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.4f;
             row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.4f;
-            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER TO BROWSE)", screenIndex_ == 9); y += lh * 1.8f;
-            text(W * 0.5f, y, screenIndex_ == 10 ? "> BACK <" : "BACK", s, screenIndex_ == 10 ? yellow : dim, 1);
+            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER TO BROWSE)", screenIndex_ == 9); y += lh * 1.4f;
+            row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC MUSIC ONLY  (ENTER TO BROWSE FOR EXTRAS.WAD)", screenIndex_ == 10); y += lh * 1.8f;
+            text(W * 0.5f, y, screenIndex_ == 11 ? "> BACK <" : "BACK", s, screenIndex_ == 11 ? yellow : dim, 1);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {

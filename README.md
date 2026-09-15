@@ -107,9 +107,12 @@ Hulshult's 2023 recordings, `H_*`) and **SC-55** (the original score recorded
 on a Roland SC-55, `O_*`, covering most Doom II and a few Doom tracks).
 Cycle Classic / SC-55 / Modern with the N key or the MUSIC item on the title
 and pause menus; the choice is remembered in `settings.txt` next to the high
-scores. `--music classic|sc55|modern` sets it from the command line, and
-`REDLINE_EXTRAS=/path/extras.wad` points at the file if it is elsewhere. Any
-piece a set lacks falls back to the classic version.
+scores. `--music classic|sc55|modern` sets it from the command line. If the
+file is not next to the IWAD, point at it with OPTIONS > SOUNDTRACK WAD (a
+file browser; the choice is saved), `--extras /path/extras.wad`,
+`REDLINE_EXTRAS=/path/extras.wad`, or an `extras=` line in `redline.cfg`
+next to the executable (the Windows installer asks for it). Any piece a set
+lacks falls back to the classic version.
 
 By default the tracks go through the built-in OPL3 emulator. If you prefer
 General MIDI, install a soundfont and the game switches to FluidSynth
@@ -308,6 +311,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --level <n>         --absorb <sec>     --god              --arsenal <n>
 --keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
 --voxels-dir <dir>  --voxels           --sprites          --reload-wad <file>
+--extras <file>
 ```
 
 `--scenario redline` starts with a nearly complete red row plus a few red

@@ -51,9 +51,13 @@ public:
     static std::optional<std::filesystem::path> findWad(const std::optional<std::filesystem::path>& explicitPath,
                                                         const std::string& prefDir = "", const std::string& baseDir = "");
     static std::string savedWadPath(const std::string& prefDir);     // <pref>/wad.txt, "" if none
+    static std::string savedExtrasPath(const std::string& prefDir);  // <pref>/extras.txt, "" if none
     static std::string configWadPath(const std::string& baseDir);    // wad= line of <exe>/redline.cfg
+    static std::string configExtrasPath(const std::string& baseDir); // extras= line of <exe>/redline.cfg
 
-    bool load(const std::optional<std::filesystem::path>& wadPath, audio::Audio& audio);
+    // `extrasPath` (optional) names the rerelease extras.wad for the Ogg
+    // soundtracks; otherwise $REDLINE_EXTRAS and the IWAD's folder are tried.
+    bool load(const std::optional<std::filesystem::path>& wadPath, audio::Audio& audio, const std::string& extrasFile = "");
 
     const render::Atlas& atlas() const { return atlas_; }
     const render::AtlasRegion& region(const std::string& key) const { return atlas_.get(key); }
@@ -99,6 +103,7 @@ private:
     render::Atlas atlas_;
     bool usingWad_ = false;
     std::string wadName_;
+    std::string extrasHint_;
 };
 
 }  // namespace rl::game

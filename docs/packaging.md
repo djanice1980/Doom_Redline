@@ -14,6 +14,7 @@ At start-up `Assets::findWad` tries, in order:
 3. the player's saved choice, `wad.txt` in the save folder
    (`~/.local/share/redline/redline/` on Linux, `%APPDATA%\redline\redline\` on Windows)
 4. `redline.cfg` next to the executable, a `wad=<path>` line an installer writes
+   (an optional `extras=<path>` line names the soundtrack file the same way)
 5. `wads/` in the current folder and next to the executable
 6. the Steam and GOG install folders of the platform
 
@@ -70,7 +71,9 @@ adds Start-menu and optional desktop shortcuts, and shows a **Doom game data**
 page with a file picker. The page is pre-filled when a Steam or GOG Doom is
 found. The chosen path is written as `wad=...` to `redline.cfg` next to the
 executable (step 4 of the search order); leaving the box empty skips the file
-and the game asks on first launch instead. Uninstall removes `redline.cfg`
+and the game asks on first launch instead. A second, optional box on the same
+page takes `EXTRAS.WAD` for the rerelease soundtracks (pre-filled when it sits
+next to the WAD) and becomes an `extras=...` line. Uninstall removes `redline.cfg`
 but never touches the WAD. Logs go to `%APPDATA%\redline\redline\redline.log`
 because the executable is a GUI-subsystem program with no console.
 

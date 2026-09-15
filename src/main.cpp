@@ -14,6 +14,7 @@ void usage() {
     std::printf(
         "redline [options]\n"
         "  --wad <file>         Doom IWAD to load art/sounds from (auto-detected from Steam if omitted)\n"
+        "  --extras <file>      Rerelease extras.wad for the Modern / SC-55 soundtracks (default: next to the IWAD)\n"
         "  --no-wad             Force procedural art\n"
         "  --size WxH           Window size (default 1600x900)\n"
         "  --fullscreen\n"
@@ -47,6 +48,7 @@ int main(int argc, char** argv) {
         std::string a = argv[i];
         auto next = [&]() -> const char* { return (i + 1 < argc) ? argv[++i] : ""; };
         if (a == "--wad") o.wad = next();
+        else if (a == "--extras") o.extras = next();
         else if (a == "--no-wad") o.noWad = true;
         else if (a == "--size") { std::string v = next(); if (std::sscanf(v.c_str(), "%dx%d", &o.width, &o.height) != 2) { usage(); return 2; } }
         else if (a == "--fullscreen") o.fullscreen = true;

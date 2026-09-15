@@ -90,7 +90,10 @@ begin
     'sits next to it, the modern and SC-55 soundtracks are available too.' + #13#10#13#10 +
     'Leave this empty to choose the file the first time the game runs.');
   WadPage.Add('Doom WAD file:', 'Doom WAD files (*.wad)|*.wad;*.WAD|All files|*.*', '.wad');
+  WadPage.Add('Soundtrack file (EXTRAS.WAD, optional):', 'Doom WAD files (*.wad)|*.wad;*.WAD|All files|*.*', '.wad');
   WadPage.Values[0] := GuessWad();
+  if (WadPage.Values[0] <> '') and FileExists(ExtractFilePath(WadPage.Values[0]) + 'EXTRAS.WAD') then
+    WadPage.Values[1] := ExtractFilePath(WadPage.Values[0]) + 'EXTRAS.WAD';
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -99,6 +102,9 @@ begin
   if (WadPage <> nil) and (CurPageID = WadPage.ID) then begin
     if (Trim(WadPage.Values[0]) <> '') and (not FileExists(WadPage.Values[0])) then begin
       MsgBox('That file does not exist. Pick DOOM.WAD / DOOM2.WAD, or leave the box empty to choose it in the game.', mbError, MB_OK);
+      Result := False;
+    end else if (Trim(WadPage.Values[1]) <> '') and (not FileExists(WadPage.Values[1])) then begin
+      MsgBox('The soundtrack file does not exist. Pick EXTRAS.WAD from the Doom + Doom II rerelease, or leave it empty.', mbError, MB_OK);
       Result := False;
     end;
   end;
@@ -110,9 +116,10 @@ var
 begin
   if CurStep = ssPostInstall then begin
     Cfg := ExpandConstant('{app}\redline.cfg');
+    if FileExists(Cfg) then DeleteFile(Cfg);
     if Trim(WadPage.Values[0]) <> '' then
-      SaveStringToFile(Cfg, 'wad=' + Trim(WadPage.Values[0]) + #13#10, False)
-    else if FileExists(Cfg) then
-      DeleteFile(Cfg);
+      SaveStringToFile(Cfg, 'wad=' + Trim(WadPage.Values[0]) + #13#10, False);
+    if Trim(WadPage.Values[1]) <> '' then
+      SaveStringToFile(Cfg, 'extras=' + Trim(WadPage.Values[1]) + #13#10, True);
   end;
 end;

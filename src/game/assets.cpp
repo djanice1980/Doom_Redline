@@ -36,9 +36,15 @@ std::string Assets::savedWadPath(const std::string& prefDir) {
     return readFirstLine(fs::path(prefDir) / "wad.txt");
 }
 
+std::string Assets::savedExtrasPath(const std::string& prefDir) {
+    if (prefDir.empty()) return "";
+    return readFirstLine(fs::path(prefDir) / "extras.txt");
+}
+
 // redline.cfg is a tiny key=value file an installer can drop next to the
-// executable: `wad=C:\Games\DOOM\doom.wad`.
-std::string Assets::configWadPath(const std::string& baseDir) {
+// executable: `wad=C:\Games\DOOM\doom.wad`, optionally `extras=...`.
+namespace {
+std::string configValue(const std::string& baseDir, const std::string& key) {
     if (baseDir.empty()) return "";
     std::string out;
     if (std::FILE* f = std::fopen((fs::path(baseDir) / "redline.cfg").string().c_str(), "r")) {
@@ -46,12 +52,16 @@ std::string Assets::configWadPath(const std::string& baseDir) {
         while (std::fgets(buf, sizeof buf, f)) {
             std::string line = buf;
             while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
-            if (line.rfind("wad=", 0) == 0) { out = line.substr(4); break; }
+            if (line.rfind(key + "=", 0) == 0) { out = line.substr(key.size() + 1); break; }
         }
         std::fclose(f);
     }
     return out;
 }
+}  // namespace
+
+std::string Assets::configWadPath(const std::string& baseDir) { return configValue(baseDir, "wad"); }
+std::string Assets::configExtrasPath(const std::string& baseDir) { return configValue(baseDir, "extras"); }
 
 std::optional<fs::path> Assets::findWad(const std::optional<fs::path>& explicitPath, const std::string& prefDir, const std::string& baseDir) {
     std::vector<fs::path> candidates;
@@ -122,8 +132,9 @@ int Assets::textWidth(const std::string& s, float scale) const {
     return w;
 }
 
-bool Assets::load(const std::optional<fs::path>& wadPath, audio::Audio& audio) {
+bool Assets::load(const std::optional<fs::path>& wadPath, audio::Audio& audio, const std::string& extrasFile) {
     bool ok = false;
+    extrasHint_ = extrasFile;
 #ifdef REDLINE_HAVE_WAD
     if (wadPath) ok = loadFromWad(*wadPath, audio);
 #endif
@@ -378,11 +389,13 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     }
     std::fprintf(stderr, "[assets] %zu music tracks, GENMIDI %s\n", music.size(), genmidi.empty() ? "missing" : "loaded");
 
-    // extras.wad (same folder as the IWAD, or $REDLINE_EXTRAS): index the Ogg music without loading 600 MB.
+    // extras.wad (chosen path, $REDLINE_EXTRAS, or the IWAD's folder): index the Ogg music without loading 600 MB.
     {
         std::vector<fs::path> candidates;
+        if (!extrasHint_.empty()) candidates.emplace_back(extrasHint_);
         if (const char* e = std::getenv("REDLINE_EXTRAS")) candidates.emplace_back(e);
         candidates.push_back(path.parent_path() / "extras.wad");
+        candidates.push_back(path.parent_path() / "EXTRAS.WAD");
         for (const fs::path& ex : candidates) {
             std::error_code ec;
             if (!fs::is_regular_file(ex, ec)) continue;
