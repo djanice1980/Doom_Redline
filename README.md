@@ -128,9 +128,11 @@ own; any other `.sf2` works via `REDLINE_SOUNDFONT=/path/to/file.sf2`.
 
 ## High scores
 
-The top ten (score, level, red lines survived, lines, date) are kept in
-`~/.local/share/redline/redline/highscores.txt`. The title screen shows the
-top five and the game-over screen announces your rank.
+Each player keeps their own top ten (score, level, red lines survived,
+lines, date) in their profile folder. The title screen shows the best eight
+runs across every player on the machine, each with the player's name and
+your own runs highlighted; the game-over screen announces your rank in your
+own table.
 
 ## Players, trophies and level-ups
 
