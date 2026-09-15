@@ -78,8 +78,8 @@ async function icon(Comp, colorHex, px = 256) {
     slide.addImage({ path: img, x, y, w, h, rounding: false });
   };
   const notes = (slide, t) => slide.addNotes(t);
-  const footer = (slide, n) =>
-    slide.addText(`REDLINE  ·  built with Claude Code  ·  ${n}`, { x: 0.5, y: H - 0.35, w: 9, h: 0.25, fontFace: BODY, fontSize: 9, color: C.dim, isTextBox: true, margin: 0, align: "right" });
+  const footer = (slide) =>
+    slide.addText(`REDLINE  ·  built with Claude Code  ·  ${pres.slides.length}`, { x: 0.5, y: H - 0.35, w: 9, h: 0.25, fontFace: BODY, fontSize: 9, color: C.dim, isTextBox: true, margin: 0, align: "right" });
 
   // 1. Title ------------------------------------------------------------------
   {
@@ -112,7 +112,7 @@ async function icon(Comp, colorHex, px = 256) {
       { text: "First decision: ", options: { bold: true, color: C.gold } },
       { text: "RTX Remix is a Windows D3D9 runtime, not a Linux Vulkan SDK. The AI said so up front, built a native Vulkan renderer with a Remix-shaped material model, and documented the Windows path instead of pretending.", options: { color: C.text } },
     ], { x: 5.45, y: 3.95, w: 4.05, h: 1.1, fontFace: BODY, fontSize: 11, valign: "top", isTextBox: true, margin: 0 });
-    footer(s, 2);
+    footer(s);
     notes(s, "Read the quote. Point out how little was specified. The RTX Remix correction is the first example of the AI pushing back rather than guessing.");
   }
 
@@ -139,7 +139,7 @@ async function icon(Comp, colorHex, px = 256) {
       { text: "What shipped: ", options: { bold: true, color: C.gold } },
       { text: "a Vulkan renderer, a Doom WAD reader, a rules engine, a first-person combat sim with seven monster classes and four weapons, an OPL3 synthesizer for Doom's music, streamed Ogg soundtracks, gamepad support, player profiles, trophies, high scores, and display options. All from conversation.", options: { color: C.text } },
     ], { x: 0.5, y: 3.75, w: 9, h: 1.2, fontFace: BODY, fontSize: 13, valign: "top", isTextBox: true, margin: 0 });
-    footer(s, 3);
+    footer(s);
     notes(s, "Numbers come from git log and wc. Stress the test count: the AI wrote its own regression net as it went, not afterwards.");
   }
 
@@ -167,7 +167,7 @@ async function icon(Comp, colorHex, px = 256) {
       s.addText(h, { x: x + 0.9, y: y + 0.2, w: 1.5, h: 0.5, fontFace: HEAD, fontSize: 14, bold: true, color: C.text, valign: "middle", isTextBox: true, margin: 0 });
       s.addText(d, { x: x + 0.2, y: y + 0.85, w: 2.5, h: 0.65, fontFace: BODY, fontSize: 11, color: C.muted, valign: "top", isTextBox: true, margin: 0 });
     });
-    footer(s, 4);
+    footer(s);
     notes(s, "Every feature request went through these six steps. The important habit is step 5: the AI does not declare something done until a run proves it.");
   }
 
@@ -205,7 +205,7 @@ async function icon(Comp, colorHex, px = 256) {
       "testDeterminism",
     ].map((t, i, a) => ({ text: t, options: { breakLine: i < a.length - 1, color: C.text } })),
       { x: 6.2, y: 1.7, w: 3.1, h: 3.1, fontFace: MONO, fontSize: 10.5, valign: "top", isTextBox: true, margin: 0, paraSpaceAfter: 3 });
-    footer(s, 5);
+    footer(s);
     notes(s, "The rules engine is the contract. Point at the test list: each name is a rule the user asked for, expressed as code that fails if the rule regresses.");
   }
 
@@ -227,7 +227,7 @@ async function icon(Comp, colorHex, px = 256) {
       { text: "Ten listed deviations from the spec, each explained", options: { bullet: true, color: C.text, fontSize: 12, breakLine: true, paraSpaceAfter: 3 } },
       { text: "Later the same pattern produced the OPL3 synthesizer.", options: { color: C.muted, fontSize: 12 } },
     ], { x: 5.3, y: 1.25, w: 4.2, h: 3.7, fontFace: BODY, valign: "top", isTextBox: true, margin: 0 });
-    footer(s, 6);
+    footer(s);
     notes(s, "Delegation works when the interface is fixed in writing before the work starts. The parent integrated the module without reading its internals.");
   }
 
@@ -249,8 +249,46 @@ async function icon(Comp, colorHex, px = 256) {
     s.addText("The board hinges over onto the floor; the player lands inside it.", { x: 0.5, y: 4.5, w: 4.4, h: 0.3, fontFace: BODY, fontSize: 10, color: C.muted, italic: true, isTextBox: true, margin: 0 });
     s.addText("Surviving raises the level; the collapse plays behind the card.", { x: 5.1, y: 4.5, w: 4.4, h: 0.3, fontFace: BODY, fontSize: 10, color: C.muted, italic: true, isTextBox: true, margin: 0 });
     s.addText("The first version put the player in front of a standing wall. Forty minutes later a one-line request (“rotate the play space”) turned it into the board tipping over, which needed per-instance rotation in the shader, a new coordinate mapping, and collision against the block grid.", { x: 0.5, y: 4.85, w: 9, h: 0.5, fontFace: BODY, fontSize: 10.5, color: C.text, isTextBox: true, margin: 0 });
-    footer(s, 7);
+    footer(s);
     notes(s, "The whole state machine existed 25 minutes after the first commit. The tip-over redesign shows how a small request can ripple through renderer, physics and camera, and still land the same hour.");
+  }
+
+
+  // 7b. Enemy tiers and weapons ------------------------------------------------------
+  {
+    const s = pres.addSlide();
+    bg(s);
+    kicker(s, "THE ROSTER");
+    title(s, "What you fight, and what you fight with");
+    const hdr = (t) => ({ text: t, options: { bold: true, color: C.gold, fill: { color: C.panel2 }, fontFace: HEAD, fontSize: 9.5, align: "left", valign: "middle" } });
+    const cell = (t, o = {}) => ({ text: t, options: { color: C.text, fontFace: BODY, fontSize: 9.5, valign: "middle", ...o } });
+    const enemies = [
+      ["Zombieman", "1", "20", "hitscan pistol", "11 s", "100"],
+      ["Imp", "2–3", "60", "fireball", "7.5 s", "200"],
+      ["Demon", "4–6", "150", "charges, bites", "5 s", "350"],
+      ["Cacodemon", "7–11", "400", "flies, fast fireball", "3.5 s", "600"],
+      ["Baron", "12–17", "1000", "green fireball", "2.5 s, 3×3", "1200"],
+      ["Cyberdemon", "18–24", "2200", "splash rockets", "2 s, 3×3", "2500"],
+      ["Spider Mastermind", "25+", "2600", "chaingun hitscan", "1.5 s, 3×3", "3000"],
+    ];
+    const erows = [[hdr("Class"), hdr("Red cluster"), hdr("HP"), hdr("Attack"), hdr("Eats cover every"), hdr("Bounty")]];
+    enemies.forEach((r, i) => erows.push(r.map((v, j) => cell(v, { fill: { color: i % 2 ? C.panel : C.bg }, bold: j === 0, color: j === 0 ? C.text : C.muted }))));
+    s.addText("Monster classes by red-cluster size", { x: 0.5, y: 1.1, w: 5, h: 0.28, fontFace: HEAD, fontSize: 12, bold: true, color: C.gold, isTextBox: true, margin: 0 });
+    s.addText("HP scales with level (×0.45 at level 1 up to ×2.5); a level cap limits spawns; a monster left alive absorbs blocks and grows a class.", { x: 4.2, y: 1.1, w: 5.3, h: 0.28, fontFace: BODY, fontSize: 9, color: C.muted, align: "right", valign: "middle", isTextBox: true, margin: 0 });
+    s.addTable(erows, { x: 0.5, y: 1.4, w: 9, colW: [1.7, 1.1, 0.8, 2.4, 2.0, 1.0], rowH: 0.25, border: { type: "solid", color: C.panel2, pt: 0.5 }, margin: 0.04 });
+    const weapons = [
+      ["Shotgun", "40", "0.75 s", "infinite", "×1.4 damage up close; always available"],
+      ["Chaingun", "12", "0.10 s", "60 / 200", "fast hitscan with slight spread"],
+      ["Rocket launcher", "110", "0.80 s", "4 / 30", "2.2 m splash that also blasts blocks (and you, if close)"],
+      ["Plasma rifle", "22", "0.12 s", "40 / 200", "bolts at 28 m/s"],
+    ];
+    const wrows = [[hdr("Weapon"), hdr("Damage"), hdr("Cycle"), hdr("Ammo / max"), hdr("Notes")]];
+    weapons.forEach((r, i) => wrows.push(r.map((v, j) => cell(v, { fill: { color: i % 2 ? C.panel : C.bg }, bold: j === 0, color: j === 0 ? C.text : C.muted }))));
+    s.addText("Weapons", { x: 0.5, y: 3.62, w: 2, h: 0.28, fontFace: HEAD, fontSize: 12, bold: true, color: C.gold, isTextBox: true, margin: 0 });
+    s.addText("Kills drop health, ammo and weapons; bigger classes drop more. A hidden BFG9000 wipes all red once per game.", { x: 2.5, y: 3.62, w: 7, h: 0.28, fontFace: BODY, fontSize: 9, color: C.muted, align: "right", valign: "middle", isTextBox: true, margin: 0 });
+    s.addTable(wrows, { x: 0.5, y: 3.92, w: 9, colW: [1.7, 0.9, 0.9, 1.3, 4.2], rowH: 0.23, border: { type: "solid", color: C.panel2, pt: 0.5 }, margin: 0.04 });
+    footer(s);
+    notes(s, "Every number here is a constant in one of two tables in fps_mode.cpp; the AI tuned them from bot runs (the first version had ten imps firing freely, which killed the bot in seconds) and from the user's feedback. Loot: stimpacks, medikits, ammo and weapons pop out of every kill; cacodemons and up always drop a medikit, barons and up usually a weapon. Secret: hold B, F and G for two seconds while stacking to fire the BFG9000 once per game.");
   }
 
   // 8. Verification ---------------------------------------------------------------------
@@ -286,7 +324,7 @@ async function icon(Comp, colorHex, px = 256) {
       "[app] trophy unlocked: RED LINE",
     ].map((t, i, a) => ({ text: t, options: { breakLine: i < a.length - 1, color: i % 3 === 0 ? C.text : C.muted } })),
       { x: 5.6, y: 1.75, w: 3.8, h: 3.1, fontFace: MONO, fontSize: 9.5, valign: "top", isTextBox: true, margin: 0, paraSpaceAfter: 2 });
-    footer(s, 8);
+    footer(s);
     notes(s, "This is the slide to dwell on. The AI cannot play the game, so it built ways to make the game prove itself: the bot completed the loop dozens of times during the day.");
   }
 
@@ -323,7 +361,7 @@ async function icon(Comp, colorHex, px = 256) {
       { text: "“red blocks break off pieces, that's not right” ", options: { italic: true, color: C.gold } },
       { text: "became a rewritten test, then an engine change, in one commit.", options: { color: C.text } },
     ], { x: 0.5, y: 4.15, w: 9, h: 0.8, fontFace: BODY, fontSize: 11.5, valign: "top", isTextBox: true, margin: 0 });
-    footer(s, 9);
+    footer(s);
     notes(s, "Walk the timeline quickly. The gaps between commits are the conversation: the user played, said what felt wrong, the AI changed it.");
   }
 
@@ -358,7 +396,7 @@ async function icon(Comp, colorHex, px = 256) {
       { text: "“it has to have a full surround before spawning, right? Unless it's the bottom row.” ", options: { italic: true, color: C.text } },
       { text: "The first version had been looser. The fix started with the cases above, and the engine was changed until they passed. The old, wrong behaviour can never come back silently.", options: { color: C.text } },
     ], { x: 5.5, y: 3.65, w: 4.0, h: 1.35, fontFace: BODY, fontSize: 11, valign: "top", isTextBox: true, margin: 0 });
-    footer(s, 10);
+    footer(s);
     notes(s, "This is the discipline to sell: the correction is encoded as a test with the exact edge cases the user described, then the code follows.");
   }
 
@@ -381,7 +419,7 @@ async function icon(Comp, colorHex, px = 256) {
       s.addText(h, { x: 1.3, y, w: 8.2, h: 0.3, fontFace: HEAD, fontSize: 13, bold: true, color: C.gold, isTextBox: true, margin: 0 });
       s.addText(d, { x: 1.3, y: y + 0.3, w: 8.2, h: 0.6, fontFace: BODY, fontSize: 11, color: C.text, valign: "top", isTextBox: true, margin: 0 });
     });
-    footer(s, 11);
+    footer(s);
     notes(s, "The point is not that the AI knows about OPL chips. It is that when the easy route (install a soundfont) needed sudo, it took the harder route that would work immediately, and told the user how to get the easy route too.");
   }
 
@@ -407,7 +445,7 @@ async function icon(Comp, colorHex, px = 256) {
       s.addText(d, { x: x + 0.2, y: y + 0.78, w: 4.0, h: 0.6, fontFace: BODY, fontSize: 10, color: C.muted, valign: "top", isTextBox: true, margin: 0 });
       s.addText("Fix: " + f, { x: x + 0.2, y: y + 1.35, w: 4.0, h: 0.25, fontFace: BODY, fontSize: 10, color: C.gold, isTextBox: true, margin: 0 });
     });
-    footer(s, 12);
+    footer(s);
     notes(s, "None of these were reported by the user. They were found because the AI's habit is to run the thing and read the exit code, not to assume.");
   }
 
@@ -432,7 +470,7 @@ async function icon(Comp, colorHex, px = 256) {
     });
     frame(s, SHOT("shot_options.png"), 6.1, 1.35, 3.4, 1.9125);
     s.addText("Options screen: music sets, controller settings, display modes, all persisted per player or per machine.", { x: 6.1, y: 3.35, w: 3.4, h: 0.55, fontFace: BODY, fontSize: 9.5, color: C.muted, italic: true, valign: "top", isTextBox: true, margin: 0 });
-    footer(s, 13);
+    footer(s);
     notes(s, "Trust comes from the AI distinguishing what it did, what it verified, and what it could not. Engineers should expect and demand that distinction.");
   }
 
@@ -465,7 +503,7 @@ async function icon(Comp, colorHex, px = 256) {
       s.addText(h, { x: 5.8, y, w: 1.0, h: 0.3, fontFace: MONO, fontSize: 12, bold: true, color: C.gold, isTextBox: true, margin: 0 });
       s.addText(d, { x: 6.8, y, w: 2.7, h: 0.62, fontFace: BODY, fontSize: 10.5, color: C.text, valign: "top", isTextBox: true, margin: 0 });
     });
-    footer(s, 14);
+    footer(s);
     notes(s, "Layering kept the AI's changes local: gameplay rules never touched the renderer, and the audio stack was added without changing the game loop.");
   }
 
@@ -492,7 +530,7 @@ async function icon(Comp, colorHex, px = 256) {
       s.addText(h, { x: x + 0.85, y: y + 0.15, w: 1.9, h: 0.55, fontFace: HEAD, fontSize: 12, bold: true, color: C.text, valign: "middle", isTextBox: true, margin: 0 });
       s.addText(d, { x: x + 0.2, y: y + 0.78, w: 2.5, h: 0.8, fontFace: BODY, fontSize: 10, color: C.muted, valign: "top", isTextBox: true, margin: 0 });
     });
-    footer(s, 15);
+    footer(s);
     notes(s, "Close on the practices, not the game. These six habits are what made the afternoon productive and what will transfer to real product work.");
   }
 
