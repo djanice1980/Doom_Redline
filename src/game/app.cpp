@@ -39,9 +39,13 @@ float smoothstep(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3.f - 2
 App::App(Options opts) : opts_(std::move(opts)) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
     Uint32 flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
-    if (opts_.fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
-    window_ = SDL_CreateWindow("REDLINE", opts_.width, opts_.height, flags);
+    loadDisplaySettings();
+    if (opts_.fullscreen) displayMode_ = 1;
+    if (opts_.width != 1600 || opts_.height != 900) { resW_ = opts_.width; resH_ = opts_.height; }
+    window_ = SDL_CreateWindow("REDLINE", resW_, resH_, flags);
     if (!window_) throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
+    buildResolutionList();
+    if (displayMode_ != 0) applyDisplay();
     ctx_ = std::make_unique<render::VkContext>(window_, opts_.preferIntegrated);
     renderer_ = std::make_unique<render::Renderer>(*ctx_);
 
@@ -499,6 +503,18 @@ void App::adjustOption(int dir) {
     case 3: padSens_ = std::clamp(padSens_ + 0.1f * static_cast<float>(dir), 0.3f, 3.f); break;
     case 4: padInvertY_ = !padInvertY_; break;
     case 5: padRumble_ = !padRumble_; if (padRumble_) rumble(0.5f, 0.5f, 150); break;
+    case 6: displayMode_ = (displayMode_ + 3 + dir) % 3; applyDisplay(); break;
+    case 7: {
+        if (resolutions_.empty()) break;
+        int idx = 0;
+        for (size_t i = 0; i < resolutions_.size(); ++i) if (resolutions_[i].first == resW_ && resolutions_[i].second == resH_) idx = static_cast<int>(i);
+        int n = static_cast<int>(resolutions_.size());
+        idx = (idx + n - dir) % n;   // list is largest-first, so "right" steps to a larger size
+        resW_ = resolutions_[static_cast<size_t>(idx)].first;
+        resH_ = resolutions_[static_cast<size_t>(idx)].second;
+        if (displayMode_ != 1) applyDisplay(); else saveDisplaySettings();
+        break;
+    }
     default: break;
     }
     saveSettings();
@@ -509,12 +525,12 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 7;   // 6 options + BACK
+        const int n = 9;   // 8 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 6) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 6) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 6) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 8) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 8) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 8) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
@@ -577,6 +593,105 @@ void App::beginLevelCard() {
     play("pickup_weapon", 0.8f, 0.9f);
     rumble(0.4f, 0.8f, 400);
     shakeT_ = 0.3f;
+}
+
+// --- display -----------------------------------------------------------------
+void App::loadDisplaySettings() {
+    char* pref = SDL_GetPrefPath("redline", "redline");
+    std::string base = pref ? pref : "";
+    if (pref) SDL_free(pref);
+    if (std::FILE* f = std::fopen((base + "display.txt").c_str(), "r")) {
+        char key[64], val[64];
+        while (std::fscanf(f, "%63[^=]=%63s\n", key, val) == 2) {
+            std::string k = key, v = val;
+            if (k == "mode") displayMode_ = std::clamp(std::atoi(v.c_str()), 0, 2);
+            else if (k == "width") resW_ = std::max(640, std::atoi(v.c_str()));
+            else if (k == "height") resH_ = std::max(360, std::atoi(v.c_str()));
+        }
+        std::fclose(f);
+    }
+}
+
+void App::saveDisplaySettings() const {
+    char* pref = SDL_GetPrefPath("redline", "redline");
+    std::string base = pref ? pref : "";
+    if (pref) SDL_free(pref);
+    if (std::FILE* f = std::fopen((base + "display.txt").c_str(), "w")) {
+        std::fprintf(f, "mode=%d\nwidth=%d\nheight=%d\n", displayMode_, resW_, resH_);
+        std::fclose(f);
+    }
+}
+
+const char* App::displayModeName() const {
+    switch (displayMode_) {
+    case 1: return "FULLSCREEN (BORDERLESS)";
+    case 2: return "FULLSCREEN (EXCLUSIVE)";
+    default: return "WINDOWED";
+    }
+}
+
+// Distinct sizes the display can do, largest first, plus common windowed
+// sizes that fit on the desktop.
+void App::buildResolutionList() {
+    resolutions_.clear();
+    SDL_DisplayID display = SDL_GetDisplayForWindow(window_);
+    if (!display) display = SDL_GetPrimaryDisplay();
+    int count = 0;
+    SDL_DisplayMode** modes = SDL_GetFullscreenDisplayModes(display, &count);
+    if (modes) {
+        for (int i = 0; i < count; ++i) {
+            std::pair<int, int> r{modes[i]->w, modes[i]->h};
+            if (r.first < 640 || r.second < 360) continue;
+            bool dup = false;
+            for (auto& e : resolutions_) dup = dup || e == r;
+            if (!dup) resolutions_.push_back(r);
+        }
+        SDL_free(modes);
+    }
+    const SDL_DisplayMode* desktop = SDL_GetDesktopDisplayMode(display);
+    const std::pair<int, int> common[] = {{1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3440, 1440}, {3840, 2160}};
+    for (auto r : common) {
+        if (desktop && (r.first > desktop->w || r.second > desktop->h)) continue;
+        bool dup = false;
+        for (auto& e : resolutions_) dup = dup || e == r;
+        if (!dup) resolutions_.push_back(r);
+    }
+    std::sort(resolutions_.begin(), resolutions_.end(), [](auto& a, auto& b) { return a.first != b.first ? a.first > b.first : a.second > b.second; });
+    bool have = false;
+    for (auto& e : resolutions_) have = have || (e.first == resW_ && e.second == resH_);
+    if (!have) resolutions_.insert(resolutions_.begin(), {resW_, resH_});
+}
+
+void App::applyDisplay() {
+    SDL_DisplayID display = SDL_GetDisplayForWindow(window_);
+    if (!display) display = SDL_GetPrimaryDisplay();
+    if (displayMode_ == 0) {
+        SDL_SetWindowFullscreen(window_, false);
+        SDL_SetWindowSize(window_, resW_, resH_);
+        SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+    } else if (displayMode_ == 1) {
+        SDL_SetWindowFullscreenMode(window_, nullptr);   // borderless at the desktop resolution
+        SDL_SetWindowFullscreen(window_, true);
+    } else {
+        // Exclusive: the display mode matching the chosen size, highest refresh rate.
+        SDL_DisplayMode chosen{};
+        bool found = false;
+        int count = 0;
+        SDL_DisplayMode** modes = SDL_GetFullscreenDisplayModes(display, &count);
+        if (modes) {
+            for (int i = 0; i < count; ++i)
+                if (modes[i]->w == resW_ && modes[i]->h == resH_ && (!found || modes[i]->refresh_rate > chosen.refresh_rate)) { chosen = *modes[i]; found = true; }
+            SDL_free(modes);
+        }
+        if (found) SDL_SetWindowFullscreenMode(window_, &chosen);
+        else SDL_SetWindowFullscreenMode(window_, nullptr);
+        SDL_SetWindowFullscreen(window_, true);
+        if (!found) std::fprintf(stderr, "[display] no exclusive mode at %dx%d; using borderless\n", resW_, resH_);
+    }
+    SDL_SyncWindow(window_);
+    if (ctx_) ctx_->requestResize();   // at startup the context is created after this and sizes itself from the window
+    std::fprintf(stderr, "[display] %s %dx%d\n", displayModeName(), resW_, resH_);
+    saveDisplaySettings();
 }
 
 void App::saveSettings() const {
@@ -790,6 +905,12 @@ void App::handleEvents() {
             SDL_Keycode k = e.key.key;
             if (k == SDLK_F12) {
                 renderer_->screenshot("redline-screenshot.png");
+                break;
+            }
+            if (k == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT) && !e.key.repeat) {
+                displayMode_ = displayMode_ == 0 ? 1 : 0;
+                applyDisplay();
+                announce(displayModeName(), glm::vec4(0.8f, 0.9f, 1.f, 1.f), 0.9f);
                 break;
             }
             if (screen_ != kScreenNone) {
@@ -1736,9 +1857,9 @@ void App::addHud() {
             text(W * 0.5f + 20.f, y, value, s, sel ? white : dim, 0);
         };
         if (screen_ == kScreenOptions) {
-            text(W * 0.5f, H * 0.16f, "OPTIONS", s * 2.f, white, 1);
-            float y = H * 0.30f;
-            char buf[32];
+            text(W * 0.5f, H * 0.10f, "OPTIONS", s * 2.f, white, 1);
+            float y = H * 0.22f;
+            char buf[80];
             row(y, "MUSIC", musicSetName(), screenIndex_ == 0); y += lh * 1.4f;
             std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(music_.volume() * 100.f)));
             row(y, "MUSIC VOLUME", buf, screenIndex_ == 1); y += lh * 1.4f;
@@ -1746,9 +1867,12 @@ void App::addHud() {
             std::snprintf(buf, sizeof buf, "%.1f", padSens_);
             row(y, "STICK SENSITIVITY", buf, screenIndex_ == 3); y += lh * 1.4f;
             row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 4); y += lh * 1.4f;
-            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.8f;
-            text(W * 0.5f, y, screenIndex_ == 6 ? "> BACK <" : "BACK", s, screenIndex_ == 6 ? yellow : dim, 1);
-            text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   SAVED TO YOUR PROFILE", s * 0.7f, dim, 1);
+            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.4f;
+            row(y, "DISPLAY", displayModeName(), screenIndex_ == 6); y += lh * 1.4f;
+            std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
+            row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.8f;
+            text(W * 0.5f, y, screenIndex_ == 8 ? "> BACK <" : "BACK", s, screenIndex_ == 8 ? yellow : dim, 1);
+            text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
             text(W * 0.5f, H * 0.12f, "TROPHIES  " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()), s * 1.6f, yellow, 1);
             const auto& all = trophyCatalogue();

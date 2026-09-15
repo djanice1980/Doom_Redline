@@ -112,6 +112,12 @@ private:
     void padButton(int button, bool down);
     void addScreens();
     void beginLevelCard();
+    // Display settings are per machine, not per player: <pref>/display.txt.
+    void loadDisplaySettings();
+    void saveDisplaySettings() const;
+    void applyDisplay();
+    void buildResolutionList();
+    const char* displayModeName() const;
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45) { play(name.c_str(), gain, pitch, minIntervalMs); }
 
     Options opts_;
@@ -143,6 +149,10 @@ private:
     SDL_Gamepad* pad_ = nullptr;
     std::string padName_;
     struct { bool left = false, right = false, down = false, fire = false, run = false; } padHeld_;
+    // Display: 0 windowed, 1 borderless fullscreen, 2 exclusive fullscreen.
+    int displayMode_ = 0;
+    int resW_ = 1600, resH_ = 900;
+    std::vector<std::pair<int, int>> resolutions_;
     // Level-up card and per-game stats for trophies.
     float levelCardT_ = 99.f;
     struct { int level = 0; int kills = 0; int blocks = 0; float seconds = 0.f; float damage = 0.f; int score = 0; } levelCard_;

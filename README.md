@@ -116,6 +116,15 @@ Surviving a fight brings up a level-up card: the new level, demons slain,
 blocks destroyed, fight time and damage taken. The collapse plays behind it
 and the next piece waits until the card is gone.
 
+## Display
+
+OPTIONS has DISPLAY (windowed, borderless fullscreen at the desktop
+resolution, or exclusive fullscreen at a chosen mode) and RESOLUTION (the
+sizes your monitor supports plus common windowed sizes). Changes apply at
+once and are remembered per machine in `display.txt` next to the profiles;
+Alt+Enter toggles windowed and borderless fullscreen anywhere. `--fullscreen`
+and `--size WxH` still work for a single run.
+
 ## Gamepad
 
 Plug in any controller SDL recognises (Xbox, PlayStation, Switch Pro, most
