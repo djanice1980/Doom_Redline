@@ -8,3 +8,5 @@ wads/
 # The build-story deck is a side project, kept locally only
 docs/*.pptx
 tools/build_deck.js
+
+tools/shots/
