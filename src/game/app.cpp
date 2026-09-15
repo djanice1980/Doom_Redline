@@ -2049,10 +2049,17 @@ void App::addHud() {
         std::string hp = "HEALTH " + std::to_string(static_cast<int>(std::ceil(fps_.health()))) + "%";
         if (fps_.shield() > 0.f) hp += "  ARMOR " + std::to_string(static_cast<int>(std::ceil(fps_.shield())));
         text(24.f, hy, hp, s, fps_.health() < 30.f ? red : (fps_.health() > 100.f ? glm::vec4(0.6f, 0.9f, 1.f, 1.f) : white));
-        if (fps_.invulnerable()) {
-            float f = 0.5f + 0.5f * std::sin(time_ * 8.f);
+        if (fps_.invulnerable() && mode_ == Mode::Fps) {
+            float left = fps_.invulnLeft();
+            float total = std::max(1.f, game_->rules().invulnSeconds);
+            float f = 0.5f + 0.5f * std::sin(time_ * (left < 3.f ? 14.f : 8.f));   // flashes faster as it runs out
             panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.95f, 0.6f, 0.10f + 0.06f * f));
-            text(W * 0.5f, H * 0.12f, "INVULNERABLE " + std::to_string(static_cast<int>(std::ceil(fps_.invulnLeft()))), s * 1.1f, glm::vec4(1.f, 0.95f, 0.5f, 0.8f + 0.2f * f), 1);
+            char buf[48];
+            std::snprintf(buf, sizeof buf, "INVULNERABLE  %.1f", left);
+            text(W * 0.5f, H * 0.12f, buf, s * 1.3f, glm::vec4(1.f, 0.95f, 0.5f, 0.8f + 0.2f * f), 1);
+            float bw = W * 0.3f, bh = lh * 0.45f, bx = W * 0.5f - bw * 0.5f, by = H * 0.12f + lh * 1.5f;
+            panel(bx - 2.f, by - 2.f, bw + 4.f, bh + 4.f, glm::vec4(0.f, 0.f, 0.f, 0.6f));
+            panel(bx, by, bw * std::clamp(left / total, 0.f, 1.f), bh, left < 3.f ? glm::vec4(1.f, 0.55f, 0.2f, 0.95f) : glm::vec4(1.f, 0.9f, 0.4f, 0.95f));
         }
         text(W * 0.5f, hy, "DEMONS " + std::to_string(fps_.enemiesLeft()) + "/" + std::to_string(fps_.totalEnemies()), s, yellow, 1);
         text(W - 24.f, hy, "LEVEL " + std::to_string(game_->level()) + "   SCORE " + std::to_string(game_->score()), s, white, 2);
@@ -2079,6 +2086,13 @@ void App::addHud() {
             text(W * 0.5f, H * 0.38f, std::to_string(std::max(1, n)), s * 4.f * pop, glm::vec4(1.f, 0.25f, 0.2f, 1.f), 1);
             text(W * 0.5f, H * 0.62f, "MOUSE LOOK  WASD MOVE  SHIFT RUN  CLICK FIRE  1-4/WHEEL WEAPONS", s * 0.8f, dim, 1);
             text(W * 0.5f, H * 0.62f + lh * 1.2f, "DEMONS EAT YOUR COVER. LEAVE ONE ALIVE TOO LONG AND IT GROWS.", s * 0.7f, dim, 1);
+            if (fps_.invulnerable()) {
+                float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
+                text(W * 0.5f, H * 0.50f, "YOU ARE INVULNERABLE FOR THE FIRST " + std::to_string(static_cast<int>(std::ceil(fps_.invulnLeft()))) + " SECONDS", s * 1.1f, glm::vec4(1.f, 0.95f, 0.5f, 0.8f + 0.2f * f), 1);
+                text(W * 0.5f, H * 0.50f + lh * 1.2f, "THE TIMER STARTS WHEN THE FIGHT DOES - GO ON THE ATTACK", s * 0.75f, glm::vec4(1.f, 0.95f, 0.7f, 0.9f), 1);
+            } else if (lastInvulnChance_ > 0.f) {
+                text(W * 0.5f, H * 0.50f, "INVULNERABILITY ROLL FAILED (" + std::to_string(static_cast<int>(lastInvulnChance_ * 100.f)) + "%) - NO SHIELD THIS TIME", s * 0.85f, glm::vec4(1.f, 0.6f, 0.4f, 0.9f), 1);
+            }
         }
         if (mode_ == Mode::Fps && fps_.elapsed() < 0.7f) {
             float f = 1.f - fps_.elapsed() / 0.7f;
