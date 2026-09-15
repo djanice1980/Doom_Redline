@@ -226,6 +226,41 @@ the schema is written:
   gameplay numbers; the account deletion path wipes the encrypted rows and
   the blind index together.
 
+### In-game leaderboard screen and rankings (idea, 2026-09-15)
+
+Once submissions work, the title screen gets a **LEADERBOARD** item (the
+local cross-profile table stays as it is). One screen, tabs cycled with
+Left/Right, data fetched on open and cached in the save folder with a
+"fetched 3 minutes ago" line so it also works offline:
+
+- **GLOBAL** top 100 by score, your own row pinned at the bottom with your
+  absolute rank even when you are 4,000th.
+- **THIS WEEK / THIS MONTH** the same table over a rolling window, so new
+  players can be on a board that is not owned by day-one records.
+- **BOARDS** other single numbers worth ranking: most fights survived in
+  one run, highest level reached, most demons slain in one run, fastest to
+  level 10, longest chain, blocks destroyed. Each is a Postgres view.
+- **PLAYERS** everyone who has opted in, with trophy count, play time, and
+  the machine split (controller versus keyboard percentage) that section 6
+  collects.
+
+Ranking scheme, so a player has one standing rather than a pile of tables:
+
+- **Rating** = best run score (60 %) + median of the last ten runs (40 %),
+  so one lucky run does not define a player and a consistent one is
+  rewarded. Recomputed nightly.
+- **Rank tiers**, named after the game's own ladder and awarded by rating
+  percentile: ZOMBIE (bottom 40 %), IMP (to 60 %), DEMON (to 75 %),
+  CACODEMON (to 85 %), BARON (to 93 %), CYBERDEMON (to 98 %), SPIDER
+  MASTERMIND (top 2 %), and DOOM SLAYER for the current #1 alone. The tier
+  shows next to the name everywhere: leaderboard, players list, title status
+  strip, and as a small badge on the game-over screen when it changes
+  ("PROMOTED: BARON"). Promotion and demotion are events worth a sound.
+- **Verified badge** for runs whose block phase replayed clean (section 5);
+  an unverified-only filter for the sceptics.
+- **Seasons** later, if there is a player base: a quarterly reset of the
+  windowed boards with the season's #1 getting a permanent trophy.
+
 ## 8. Order of work when you pick this up
 
 1. Clean-ups in section 1, push, tag `v0.1.0`, and get the release workflow
