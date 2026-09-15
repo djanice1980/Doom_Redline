@@ -7,7 +7,18 @@ const fa = require("react-icons/fa");
 const path = require("path");
 
 const REPO = "/home/davidj/Claude Data/redline";
-const SHOT = (n) => path.join(REPO, "build", n);
+const fs = require("fs");
+// Screenshots are 1600x900 PNGs (3-5 MB each); embed 1280-wide JPEGs instead so the deck stays small.
+const SHOT_DIR = path.join(__dirname, "shots");
+fs.mkdirSync(SHOT_DIR, { recursive: true });
+const SHOT = (n) => path.join(SHOT_DIR, n.replace(/\.png$/, ".jpg"));
+async function prepareShots() {
+  const src = path.join(REPO, "build");
+  for (const f of fs.readdirSync(src)) {
+    if (!f.endsWith(".png")) continue;
+    await sharp(path.join(src, f)).resize({ width: 1280 }).jpeg({ quality: 82 }).toFile(SHOT(f));
+  }
+}
 
 // Palette: near-black ground, blood red, brass gold, bone text.
 const C = {
@@ -25,6 +36,7 @@ async function icon(Comp, colorHex, px = 256) {
 }
 
 (async () => {
+  await prepareShots();
   const pres = new pptxgen();
   pres.layout = "LAYOUT_16x9"; // 10 x 5.625
   pres.author = "David Janice";
