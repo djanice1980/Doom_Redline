@@ -46,7 +46,9 @@ if(REDLINE_BUILD_GAME)
   # Compile GLSL -> SPIR-V -> embedded C++ arrays.
   set(SHADER_SOURCES
       shaders/cube.vert shaders/cube.frag
-      shaders/quad.vert shaders/quad.frag)
+      shaders/quad.vert shaders/quad.frag
+      shaders/shadow_cube.vert shaders/shadow_quad.vert shaders/shadow_quad.frag
+      shaders/mesh.vert shaders/mesh.frag shaders/shadow_mesh.vert)
   set(SHADER_HEADERS)
   foreach(src ${SHADER_SOURCES})
     get_filename_component(name ${src} NAME)
@@ -80,6 +82,9 @@ if(REDLINE_BUILD_GAME)
       src/game/fps_mode.cpp
       src/game/highscores.cpp
       src/game/trophies.cpp
+      src/game/ambient.cpp
+      src/game/kvx.cpp
+      src/game/voxels.cpp
       src/audio/audio.cpp
       src/audio/opl3.cpp
       src/audio/opl_driver.cpp
@@ -120,6 +125,12 @@ if(REDLINE_BUILD_GAME)
     add_executable(music_test tests/music_test.cpp src/audio/opl3.cpp src/audio/opl_driver.cpp src/audio/genmidi.cpp src/audio/mus.cpp)
     target_include_directories(music_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
     add_test(NAME music_test COMMAND music_test)
+  endif()
+  if(REDLINE_BUILD_TESTS)
+    add_executable(kvx_test tests/kvx_test.cpp src/game/kvx.cpp)
+    target_include_directories(kvx_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(kvx_test PRIVATE glm::glm)
+    add_test(NAME kvx_test COMMAND kvx_test)
   endif()
   add_executable(musrender tools/musrender.cpp src/audio/opl3.cpp src/audio/opl_driver.cpp src/audio/genmidi.cpp src/audio/mus.cpp)
   target_include_directories(musrender PRIVATE ${CMAKE_SOURCE_DIR}/src)

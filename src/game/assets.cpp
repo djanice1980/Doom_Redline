@@ -136,6 +136,10 @@ void Assets::loadProcedural(audio::Audio& audio) {
         pickups[k].mirrored.push_back(false);
     }
     anim(explosion, "explosion", 5, 14.f, [](int i) { return proc::explosionFrame(i, 64); });
+    anim(torchRed, "fireball", 1, 1.f, [](int) { return proc::fireball(16); });
+    torchBlue = torchGreen = torchRed;
+    anim(candelabra, "fireball", 1, 1.f, [](int) { return proc::fireball(16); });
+    lamp = barrel = candelabra;
     for (int p = 0; p < kProjectileTypes; ++p) {
         anim(projectile[p], "fireball", 1, 1.f, [](int) { return proc::fireball(16); });
         anim(projectileHit[p], "fireball_hit", 3, 14.f, [](int i) { return proc::explosionFrame(i, 32); });
@@ -280,6 +284,13 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     const char* pickupSprites[kPickupArt] = {"STIM", "MEDI", "CLIP", "ROCK", "CELL", "MGUN", "LAUN", "PLAS"};
     for (int k = 0; k < kPickupArt; ++k) ok &= addSprite(pickups[k], pickupSprites[k], "A", 1.f);
     ok &= addSprite(explosion, "MISL", "BCD", 12.f);
+    // Decor (optional: a missing lump only loses that prop).
+    addSprite(torchRed, "TRED", "ABCD", 8.f);
+    addSprite(torchBlue, "TBLU", "ABCD", 8.f);
+    addSprite(torchGreen, "TGRN", "ABCD", 8.f);
+    addSprite(candelabra, "CBRA", "A", 1.f);
+    addSprite(lamp, "COLU", "A", 1.f);
+    addSprite(barrel, "BAR1", "AB", 4.f);
     const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7", "MISL", "PLSS"};
     const char* flight[kProjectileTypes] = {"AB", "AB", "AB", "A", "AB"};
     for (int p = 0; p < kProjectileTypes; ++p) ok &= addSprite(projectile[p], balls[p], flight[p], 8.f);

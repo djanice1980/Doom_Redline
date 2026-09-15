@@ -33,7 +33,7 @@ const WeaponDef kWeapons[kWeaponCount] = {
     {"SHOTGUN",        0.75f, 40.f,  false, -1,           0.f,   0.f,  0,   0,   0.f},
     {"CHAINGUN",       0.10f, 12.f,  false, -1,           0.f,   0.f,  60,  200, 0.03f},
     {"ROCKET LAUNCHER",0.80f, 110.f, true,  kProjRocket,  22.f,  2.2f, 4,   30,  0.f},
-    {"PLASMA RIFLE",   0.12f, 22.f,  true,  kProjPlasma,  28.f,  0.f,  40,  200, 0.01f},
+    {"PLASMA RIFLE",   0.085f, 20.f, true,  kProjPlasma,  32.f,  0.f,  40,  200, 0.012f},
 };
 
 int tierForRegion(int size) {
@@ -645,6 +645,11 @@ void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     e.state = Enemy::State::Idle;
     e.stateT = 0.f;
     push(FpsEvent::Type::Absorb, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, static_cast<int>(food.size()));
+}
+
+void FpsMode::giveArsenal(int weapon) {
+    for (int i = 0; i < kWeaponCount; ++i) { slots_[i].owned = true; slots_[i].ammo = weaponDef(i).maxAmmo; }
+    weapon_ = std::clamp(weapon, 0, kWeaponCount - 1);
 }
 
 void FpsMode::applyPickup(const Pickup& p) {

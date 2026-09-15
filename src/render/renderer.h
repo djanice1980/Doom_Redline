@@ -12,11 +12,13 @@
 #include <glm/glm.hpp>
 
 #include "core/image.h"
+#include "render/mesh_types.h"
 #include "render/vk_context.h"
 
 namespace rl::render {
 
-constexpr int kMaxLights = 16;
+constexpr int kMaxLights = 32;
+constexpr uint32_t kShadowMapSize = 2048;
 
 struct CubeInstance {
     glm::vec4 posScale;   // xyz centre, w uniform scale
@@ -54,6 +56,10 @@ struct FrameParams {
     glm::vec3 fogColor{0.f};
     glm::vec3 clearColor{0.02f, 0.02f, 0.04f};
     std::vector<PointLight> lights;
+    // Sun shadow map: an orthographic box of half-size shadowRadius centred on shadowCenter, looking along -sunDir.
+    glm::vec3 shadowCenter{0.f, 8.f, 10.f};
+    float shadowRadius = 26.f;
+    float shadowStrength = 0.85f;   // 0 = no shadows
 };
 
 class Renderer {
@@ -65,11 +71,16 @@ public:
 
     void setAtlas(const Image& atlas);
 
+    // Static meshes (voxel models): uploaded once, drawn by id with a model matrix.
+    uint32_t createMesh(std::span<const MeshVertex> verts, std::span<const uint32_t> indices);
+    void destroyMesh(uint32_t id);
+
     // Renders one frame. Returns false if the frame was skipped (swapchain rebuild).
     bool render(const FrameParams& params,
                 std::span<const CubeInstance> cubes,
                 std::span<const QuadInstance> worldQuads,
-                std::span<const QuadInstance> screenQuads);
+                std::span<const QuadInstance> screenQuads,
+                std::span<const MeshInstance> meshes = {});
 
     // Writes the most recently presented frame to a PNG (blocks the GPU briefly).
     bool screenshot(const std::string& path);
@@ -89,8 +100,16 @@ private:
     VkPipelineLayout pipeLayout_ = VK_NULL_HANDLE;
     VkPipeline cubePipe_ = VK_NULL_HANDLE;
     VkPipeline quadPipe_ = VK_NULL_HANDLE;
+    VkPipeline shadowCubePipe_ = VK_NULL_HANDLE;
+    VkPipeline shadowQuadPipe_ = VK_NULL_HANDLE;
+    VkPipeline meshPipe_ = VK_NULL_HANDLE;
+    VkPipeline shadowMeshPipe_ = VK_NULL_HANDLE;
+    struct MeshRes { Buffer vb, ib; uint32_t indexCount = 0; bool alive = false; };
+    std::vector<MeshRes> meshes_;
     VkSampler sampler_ = VK_NULL_HANDLE;
+    VkSampler shadowSampler_ = VK_NULL_HANDLE;
     Texture atlas_;
+    Texture shadowMap_;
     Buffer ubo_[kFramesInFlight];
     Buffer cubeInst_[kFramesInFlight];
     Buffer quadInst_[kFramesInFlight];

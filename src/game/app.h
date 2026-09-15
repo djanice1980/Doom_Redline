@@ -15,6 +15,8 @@
 #include "core/tetris.h"
 #include "game/assets.h"
 #include "game/fps_mode.h"
+#include "game/ambient.h"
+#include "game/voxels.h"
 #include "render/renderer.h"
 #include "render/vk_context.h"
 
@@ -38,6 +40,7 @@ struct Options {
     int level = 1;                     // starting level (scenarios)
     float absorbPeriod = 20.f;         // seconds before a monster may absorb blocks and grow
     bool god = false;                  // no damage to the player (testing)
+    int arsenal = -1;                  // testing: start the fight holding this weapon with everything owned
     std::string keys;                  // letters to hold from frame keysFrame (testing), e.g. "BFG"
     int keysFrame = 30;
     int keysHoldFrames = 150;          // released this many frames later
@@ -46,6 +49,8 @@ struct Options {
     float musicVolume = 0.45f;
     std::string musicSet;              // "classic" | "sc55" | "modern" (empty = saved preference, default modern when available)
     std::string profile;               // player profile to use (skips the name prompt)
+    std::optional<std::filesystem::path> voxelDir;   // KVX pack directory (default: auto-detect)
+    int voxels = -1;                   // -1 saved preference, 0 sprites, 1 voxel models
 };
 
 class App {
@@ -79,12 +84,18 @@ private:
     void buildScene();
     void buildEnvironment();
     void addBoard();
+    void addDecor();
+    void addAmbient();
+    void addHealthBars(float W, float H, float s, float lh);
+    bool projectToScreen(glm::vec3 world, float& x, float& y) const;
     void addFpsActors();
     void addHud();
     void addLights();
     void text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align = 0);
     void screenSprite(const std::string& key, float x, float y, float scale, glm::vec4 color, float anchorX, float anchorY, bool flip = false);
     void billboard(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip);
+    // A sprite frame as either its voxel model (when the pack is on and has one) or a billboard.
+    void actor(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip, float yaw, glm::vec3 emissive = {}, float emissiveStrength = 0.f);
     void cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive = {}, float emissiveStrength = 0.f, float flags = 0.f, float phase = 0.f, float rotX = 0.f);
     void panel(float x, float y, float w, float h, glm::vec4 color);
     void announce(const std::string& text, glm::vec4 color, float scale = 1.2f);
@@ -127,6 +138,8 @@ private:
     audio::Audio audio_;
     audio::Music music_;
     Assets assets_;
+    VoxelModels voxels_;
+    bool useVoxels_ = false;
     HighScores highScores_;
     Trophies trophies_;
     int lastRank_ = 0;
@@ -135,7 +148,7 @@ private:
     std::string settingsPath_;
     std::string profileName_;
     // Overlay screens on top of the title / pause menus.
-    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry };
+    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     std::string nameEntry_;
@@ -149,6 +162,10 @@ private:
     SDL_Gamepad* pad_ = nullptr;
     std::string padName_;
     struct { bool left = false, right = false, down = false, fire = false, run = false; } padHeld_;
+    // Decor props: sprite, feet position, light colour/radius (radius 0 = no light).
+    struct Prop { const SpriteAnim* anim; glm::vec3 pos; float px; glm::vec3 lightColor; float lightRadius; float lightHeight; float phase; };
+    std::vector<Prop> props_;
+    void buildProps();
     // Display: 0 windowed, 1 borderless fullscreen, 2 exclusive fullscreen.
     int displayMode_ = 0;
     int resW_ = 1600, resH_ = 900;
@@ -161,6 +178,7 @@ private:
 
     std::unique_ptr<core::Game> game_;
     FpsMode fps_;
+    Ambient ambient_;
     Mode mode_ = Mode::Title;
     Mode pausedFrom_ = Mode::Blocks;
     Menu menu_;
@@ -184,6 +202,7 @@ private:
     std::vector<render::CubeInstance> cubes_;
     std::vector<render::QuadInstance> worldQuads_;
     std::vector<render::QuadInstance> screenQuads_;
+    std::vector<render::MeshInstance> meshes_;
     render::FrameParams frame_;
     float muzzleLight_ = 0.f;
     float shakeT_ = 0.f;

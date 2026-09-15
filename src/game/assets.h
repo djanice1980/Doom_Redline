@@ -68,6 +68,8 @@ public:
     WeaponArt weapons[kWeaponArt];
     SpriteAnim pickups[kPickupArt];
     SpriteAnim explosion;
+    // Decor: animated torches (red/blue/green), candelabra, column lamp, barrel.
+    SpriteAnim torchRed, torchBlue, torchGreen, candelabra, lamp, barrel;
     std::string title;                      // optional big title graphic ("" if none)
 
     // Music: raw MUS lumps by name (D_E1M1 ...) and the GENMIDI OPL bank.

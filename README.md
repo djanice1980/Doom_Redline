@@ -63,6 +63,26 @@ the game; the WADs are never copied into the repo.
 `build/src/wad/wadinfo <file.wad>` prints what a WAD contains (sprites, textures,
 flats, font glyphs, sounds) and can dump individual lumps; `--help` lists flags.
 
+## Voxel models (optional)
+
+Monsters, pickups, projectiles and the arena decor can be drawn as 3D voxel
+models instead of sprites using Cheello's *Voxel Doom* pack (MIT licensed, not
+shipped here). Point the game at a folder of `.kvx` files (the pack's
+`VOXELDEF.txt` next to or inside it is read for angle offsets and scales):
+
+1. `--voxels-dir <dir>`
+2. `$REDLINE_VOXELS`
+3. `./voxels`
+4. `~/.local/share/redline/redline/voxels`
+5. `~/Downloads/doom-voxel-models/voxel-doom-kvx/kvx`
+
+When a pack is found, OPTIONS gains a MODELS row (SPRITES / VOXELS, default
+VOXELS, saved per player); `--voxels` and `--sprites` force it for one run.
+Each frame is greedy-meshed on first use (a cacodemon is about 20k quads, the
+spider mastermind 60k) and drawn with real normals, so the models cast and
+receive the sun shadow and pick up the torch light. Frames the pack lacks
+(the plasma bolt, for example) fall back to their sprites automatically.
+
 ## Music
 
 Doom's soundtrack plays from the WAD: the title fanfare and intermission
@@ -110,11 +130,23 @@ title screen; the last player is remembered.
 Trophies are one-time achievements (19 of them, from FIRST BLOOD to DOOM
 SLAYER! for a new #1 high score). Unlocking one pops a gold banner with a
 jingle; the full list with unlock dates is under TROPHIES on the title screen
-(or press T).
+(or press T). The pause menu shows the run so far (score, level, lines, red
+lines, your best and trophy count, demons left during a fight) and has its
+own TROPHIES entry; CREDITS on the title screen names the authors.
 
 Surviving a fight brings up a level-up card: the new level, demons slain,
 blocks destroyed, fight time and damage taken. The collapse plays behind it
 and the next piece waits until the card is gone.
+
+## The arena
+
+The board stands in a stone hall lit by a low sun that casts real shadows
+(a 2048x2048 shadow map with 3x3 filtering) and by flickering red, blue and
+green torches, candelabras, column lamps and barrels around the floor. While
+you stack blocks, a few monsters brawl on the floor either side of the board:
+they fight each other, respawn when killed, and vanish the moment a red line
+tips the board over. In the fight, the three toughest living demons get named
+health bars in the top-right corner and a bar over their heads.
 
 ## Display
 
@@ -263,14 +295,19 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --wad <file>        --no-wad           --size WxH        --fullscreen
 --igpu              --seed <n>         --scenario title|blocks|redline|fps
 --screenshot <png>  --frames <n>       --bot              --mute
---level <n>         --absorb <sec>     --god
+--level <n>         --absorb <sec>     --god              --arsenal <n>
+--keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
+--voxels-dir <dir>  --voxels           --sprites
 ```
 
 `--scenario redline` starts with a nearly complete red row plus a few red
 clusters of different sizes and drops the last red piece for you; `--scenario
 fps` skips straight to the fight (`--level N` sets the level for it; 8+ adds a
 cyberdemon-sized slab); `--scenario corrupt` starts with a tall holey stack so
-you can watch blocks turn. `--bot` makes
+you can watch blocks turn. `--god` and `--arsenal N` (every weapon owned,
+holding weapon N) help when testing a fight; `--keys` presses a chord at a
+frame (letters, `_` down, `^` up, `<` `>` left/right, `~` return, `` ` `` esc,
+space). `--bot` makes
 the player auto-aim and fire, which together with `--frames`/`--screenshot`
 gives a headless-ish smoke test of the whole loop:
 
@@ -288,10 +325,10 @@ Environment: `REDLINE_GPU=<index>` forces a Vulkan device (the log lists them),
 src/core      rules engine (tetris.h) and shared image/PNG helpers - no deps
 src/wad       Doom WAD reader: patches, sprites, flats, textures, fonts, DMX sounds
 src/render    Vulkan context, atlas packer, instanced renderer
-src/game      assets (WAD -> atlas/sounds), FPS simulation, app/modes/HUD
+src/game      assets (WAD -> atlas/sounds), FPS simulation, ambient brawlers, KVX voxel meshing, app/modes/HUD
 src/audio     SDL3 stream mixer, MUS sequencer, GENMIDI, OPL3 emulator, FluidSynth backend
 shaders       GLSL, compiled by glslc at build time and embedded
-tests         tetris_test, wad_test, opl_test, music_test
+tests         tetris_test, wad_test, opl_test, music_test, kvx_test
 tools         wadinfo, embed.cmake
 docs          design.md (rules and scene layout), remix.md (RTX Remix plan)
 ```

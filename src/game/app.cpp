@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <stdexcept>
 
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace rl::game {
@@ -56,6 +57,13 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (!assets_.load(wad, audio_)) throw std::runtime_error("asset build failed");
     renderer_->setAtlas(assets_.atlas().image());
     buildEnvironment();
+    buildProps();
+    {
+        std::string pref;
+        if (char* p = SDL_GetPrefPath("redline", "redline")) { pref = p; SDL_free(p); }
+        if (auto dir = VoxelModels::findPack(opts_.voxelDir, pref)) voxels_.init(*renderer_, *dir);
+        else std::fprintf(stderr, "[voxels] no Voxel Doom pack found (set REDLINE_VOXELS or --voxels-dir); sprites only\n");
+    }
 
     // Music: MUS tracks from the WAD through the OPL3 emulator with GENMIDI,
     // or FluidSynth when a soundfont is available.
@@ -128,6 +136,7 @@ void App::newGame() {
     uint32_t seed = opts_.seed ? opts_.seed : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xFFFFFFFFu);
     game_ = std::make_unique<core::Game>(seed);
     fps_ = FpsMode();
+    ambient_.reset(seed, 1);
     redLinesSurvived_ = 0;
     diedInFps_ = false;
     fightStats_ = {};
@@ -212,6 +221,7 @@ void App::applyScenario() {
             fps_.setAbsorbPeriod(opts_.absorbPeriod);
             fps_.setGodMode(opts_.god);
             fps_.begin(*game_, opts_.level);
+            if (opts_.arsenal >= 0) fps_.giveArsenal(opts_.arsenal);
             enterMode(Mode::Fps);
         }
     }
@@ -232,13 +242,14 @@ void App::enterMode(Mode m) {
     menu_ = {};
     switch (m) {
     case Mode::Title:
-        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "QUIT"};
+        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "CREDITS", "QUIT"};
         if (nameRequired_ && profileName_.empty() && screen_ == kScreenNone) openScreen(kScreenNameEntry);
         break;
     case Mode::Alert:
         play("redline", 1.f);
         break;
     case Mode::FlyIn:
+        ambient_.clear();   // the brawlers leave when the real fight starts
         flyFrom_ = blocksCamera();
         fps_.setAbsorbPeriod(opts_.absorbPeriod);
         fps_.setGodMode(opts_.god);
@@ -266,7 +277,7 @@ void App::enterMode(Mode m) {
         if (redLinesSurvived_ >= 5) trophy("survivor");
         break;
     case Mode::Blocks:
-        if (prev == Mode::FlyOut) { game_->resumeAfterRedLine(); beginLevelCard(); }
+        if (prev == Mode::FlyOut) { game_->resumeAfterRedLine(); beginLevelCard(); ambient_.reset(static_cast<uint32_t>(frameCount_), game_->level()); }
         break;
     case Mode::GameOver:
         play("gameover", 1.f);
@@ -279,7 +290,7 @@ void App::enterMode(Mode m) {
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
     case Mode::Paused:
-        menu_.items = {"RESUME", "OPTIONS", "RESTART", "QUIT"};
+        menu_.items = {"RESUME", "TROPHIES", "OPTIONS", "RESTART", "QUIT"};
         break;
     default:
         break;
@@ -301,6 +312,7 @@ void App::loadSettings() {
     padSens_ = 1.f;
     padInvertY_ = false;
     padRumble_ = true;
+    useVoxels_ = voxels_.available();   // default on when the pack is present
     music_.setEnabled(true);
     music_.setVolume(opts_.musicVolume);
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "r")) {
@@ -313,9 +325,11 @@ void App::loadSettings() {
             else if (k == "pad_sens") padSens_ = std::clamp(static_cast<float>(std::atof(v.c_str())), 0.25f, 3.f);
             else if (k == "pad_invert") padInvertY_ = v != "0";
             else if (k == "pad_rumble") padRumble_ = v != "0";
+            else if (k == "voxels") useVoxels_ = v != "0";
         }
         std::fclose(f);
     }
+    if (opts_.voxels >= 0) useVoxels_ = opts_.voxels == 1;   // --voxels / --sprites override the saved choice
 }
 
 std::string App::profilesRoot() const {
@@ -504,6 +518,7 @@ void App::adjustOption(int dir) {
     case 4: padInvertY_ = !padInvertY_; break;
     case 5: padRumble_ = !padRumble_; if (padRumble_) rumble(0.5f, 0.5f, 150); break;
     case 6: displayMode_ = (displayMode_ + 3 + dir) % 3; applyDisplay(); break;
+    case 8: if (voxels_.available()) useVoxels_ = !useVoxels_; break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -525,16 +540,17 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 9;   // 8 options + BACK
+        const int n = 10;   // 9 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 8) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 8) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 8) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 9) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 9) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 9) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
     case kScreenTrophies:
+    case kScreenCredits:
         if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_BACKSPACE || key == SDLK_SPACE) closeScreen();
         break;
     case kScreenProfiles: {
@@ -696,7 +712,9 @@ void App::applyDisplay() {
 
 void App::saveSettings() const {
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
-        std::fprintf(f, "music_set=%s\nmusic_on=%d\n", musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0);
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\n",
+                     musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0,
+                     music_.volume(), padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0);
         std::fclose(f);
     }
 }
@@ -805,11 +823,11 @@ int App::run() {
             for (char ch : opts_.keys) {
                 SDL_Event ev{};
                 ev.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
-                // Letters as themselves; '_' down, '^' up, '<' left, '>' right, '~' return, '`' escape.
+                // Letters as themselves; '_' down, '^' up, '<' left, '>' right, '~' return, '`' escape, ' ' space.
                 SDL_Keycode k = SDLK_UNKNOWN;
                 if (std::isalpha(static_cast<unsigned char>(ch))) k = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
                 else if (ch == '_') k = SDLK_DOWN; else if (ch == '^') k = SDLK_UP; else if (ch == '<') k = SDLK_LEFT; else if (ch == '>') k = SDLK_RIGHT;
-                else if (ch == '~') k = SDLK_RETURN; else if (ch == '`') k = SDLK_ESCAPE;
+                else if (ch == '~') k = SDLK_RETURN; else if (ch == '`') k = SDLK_ESCAPE; else if (ch == ' ') k = SDLK_SPACE;
                 if (k == SDLK_UNKNOWN) continue;
                 ev.key.key = k;
                 SDL_PushEvent(&ev);
@@ -819,7 +837,7 @@ int App::run() {
         update(dt);
         audio_.update();
         buildScene();
-        renderer_->render(frame_, cubes_, worldQuads_, screenQuads_);
+        renderer_->render(frame_, cubes_, worldQuads_, screenQuads_, meshes_);
         ++frameCount_;
 
         if (opts_.frames > 0 && frameCount_ >= opts_.frames) {
@@ -846,6 +864,7 @@ void App::menuSelect() {
     if (item == "QUIT") running_ = false;
     else if (item == "OPTIONS") openScreen(kScreenOptions);
     else if (item == "TROPHIES") openScreen(kScreenTrophies);
+    else if (item == "CREDITS") openScreen(kScreenCredits);
     else if (item.rfind("PLAYER: ", 0) == 0) openScreen(kScreenProfiles);
     else if (item == "START") { if (profileName_.empty()) openScreen(kScreenNameEntry); else enterMode(Mode::Blocks); }
     else if (item == "RESUME") enterMode(pausedFrom_);
@@ -1146,6 +1165,16 @@ void App::update(float dt) {
     pollGamepad(dt);
     if (levelCardT_ < kLevelCardTime) levelCardT_ += dt;
 
+    if (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::GameOver && !diedInFps_)) {
+        ambient_.update(dt);
+        for (const BrawlEvent& ev : ambient_.drainEvents()) {
+            const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
+            // Quiet, throttled: they are scenery, not the fight.
+            if (ev.type == BrawlEvent::Type::Attack) play(art.attackSound, 0.22f, 1.f, 300);
+            else if (ev.type == BrawlEvent::Type::Pain) play(art.painSound, 0.18f, 1.f, 300);
+            else play(art.deathSound, 0.28f, 1.f, 300);
+        }
+    }
     switch (mode_) {
     case Mode::Title:
         break;
@@ -1357,7 +1386,7 @@ void App::buildEnvironment() {
     for (int x = -halfW; x < halfW; ++x)
         for (int z = -2; z < depth; ++z) {
             push({x + 0.5f, -0.5f, z + 0.5f}, assets_.floor, glm::vec4(1.f));
-            push({x + 0.5f, height + 0.5f, z + 0.5f}, assets_.ceiling, glm::vec4(0.6f, 0.6f, 0.6f, 1.f));
+            // No ceiling: the sun has to reach the floor for the shadow map to mean anything.
         }
     // Back wall behind the board, side walls, front wall behind the overview camera.
     for (int y = 0; y < height; ++y) {
@@ -1368,6 +1397,135 @@ void App::buildEnvironment() {
         for (int z = -2; z < depth; ++z) {
             push({-halfW - 0.5f, y + 0.5f, z + 0.5f}, assets_.wall, glm::vec4(0.75f, 0.75f, 0.75f, 1.f));
             push({halfW + 0.5f, y + 0.5f, z + 0.5f}, assets_.wall, glm::vec4(0.75f, 0.75f, 0.75f, 1.f));
+        }
+    }
+}
+
+// Torches, lamps and barrels around the arena, each with its own flickering light.
+void App::buildProps() {
+    props_.clear();
+    auto prop = [&](const SpriteAnim& a, glm::vec3 pos, float px, glm::vec3 lc, float lr, float lh) {
+        if (a.empty()) return;
+        props_.push_back({&a, pos, px, lc, lr, lh, static_cast<float>(props_.size()) * 1.7f});
+    };
+    const glm::vec3 red(1.f, 0.42f, 0.12f), blue(0.35f, 0.5f, 1.f), green(0.4f, 1.f, 0.45f), warm(1.f, 0.75f, 0.45f), white(0.9f, 0.9f, 1.f);
+    // Red torches flank the board against the back wall.
+    prop(assets_.torchRed, {-7.5f, 0.f, -1.85f}, 0.031f, red, 7.f, 1.7f);
+    prop(assets_.torchRed, {7.5f, 0.f, -1.85f}, 0.031f, red, 7.f, 1.7f);
+    prop(assets_.torchRed, {-12.5f, 0.f, -1.85f}, 0.031f, red, 6.f, 1.7f);
+    prop(assets_.torchRed, {12.5f, 0.f, -1.85f}, 0.031f, red, 6.f, 1.7f);
+    // Blue torches along the side walls, green ones in the far corners.
+    for (float z : {4.f, 11.f, 18.f}) {
+        prop(assets_.torchBlue, {-14.85f, 0.f, z}, 0.031f, blue, 6.f, 1.7f);
+        prop(assets_.torchBlue, {14.85f, 0.f, z}, 0.031f, blue, 6.f, 1.7f);
+    }
+    prop(assets_.torchGreen, {-9.f, 0.f, 22.85f}, 0.031f, green, 6.f, 1.7f);
+    prop(assets_.torchGreen, {9.f, 0.f, 22.85f}, 0.031f, green, 6.f, 1.7f);
+    // Candelabras and column lamps on the floor either side of the board; barrels in the corners.
+    prop(assets_.candelabra, {-8.5f, 0.f, 2.5f}, 0.031f, warm, 5.f, 1.2f);
+    prop(assets_.candelabra, {8.5f, 0.f, 2.5f}, 0.031f, warm, 5.f, 1.2f);
+    prop(assets_.lamp, {-11.f, 0.f, 12.f}, 0.031f, white, 6.f, 1.4f);
+    prop(assets_.lamp, {11.f, 0.f, 12.f}, 0.031f, white, 6.f, 1.4f);
+    prop(assets_.barrel, {-13.5f, 0.f, 21.5f}, 0.031f, green, 2.5f, 0.6f);
+    prop(assets_.barrel, {13.8f, 0.f, 21.f}, 0.031f, green, 2.5f, 0.6f);
+    prop(assets_.barrel, {-14.f, 0.f, -0.5f}, 0.031f, green, 2.5f, 0.6f);
+    prop(assets_.barrel, {14.f, 0.f, 0.f}, 0.031f, green, 2.5f, 0.6f);
+}
+
+void App::addDecor() {
+    for (const Prop& p : props_) {
+        bool flip = false;
+        const std::string& key = animFrame(*p.anim, time_ + p.phase, true, &flip);
+        if (!key.empty()) actor(key, p.pos, p.px, glm::vec4(1.f), true, flip, 0.f);
+    }
+}
+
+// The brawlers beside the board, drawn like enemies.
+void App::addAmbient() {
+    for (const Brawler& b : ambient_.brawlers()) {
+        const EnemyArt& art = assets_.enemies[std::clamp(b.tier, 0, kEnemyTiers - 1)];
+        const SpriteAnim* anim = &art.walk;
+        bool loop = true;
+        float t = b.animT;
+        glm::vec4 tint = art.tint;
+        switch (b.state) {
+        case Brawler::State::Emerging: t = std::max(0.f, b.stateT); break;
+        case Brawler::State::Idle: break;
+        case Brawler::State::Attack: anim = &art.attack; loop = false; t = b.stateT; break;
+        case Brawler::State::Pain: anim = &art.pain; loop = false; t = b.stateT; tint *= glm::vec4(1.f, 0.7f, 0.7f, 1.f); break;
+        case Brawler::State::Dying: anim = &art.death; loop = false; t = b.stateT; break;
+        case Brawler::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
+        }
+        float scale = 1.f;
+        if (b.state == Brawler::State::Dead) {
+            float life = 1.6f, fadeStart = life - 0.35f;
+            if (b.stateT >= life) continue;
+            if (b.stateT > fadeStart) { float k = 1.f - (b.stateT - fadeStart) / 0.35f; scale = 0.15f + 0.85f * k; tint *= glm::vec4(k, k, k, 1.f); }
+        }
+        bool flip = false;
+        const std::string& key = animFrame(*anim, t, loop, &flip);
+        // Face the opponent: mirror when it is to the left.
+        if (b.facingLeft) flip = !flip;
+        float yaw = b.facingLeft ? -glm::half_pi<float>() : glm::half_pi<float>();
+        if (b.target >= 0 && b.target < static_cast<int>(ambient_.brawlers().size())) {
+            glm::vec3 d = ambient_.brawlers()[static_cast<size_t>(b.target)].pos - b.pos;
+            if (std::fabs(d.x) + std::fabs(d.z) > 1e-3f) yaw = std::atan2(d.x, d.z);
+        }
+        if (!key.empty()) actor(key, b.pos, art.metresPerPixel * scale, tint, true, flip, yaw);
+    }
+    for (const BrawlProjectile& p : ambient_.projectiles()) {
+        bool flip = false;
+        const SpriteAnim& anim = assets_.projectile[std::clamp(p.type, 0, kProjectileTypes - 1)];
+        const std::string& key = animFrame(anim, p.animT, true, &flip);
+        if (!key.empty()) actor(key, p.pos - glm::vec3(0.f, 0.3f, 0.f), 0.031f, glm::vec4(1.f), false, flip, std::atan2(p.vel.x, p.vel.z), glm::vec3(1.f, 0.8f, 0.5f), 0.4f);
+    }
+    for (const BrawlBlast& bl : ambient_.blasts()) {
+        const SpriteAnim& anim = assets_.projectileHit[std::clamp(bl.hitType, 0, kProjectileTypes - 1)];
+        int n = static_cast<int>(anim.frames.size());
+        if (n == 0) continue;
+        int i = std::clamp(static_cast<int>(bl.t / bl.duration * n), 0, n - 1);
+        actor(anim.frames[static_cast<size_t>(i)], bl.pos - glm::vec3(0.f, 0.2f, 0.f), 0.031f * 1.2f, glm::vec4(1.f), false, anim.mirrored[static_cast<size_t>(i)], 0.f, glm::vec3(1.f, 0.8f, 0.5f), 0.4f);
+    }
+}
+
+bool App::projectToScreen(glm::vec3 world, float& x, float& y) const {
+    glm::vec4 clip = frame_.proj * frame_.view * glm::vec4(world, 1.f);
+    if (clip.w <= 0.05f) return false;
+    glm::vec3 ndc = glm::vec3(clip) / clip.w;
+    VkExtent2D ext = renderer_->extent();
+    x = (ndc.x * 0.5f + 0.5f) * static_cast<float>(ext.width);
+    y = (1.f - (ndc.y * 0.5f + 0.5f)) * static_cast<float>(ext.height);   // +Y up in NDC (negative viewport), top-left screen origin
+    return ndc.x > -1.2f && ndc.x < 1.2f && ndc.y > -1.2f && ndc.y < 1.2f;
+}
+
+// Health bars for the three toughest living monsters: a list in the corner and a bar over each head.
+void App::addHealthBars(float W, float H, float s, float lh) {
+    (void)H;
+    std::vector<const Enemy*> top;
+    for (const Enemy& e : fps_.enemies()) if (e.alive()) top.push_back(&e);
+    std::sort(top.begin(), top.end(), [](const Enemy* a, const Enemy* b) { return a->tier != b->tier ? a->tier > b->tier : a->maxHp > b->maxHp; });
+    if (top.size() > 3) top.resize(3);
+    const glm::vec4 dim(0.8f, 0.8f, 0.8f, 1.f);
+    float y = 24.f;
+    for (size_t i = 0; i < top.size(); ++i) {
+        const Enemy& e = *top[i];
+        const EnemyArt& art = assets_.enemies[std::clamp(e.tier, 0, kEnemyTiers - 1)];
+        float frac = std::clamp(e.hp / std::max(1.f, e.maxHp), 0.f, 1.f);
+        glm::vec4 col = frac > 0.5f ? glm::vec4(0.35f, 0.9f, 0.35f, 1.f) : frac > 0.25f ? glm::vec4(1.f, 0.8f, 0.2f, 1.f) : glm::vec4(1.f, 0.25f, 0.2f, 1.f);
+        float bw = 150.f * s * 0.5f, bh = 6.f * s * 0.5f;
+        // Corner list (right side, under the hints).
+        float lx = W - 24.f - bw;
+        text(W - 24.f, y, art.name + "  " + std::to_string(static_cast<int>(std::ceil(e.hp))), s * 0.7f, e.tier >= 4 ? glm::vec4(1.f, 0.85f, 0.3f, 1.f) : dim, 2);
+        panel(lx, y + lh * 0.75f, bw, bh, glm::vec4(0.f, 0.f, 0.f, 0.7f));
+        panel(lx, y + lh * 0.75f, bw * frac, bh, col);
+        y += lh * 1.35f;
+        // Floating bar over the head.
+        float sx, sy;
+        if (projectToScreen(e.pos + glm::vec3(0.f, e.height + 0.35f, 0.f), sx, sy)) {
+            float fw = 90.f * s * 0.5f, fh = 5.f * s * 0.5f;
+            panel(sx - fw * 0.5f - 1.f, sy - 1.f, fw + 2.f, fh + 2.f, glm::vec4(0.f, 0.f, 0.f, 0.75f));
+            panel(sx - fw * 0.5f, sy, fw * frac, fh, col);
+            text(sx, sy - lh * 0.65f, art.name, s * 0.55f, glm::vec4(1.f, 1.f, 1.f, 0.9f), 1);
         }
     }
 }
@@ -1476,6 +1634,26 @@ void App::billboard(const std::string& key, glm::vec3 feet, float metresPerPixel
     worldQuads_.push_back(q);
 }
 
+void App::actor(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip, float yaw, glm::vec3 emissive, float emissiveStrength) {
+    if (useVoxels_) {
+        if (const VoxelModel* m = voxels_.get(key)) {
+            // Heading (sin yaw, 0, cos yaw): the pack's default AngleOffset of 90 faces +Z here.
+            render::MeshInstance mi;
+            mi.mesh = m->mesh;
+            glm::mat4 M = glm::translate(glm::mat4(1.f), feet);
+            M = glm::rotate(M, yaw + glm::radians(m->angleOffset - 90.f), glm::vec3(0.f, 1.f, 0.f));
+            M = glm::scale(M, glm::vec3(metresPerPixel * m->scale));
+            M = glm::translate(M, -m->pivot);
+            mi.model = M;
+            mi.color = color;
+            mi.emissive = glm::vec4(emissive, emissiveStrength);
+            meshes_.push_back(mi);
+            return;
+        }
+    }
+    billboard(key, feet, metresPerPixel, color, lit, flip);
+}
+
 const std::string& App::animFrame(const SpriteAnim& a, float t, bool loop, bool* flip) const {
     static const std::string empty;
     if (a.empty()) return empty;
@@ -1520,19 +1698,21 @@ void App::addFpsActors() {
         if (e.growT > 0.f) tint = glm::mix(tint, glm::vec4(1.f, 1.f, 1.f, 1.f), e.growT);
         bool flip = false;
         const std::string& key = animFrame(*anim, t, loop, &flip);
-        if (!key.empty()) billboard(key, e.pos, art.metresPerPixel * corpseScale, tint, true, flip);
+        glm::vec3 toPlayer = fps_.eye() - e.pos;
+        float yaw = (std::fabs(toPlayer.x) + std::fabs(toPlayer.z) > 1e-3f) ? std::atan2(toPlayer.x, toPlayer.z) : 0.f;
+        if (!key.empty()) actor(key, e.pos, art.metresPerPixel * corpseScale, tint, true, flip, yaw);
     }
     for (const Projectile& p : fps_.projectiles()) {
         bool flip = false;
         const SpriteAnim& anim = assets_.projectile[std::clamp(p.type, 0, kProjectileTypes - 1)];
         const std::string& key = animFrame(anim, p.animT, true, &flip);
-        if (!key.empty()) billboard(key, p.pos - glm::vec3(0.f, 0.3f, 0.f), 0.031f, glm::vec4(1.f), false, flip);
+        if (!key.empty()) actor(key, p.pos - glm::vec3(0.f, 0.3f, 0.f), 0.031f, glm::vec4(1.f), false, flip, std::atan2(p.vel.x, p.vel.z), glm::vec3(1.f, 0.8f, 0.5f), 0.4f);
     }
     for (const Pickup& p : fps_.pickups()) {
         const SpriteAnim& anim = assets_.pickups[std::clamp(static_cast<int>(p.kind), 0, kPickupArt - 1)];
         if (anim.empty()) continue;
         float bob = p.landed ? 0.06f + 0.05f * std::sin(time_ * 4.f + p.pos.x) : 0.f;
-        billboard(anim.frames[0], p.pos + glm::vec3(0.f, bob, 0.f), 0.031f, glm::vec4(1.f), true, false);
+        actor(anim.frames[0], p.pos + glm::vec3(0.f, bob, 0.f), 0.031f, glm::vec4(1.f), true, false, time_ * 1.2f + p.pos.x);
     }
     for (const Explosion& ex : fps_.explosions()) {
         float t = ex.t / ex.duration;
@@ -1541,7 +1721,7 @@ void App::addFpsActors() {
         if (n == 0) continue;
         int i = std::clamp(static_cast<int>(t * n), 0, n - 1);
         float scale = ex.hitType < 0 ? 0.031f * (1.6f + 0.4f * ex.radius) : 0.031f * 1.2f;
-        billboard(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, ex.hitType < 0 ? 0.9f : 0.2f, 0.f), scale, glm::vec4(1.f), false, anim.mirrored[static_cast<size_t>(i)]);
+        actor(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, ex.hitType < 0 ? 0.9f : 0.2f, 0.f), scale, glm::vec4(1.f), false, anim.mirrored[static_cast<size_t>(i)], 0.f, glm::vec3(1.f, 0.7f, 0.4f), 0.6f);
     }
     for (const Debris& d : fps_.debris()) {
         float fade = std::min(1.f, d.ttl / 0.4f);
@@ -1555,6 +1735,12 @@ void App::addLights() {
     glm::vec3 cam = frame_.cameraPos;
     struct Cand { float score; render::PointLight l; };
     std::vector<Cand> cands;
+    // Decor lights with a torch flicker.
+    for (const Prop& p : props_) {
+        if (p.lightRadius <= 0.f) continue;
+        float f = 0.82f + 0.12f * std::sin(time_ * 9.f + p.phase) + 0.06f * std::sin(time_ * 23.f + p.phase * 3.f);
+        cands.push_back({glm::length(p.pos - cam) - 2.f, {p.pos + glm::vec3(0.f, p.lightHeight, 0.f), p.lightRadius * 1.3f, p.lightColor, 2.4f * f}});
+    }
     // Every red (or turning) cell glows.
     for (int r = 0; r < core::kBoardH; ++r)
         for (int c = 0; c < core::kBoardW; ++c)
@@ -1563,6 +1749,10 @@ void App::addLights() {
                 float pulse = 0.8f + 0.2f * std::sin(time_ * 6.f + c * 0.7f + r);
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});
             }
+    for (const BrawlProjectile& p : ambient_.projectiles())
+        cands.push_back({glm::length(p.pos - cam), {p.pos, 3.f, {1.f, 0.5f, 0.1f}, 1.f}});
+    for (const Brawler& b : ambient_.brawlers())
+        if (b.flashT > 0.f) cands.push_back({glm::length(b.pos - cam), {b.pos + glm::vec3(0.f, 1.2f, 0.f), 4.f, {1.f, 0.85f, 0.5f}, 2.f * b.flashT}});
     bool inFps = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_));
     if (inFps) {
         for (const Enemy& e : fps_.enemies()) {
@@ -1585,7 +1775,10 @@ void App::addLights() {
             if (p.landed) cands.push_back({glm::length(p.pos - cam), {p.pos + glm::vec3(0.f, 0.4f, 0.f), 1.5f, {0.6f, 0.8f, 1.f}, 0.5f}});
         for (const Enemy& e : fps_.enemies())
             if (e.growT > 0.f) cands.push_back({-120.f, {e.pos + glm::vec3(0.f, 1.f, 0.f), 6.f, {1.f, 0.3f, 0.3f}, 4.f * e.growT}});
-        if (muzzleLight_ > 0.f && mode_ == Mode::Fps) cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, {1.f, 0.8f, 0.4f}, 3.f * muzzleLight_}});
+        if (muzzleLight_ > 0.f && mode_ == Mode::Fps) {
+            glm::vec3 mc = fps_.currentWeapon() == kPlasmaRifle ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 0.8f, 0.4f);
+            cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, mc, 3.f * muzzleLight_}});
+        }
     }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
     for (size_t i = 0; i < cands.size() && i < static_cast<size_t>(render::kMaxLights); ++i) frame_.lights.push_back(cands[i].l);
@@ -1705,19 +1898,36 @@ void App::addHud() {
             float bob = std::sin(time_ * 6.f) * 3.f * gs * (moving ? 1.f : 0.15f);
             float recoil = fps_.recoil() * 18.f * gs;
             if (!gun.empty()) {
-                const render::AtlasRegion& r = assets_.region(gun);
-                float gx = W * 0.5f;
-                screenSprite(gun, gx, H + recoil + std::fabs(bob) - 2.f * gs, gs, wa.tint, 0.5f, 0.f, flip);
-                if (fps_.gunFiring() && fps_.gunAnimT() < 0.12f && !wa.flash.empty()) {
-                    const std::string& fl = animFrame(wa.flash, fps_.gunAnimT(), false);
-                    const render::AtlasRegion& fr = assets_.region(fl);
-                    screenSprite(fl, gx, H + recoil - (r.h - fr.h) * gs - 6.f * gs, gs, glm::vec4(1.f), 0.5f, 0.f);
+                // Doom draws weapon sprites with their own patch origin at (161, 32) of a 320x200 screen,
+                // and the muzzle flash with the same origin, so the flash lands on the barrel by itself.
+                auto originSprite = [&](const std::string& key, float dy, glm::vec4 tint, bool fl) {
+                    const render::AtlasRegion& r = assets_.region(key);
+                    float ax = r.w > 0 ? static_cast<float>(r.offsetX) / r.w : 0.5f;
+                    float ay = r.h > 0 ? 1.f - static_cast<float>(r.offsetY) / r.h : 1.f;
+                    // Doom: left edge = 1 - leftoffset in 320-wide space, so the origin sits 1px right of the frame's left edge.
+                    screenSprite(key, (W - 320.f * gs) * 0.5f + 1.f * gs, 32.f * gs + dy, gs, tint, ax, ay, fl);
+                };
+                float dy = recoil + std::fabs(bob) + (H - 200.f * gs) * 0.5f;   // centre the 320x200 frame vertically... anchored to the bottom
+                dy = recoil + std::fabs(bob) + (H - 200.f * gs);                 // keep the weapon at the bottom edge
+                if (assets_.usingWad()) {
+                    originSprite(gun, dy, wa.tint, flip);
+                    if (fps_.gunFiring() && fps_.gunAnimT() < (fps_.currentWeapon() == kPlasmaRifle ? 0.2f : 0.12f) && !wa.flash.empty())
+                        originSprite(animFrame(wa.flash, fps_.gunAnimT(), false), dy, glm::vec4(1.f), false);
+                } else {
+                    const render::AtlasRegion& r = assets_.region(gun);
+                    screenSprite(gun, W * 0.5f, H + recoil + std::fabs(bob) - 2.f * gs, gs, wa.tint, 0.5f, 0.f, flip);
+                    if (fps_.gunFiring() && fps_.gunAnimT() < 0.12f && !wa.flash.empty()) {
+                        const std::string& fl = animFrame(wa.flash, fps_.gunAnimT(), false);
+                        const render::AtlasRegion& fr = assets_.region(fl);
+                        screenSprite(fl, W * 0.5f, H + recoil - (r.h - fr.h) * gs - 6.f * gs, gs, glm::vec4(1.f), 0.5f, 0.f);
+                    }
                 }
             }
             screenSprite(assets_.crosshair, W * 0.5f, H * 0.5f, std::max(1.f, s * 0.7f), glm::vec4(1.f, 1.f, 1.f, 0.85f), 0.5f, 0.5f);
         }
         if (fps_.pickupFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 1.f, 0.6f, 0.18f * fps_.pickupFlash()));
         if (fps_.damageFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.f, 0.f, 0.45f * fps_.damageFlash()));
+        if (mode_ == Mode::Fps) addHealthBars(W, H, s, lh);
         panel(0.f, H - lh * 1.6f, W, lh * 1.6f, glm::vec4(0.f, 0.f, 0.f, 0.55f));
         float hy = H - lh * 1.3f;
         std::string hp = "HEALTH " + std::to_string(static_cast<int>(std::ceil(fps_.health()))) + "%";
@@ -1816,7 +2026,7 @@ void App::addHud() {
             text(W * 0.5f, y0 + static_cast<float>(i) * lh * 1.5f, label, s * 1.2f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1);
         }
     };
-    if (mode_ == Mode::Title) {
+    if (mode_ == Mode::Title && screen_ == kScreenNone) {   // overlay screens replace the title page entirely
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.55f));
         if (!assets_.title.empty()) screenSprite(assets_.title, W * 0.5f, H * 0.17f, s * 1.1f, glm::vec4(1.f, 0.6f, 0.6f, 1.f), 0.5f, 0.5f);
         text(W * 0.5f, H * 0.28f, "REDLINE", s * 2.8f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
@@ -1843,7 +2053,7 @@ void App::addHud() {
                 hy += lh * 0.75f;
             }
         }
-        text(W * 0.5f, H - lh * 1.5f, assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : "ASSETS: PROCEDURAL (NO WAD FOUND)", s * 0.65f, dim, 1);
+        text(W * 0.5f, H - lh * 1.5f, (assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : std::string("ASSETS: PROCEDURAL (NO WAD FOUND)")) + (useVoxels_ && voxels_.available() ? "  +  VOXEL DOOM" : ""), s * 0.65f, dim, 1);
         text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : (std::string(musicSetName()) + (musicSet_ == MusicSet::Classic ? std::string(" / ") + music_.backendName() : ""))) + "   M MUTE  N SET", s * 0.6f, dim, 2);
         text(24.f, H - lh * 1.5f, pad_ ? "GAMEPAD: " + padName_ : std::string("NO GAMEPAD"), s * 0.6f, dim);
         if (!profileName_.empty()) text(24.f, H - lh * 2.4f, "PLAYER " + profileName_ + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()) + "   (T)", s * 0.6f, dim);
@@ -1870,8 +2080,9 @@ void App::addHud() {
             row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.4f;
             row(y, "DISPLAY", displayModeName(), screenIndex_ == 6); y += lh * 1.4f;
             std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
-            row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.8f;
-            text(W * 0.5f, y, screenIndex_ == 8 ? "> BACK <" : "BACK", s, screenIndex_ == 8 ? yellow : dim, 1);
+            row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.4f;
+            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.8f;
+            text(W * 0.5f, y, screenIndex_ == 9 ? "> BACK <" : "BACK", s, screenIndex_ == 9 ? yellow : dim, 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
             text(W * 0.5f, H * 0.12f, "TROPHIES  " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()), s * 1.6f, yellow, 1);
@@ -1896,6 +2107,19 @@ void App::addHud() {
             bool selNew = screenIndex_ == static_cast<int>(profileList_.size());
             text(W * 0.5f, y, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1);
             text(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES AND SETTINGS", s * 0.7f, dim, 1);
+        } else if (screen_ == kScreenCredits) {
+            text(W * 0.5f, H * 0.12f, "REDLINE", s * 2.6f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
+            float y = H * 0.12f + lh * 3.2f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap) { text(W * 0.5f, y, t, s * sc, c, 1); y += lh * gap; };
+            line("CREATED BY", 0.75f, dim, 0.9f);
+            line("DAVID JANICE", 1.5f, yellow, 1.7f);
+            line("SPECIAL THANKS TO", 0.75f, dim, 0.9f);
+            line("JORDAN DRACOULIS", 1.3f, yellow, 1.7f);
+            line("WRITTEN WITH CLAUDE CODE  -  VULKAN, SDL3, C++20", 0.75f, white, 1.0f);
+            line("DOOM ART, SOUNDS AND MUSIC: ID SOFTWARE", 0.7f, dim, 0.85f);
+            line("MODERN SOUNDTRACK: ANDREW HULSHULT   SC-55 RECORDINGS: THE DOOM RERELEASE", 0.7f, dim, 0.85f);
+            line("LIBVORBIS, FLUIDSYNTH, GLM", 0.7f, dim, 1.4f);
+            line("ESC OR B BACK", 0.7f, dim, 1.f);
         } else if (screen_ == kScreenNameEntry) {
             static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
             text(W * 0.5f, H * 0.22f, "WHAT IS YOUR NAME, MARINE?", s * 1.4f, white, 1);
@@ -1911,8 +2135,18 @@ void App::addHud() {
     }
     if (mode_ == Mode::Paused) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.5f));
-        text(W * 0.5f, H * 0.32f, "PAUSED", s * 2.f, white, 1);
-        drawMenu(H * 0.32f + lh * 3.f);
+        text(W * 0.5f, H * 0.22f, "PAUSED", s * 2.f, white, 1);
+        // The run so far.
+        {
+            float y = H * 0.22f + lh * 2.4f;
+            std::string line = "SCORE " + std::to_string(game_->score()) + "   LEVEL " + std::to_string(game_->level()) + "   LINES " + std::to_string(game_->lines()) + "   RED LINES " + std::to_string(redLinesSurvived_);
+            text(W * 0.5f, y, line, s * 0.85f, glm::vec4(0.6f, 0.9f, 1.f, 1.f), 1);
+            y += lh * 0.95f;
+            std::string line2 = (profileName_.empty() ? std::string("") : profileName_ + "   ") + "BEST " + std::to_string(std::max(highScores_.best(), game_->score())) + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total());
+            if (fps_.totalEnemies() > 0 && pausedFrom_ == Mode::Fps) line2 += "   DEMONS LEFT " + std::to_string(fps_.enemiesLeft());
+            text(W * 0.5f, y, line2, s * 0.75f, dim, 1);
+        }
+        drawMenu(H * 0.22f + lh * 5.2f);
         text(W * 0.5f, H * 0.32f + lh * 3.f + lh * 1.5f * static_cast<float>(menu_.items.size()) + lh, "UP/DOWN SELECT   ENTER CONFIRM   ESC RESUME", s * 0.7f, dim, 1);
     }
     if (mode_ == Mode::GameOver) {
@@ -1943,6 +2177,7 @@ void App::buildScene() {
     cubes_.clear();
     worldQuads_.clear();
     screenQuads_.clear();
+    meshes_.clear();
     cubes_.insert(cubes_.end(), envCubes_.begin(), envCubes_.end());
 
     Camera cam = currentCamera();
@@ -1957,7 +2192,10 @@ void App::buildScene() {
     frame_.proj = glm::perspective(glm::radians(cam.fov), aspect, 0.05f, 120.f);
     frame_.cameraPos = eye;
     frame_.time = time_;
-    frame_.sunDir = glm::normalize(glm::vec3(0.35f, 0.8f, 0.6f));
+    frame_.sunDir = glm::normalize(glm::vec3(0.45f, 0.75f, 0.5f));
+    frame_.shadowCenter = glm::vec3(0.f, 8.f, 10.f);
+    frame_.shadowRadius = 26.f;
+    frame_.shadowStrength = 0.85f;
     float tilt = boardTilt();
     frame_.sunIntensity = glm::mix(0.9f, 0.55f, tilt);
     frame_.ambient = glm::mix(glm::vec3(0.30f, 0.30f, 0.34f), glm::vec3(0.16f, 0.13f, 0.13f), tilt);
@@ -1970,6 +2208,8 @@ void App::buildScene() {
     }
 
     addBoard();
+    addDecor();
+    if (!ambient_.empty() && (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::Paused && pausedFrom_ == Mode::Blocks) || (mode_ == Mode::GameOver && !diedInFps_))) addAmbient();
     bool actors = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_) || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)));
     if (actors) addFpsActors();
     addLights();

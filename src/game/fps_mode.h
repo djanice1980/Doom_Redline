@@ -169,6 +169,8 @@ public:
     // Tuning knobs (defaults are the shipped values; the CLI can override for testing).
     void setAbsorbPeriod(float seconds) { absorbPeriod_ = seconds; }
     void setGodMode(bool on) { god_ = on; }
+    // Testing: own every weapon with full ammo and hold the given one.
+    void giveArsenal(int weapon);
     float absorbPeriod() const { return absorbPeriod_; }
     void update(float dt, const FpsInput& in, core::Game& game);
     bool finished() const { return finished_; }

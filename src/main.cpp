@@ -23,12 +23,15 @@ void usage() {
         "  --level <n>          Starting level for --scenario fps (enemy health scaling)\n"
         "  --absorb <sec>       Seconds before a monster may absorb blocks and grow (default 20)\n"
         "  --god                Player takes no damage (testing)\n"
+        "  --arsenal N          Start a fight holding weapon N with every weapon owned (testing)\n"
         "  --keys <letters>@<frame>[x<hold>]  Hold letters from a frame for <hold> frames (default 150), e.g. --keys BFG@30x150\n"
         "  --stack <rows>       Pre-fill that many holey rows (testing)\n"
         "  --mute               No sound at all\n"
         "  --no-music           Sound effects only\n"
         "  --music-volume <0-1> Music level (default 0.45)\n"
         "  --profile <name>     Player profile to use (created if new)\n"
+        "  --voxels-dir <dir>   Folder of Voxel Doom .kvx files (default: $REDLINE_VOXELS, ./voxels, ~/Downloads/doom-voxel-models/...)\n"
+        "  --voxels | --sprites Force voxel models on or off for this run (default: saved option)\n"
         "  --music <set>        classic (OPL) | sc55 (original score recordings) | modern (Andrew Hulshult); remembered\n"
         "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1, REDLINE_SOUNDFONT=<file.sf2>\n");
 }
@@ -52,6 +55,7 @@ int main(int argc, char** argv) {
         else if (a == "--level") o.level = std::atoi(next());
         else if (a == "--absorb") o.absorbPeriod = static_cast<float>(std::atof(next()));
         else if (a == "--god") o.god = true;
+        else if (a == "--arsenal") o.arsenal = std::atoi(next());
         else if (a == "--keys") {
             std::string v = next();
             size_t at = v.find('@');
@@ -68,6 +72,9 @@ int main(int argc, char** argv) {
         else if (a == "--music-volume") o.musicVolume = static_cast<float>(std::atof(next()));
         else if (a == "--music") o.musicSet = next();
         else if (a == "--profile") o.profile = next();
+        else if (a == "--voxels-dir") o.voxelDir = next();
+        else if (a == "--voxels") o.voxels = 1;
+        else if (a == "--sprites") o.voxels = 0;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }

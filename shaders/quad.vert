@@ -36,7 +36,7 @@ void main() {
         vWorldPos = world;
         if (iParams.y > 0.5) {
             vec3 toCam = normalize(u.cameraPos.xyz - iPos.xyz);
-            vLight = shade(iPos.xyz, toCam, vec3(1.0), 0.9, 0.0);
+            vLight = shade(iPos.xyz + vec3(0.0, 0.5 * iSize.y, 0.0), toCam, vec3(1.0), 0.9, 0.0);
         }
         gl_Position = u.viewProj * vec4(world, 1.0);
     } else {

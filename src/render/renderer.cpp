@@ -8,6 +8,14 @@
 #include "shaders/cube_vert.h"
 #include "shaders/quad_frag.h"
 #include "shaders/quad_vert.h"
+#include "shaders/shadow_cube_vert.h"
+#include "shaders/shadow_quad_vert.h"
+#include "shaders/shadow_quad_frag.h"
+#include "shaders/mesh_vert.h"
+#include "shaders/mesh_frag.h"
+#include "shaders/shadow_mesh_vert.h"
+
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace rl::render {
 
@@ -24,6 +32,8 @@ struct Renderer::Ubo {
     glm::vec4 lightPos[kMaxLights];
     glm::vec4 lightColor[kMaxLights];
     glm::ivec4 counts;
+    glm::mat4 lightViewProj;
+    glm::vec4 shadow;
 };
 
 namespace {
@@ -44,6 +54,16 @@ Renderer::Renderer(VkContext& ctx) : ctx_(ctx) {
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = 0.f;
     vkCheck(vkCreateSampler(ctx_.device(), &sci, nullptr, &sampler_), "vkCreateSampler");
+    // Shadow map: comparison sampler, white outside the light frustum (= lit).
+    VkSamplerCreateInfo ssi{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    ssi.magFilter = ssi.minFilter = VK_FILTER_LINEAR;
+    ssi.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    ssi.addressModeU = ssi.addressModeV = ssi.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    ssi.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    ssi.compareEnable = VK_TRUE;
+    ssi.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    vkCheck(vkCreateSampler(ctx_.device(), &ssi, nullptr, &shadowSampler_), "vkCreateSampler(shadow)");
+    shadowMap_ = ctx_.createTexture2D(kShadowMapSize, kShadowMapSize, ctx_.depthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
         ubo_[i] = ctx_.createBuffer(sizeof(Ubo), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -71,9 +91,16 @@ Renderer::~Renderer() {
         ctx_.destroyBuffer(cubeInst_[i]);
         ctx_.destroyBuffer(quadInst_[i]);
     }
+    for (MeshRes& m : meshes_) if (m.alive) { ctx_.destroyBuffer(m.vb); ctx_.destroyBuffer(m.ib); }
     ctx_.destroyTexture(atlas_);
+    ctx_.destroyTexture(shadowMap_);
     if (cubePipe_) vkDestroyPipeline(d, cubePipe_, nullptr);
     if (quadPipe_) vkDestroyPipeline(d, quadPipe_, nullptr);
+    if (shadowCubePipe_) vkDestroyPipeline(d, shadowCubePipe_, nullptr);
+    if (shadowQuadPipe_) vkDestroyPipeline(d, shadowQuadPipe_, nullptr);
+    if (meshPipe_) vkDestroyPipeline(d, meshPipe_, nullptr);
+    if (shadowMeshPipe_) vkDestroyPipeline(d, shadowMeshPipe_, nullptr);
+    if (shadowSampler_) vkDestroySampler(d, shadowSampler_, nullptr);
     if (pipeLayout_) vkDestroyPipelineLayout(d, pipeLayout_, nullptr);
     if (pool_) vkDestroyDescriptorPool(d, pool_, nullptr);
     if (setLayout_) vkDestroyDescriptorSetLayout(d, setLayout_, nullptr);
@@ -98,7 +125,11 @@ void Renderer::ensureInstanceCapacity(uint32_t frame, size_t cubes, size_t quads
 
 void Renderer::createDescriptors() {
     VkDevice d = ctx_.device();
-    VkDescriptorSetLayoutBinding bindings[2]{};
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[0].descriptorCount = 1;
@@ -108,11 +139,11 @@ void Renderer::createDescriptors() {
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    lci.bindingCount = 2;
+    lci.bindingCount = 3;
     lci.pBindings = bindings;
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight}};
+    VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight;
     pci.poolSizeCount = 2;
@@ -127,9 +158,13 @@ void Renderer::createDescriptors() {
     ai.pSetLayouts = layouts;
     vkCheck(vkAllocateDescriptorSets(d, &ai, sets_), "vkAllocateDescriptorSets");
 
+    // Push constants carry a mesh instance's model matrix, tint and emissive (96 bytes).
+    VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + 2 * sizeof(glm::vec4)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.setLayoutCount = 1;
     plci.pSetLayouts = &setLayout_;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pcr;
     vkCheck(vkCreatePipelineLayout(d, &plci, nullptr, &pipeLayout_), "vkCreatePipelineLayout");
 }
 
@@ -142,7 +177,14 @@ void Renderer::setAtlas(const Image& img) {
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
         VkDescriptorBufferInfo bi{ubo_[i].buffer, 0, sizeof(Ubo)};
         VkDescriptorImageInfo ii{sampler_, atlas_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet w[2]{};
+        VkDescriptorImageInfo si{shadowSampler_, shadowMap_.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w[3]{};
+        w[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[2].dstSet = sets_[i];
+        w[2].dstBinding = 2;
+        w[2].descriptorCount = 1;
+        w[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[2].pImageInfo = &si;
         w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[0].dstSet = sets_[i];
         w[0].dstBinding = 0;
@@ -155,7 +197,7 @@ void Renderer::setAtlas(const Image& img) {
         w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w[1].pImageInfo = &ii;
-        vkUpdateDescriptorSets(ctx_.device(), 2, w, 0, nullptr);
+        vkUpdateDescriptorSets(ctx_.device(), 3, w, 0, nullptr);
     }
 }
 
@@ -188,7 +230,11 @@ void Renderer::createPipelines() {
     dss.depthWriteEnable = VK_TRUE;
     dss.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
-    auto makePipeline = [&](VkShaderModule vs, VkShaderModule fs, const VkPipelineVertexInputStateCreateInfo& vi, bool cull, bool blend) {
+    VkPipelineRenderingCreateInfo shadowRci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    shadowRci.colorAttachmentCount = 0;
+    shadowRci.depthAttachmentFormat = ctx_.depthFormat();
+
+    auto makePipeline = [&](VkShaderModule vs, VkShaderModule fs, const VkPipelineVertexInputStateCreateInfo& vi, bool cull, bool blend, bool depthOnly = false) {
         VkPipelineShaderStageCreateInfo stages[2]{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -203,6 +249,12 @@ void Renderer::createPipelines() {
         rs.cullMode = cull ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
         rs.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rs.lineWidth = 1.f;
+        if (depthOnly) {
+            rs.cullMode = VK_CULL_MODE_NONE;
+            rs.depthBiasEnable = VK_TRUE;
+            rs.depthBiasConstantFactor = 1.5f;
+            rs.depthBiasSlopeFactor = 2.5f;
+        }
         VkPipelineColorBlendAttachmentState cba{};
         cba.colorWriteMask = 0xF;
         cba.blendEnable = blend ? VK_TRUE : VK_FALSE;
@@ -216,9 +268,10 @@ void Renderer::createPipelines() {
         cb.attachmentCount = 1;
         cb.pAttachments = &cba;
         VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        ci.pNext = &rci;
-        ci.stageCount = 2;
+        ci.pNext = depthOnly ? &shadowRci : &rci;
+        ci.stageCount = fs ? 2 : 1;
         ci.pStages = stages;
+        if (depthOnly) cb.attachmentCount = 0;
         ci.pVertexInputState = &vi;
         ci.pInputAssemblyState = &ia;
         ci.pViewportState = &vp;
@@ -254,6 +307,9 @@ void Renderer::createPipelines() {
         vi.vertexAttributeDescriptionCount = 9;
         vi.pVertexAttributeDescriptions = a;
         cubePipe_ = makePipeline(cubeVS, cubeFS, vi, true, false);
+        VkShaderModule shVS = ctx_.createShader(shaders::shadow_cube_vert, shaders::shadow_cube_vert_size);
+        shadowCubePipe_ = makePipeline(shVS, VK_NULL_HANDLE, vi, false, false, true);
+        vkDestroyShaderModule(d, shVS, nullptr);
     }
     // Quad: binding 0 per-instance only.
     {
@@ -270,11 +326,58 @@ void Renderer::createPipelines() {
         vi.vertexAttributeDescriptionCount = 5;
         vi.pVertexAttributeDescriptions = a;
         quadPipe_ = makePipeline(quadVS, quadFS, vi, false, true);
+        VkShaderModule shVS = ctx_.createShader(shaders::shadow_quad_vert, shaders::shadow_quad_vert_size);
+        VkShaderModule shFS = ctx_.createShader(shaders::shadow_quad_frag, shaders::shadow_quad_frag_size);
+        shadowQuadPipe_ = makePipeline(shVS, shFS, vi, false, false, true);
+        vkDestroyShaderModule(d, shVS, nullptr);
+        vkDestroyShaderModule(d, shFS, nullptr);
+    }
+    // Mesh: binding 0 per-vertex (int16 position + normal index, RGBA8 colour).
+    {
+        VkShaderModule meshVS = ctx_.createShader(shaders::mesh_vert, shaders::mesh_vert_size);
+        VkShaderModule meshFS = ctx_.createShader(shaders::mesh_frag, shaders::mesh_frag_size);
+        VkShaderModule shVS = ctx_.createShader(shaders::shadow_mesh_vert, shaders::shadow_mesh_vert_size);
+        VkVertexInputBindingDescription b[1] = {{0, sizeof(MeshVertex), VK_VERTEX_INPUT_RATE_VERTEX}};
+        VkVertexInputAttributeDescription a[2] = {
+            {0, 0, VK_FORMAT_R16G16B16A16_SINT, offsetof(MeshVertex, x)},
+            {1, 0, VK_FORMAT_R8G8B8A8_UNORM, offsetof(MeshVertex, rgba)}};
+        VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+        vi.vertexBindingDescriptionCount = 1;
+        vi.pVertexBindingDescriptions = b;
+        vi.vertexAttributeDescriptionCount = 2;
+        vi.pVertexAttributeDescriptions = a;
+        meshPipe_ = makePipeline(meshVS, meshFS, vi, true, false);
+        shadowMeshPipe_ = makePipeline(shVS, VK_NULL_HANDLE, vi, false, false, true);
+        vkDestroyShaderModule(d, meshVS, nullptr);
+        vkDestroyShaderModule(d, meshFS, nullptr);
+        vkDestroyShaderModule(d, shVS, nullptr);
     }
     vkDestroyShaderModule(d, cubeVS, nullptr);
     vkDestroyShaderModule(d, cubeFS, nullptr);
     vkDestroyShaderModule(d, quadVS, nullptr);
     vkDestroyShaderModule(d, quadFS, nullptr);
+}
+
+uint32_t Renderer::createMesh(std::span<const MeshVertex> verts, std::span<const uint32_t> indices) {
+    MeshRes m;
+    m.vb = ctx_.createBuffer(verts.size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+    m.ib = ctx_.createBuffer(indices.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+    ctx_.uploadBuffer(m.vb, verts.data(), verts.size_bytes());
+    ctx_.uploadBuffer(m.ib, indices.data(), indices.size_bytes());
+    m.indexCount = static_cast<uint32_t>(indices.size());
+    m.alive = true;
+    for (size_t i = 0; i < meshes_.size(); ++i)
+        if (!meshes_[i].alive) { meshes_[i] = m; return static_cast<uint32_t>(i); }
+    meshes_.push_back(m);
+    return static_cast<uint32_t>(meshes_.size() - 1);
+}
+
+void Renderer::destroyMesh(uint32_t id) {
+    if (id >= meshes_.size() || !meshes_[id].alive) return;
+    ctx_.waitIdle();
+    ctx_.destroyBuffer(meshes_[id].vb);
+    ctx_.destroyBuffer(meshes_[id].ib);
+    meshes_[id] = MeshRes{};
 }
 
 void Renderer::createGeometry() {
@@ -308,7 +411,8 @@ void Renderer::createGeometry() {
 }
 
 bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> cubes,
-                      std::span<const QuadInstance> worldQuads, std::span<const QuadInstance> screenQuads) {
+                      std::span<const QuadInstance> worldQuads, std::span<const QuadInstance> screenQuads,
+                      std::span<const MeshInstance> meshes) {
     VkContext::FrameCtx frame;
     if (!ctx_.beginFrame(frame)) return false;
     const uint32_t fi = frame.frameIndex;
@@ -330,6 +434,15 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         u.lightColor[i] = glm::vec4(params.lights[i].color, params.lights[i].intensity);
     }
     u.counts = glm::ivec4(nl, 0, 0, 0);
+    {
+        glm::vec3 dir = glm::normalize(params.sunDir);
+        glm::vec3 up = std::fabs(dir.y) > 0.95f ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
+        float r = params.shadowRadius;
+        glm::mat4 lv = glm::lookAt(params.shadowCenter + dir * r, params.shadowCenter, up);
+        glm::mat4 lp = glm::ortho(-r, r, -r, r, 0.f, 2.f * r);
+        u.lightViewProj = lp * lv;
+        u.shadow = glm::vec4(1.f / static_cast<float>(kShadowMapSize), 0.0015f, params.shadowStrength, 0.08f);
+    }
     std::memcpy(ubo_[fi].mapped, &u, sizeof(u));
 
     // Instances (world + screen quads share one buffer, drawn as two ranges).
@@ -341,6 +454,85 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     if (!screenQuads.empty()) std::memcpy(qdst + worldQuads.size(), screenQuads.data(), screenQuads.size() * sizeof(QuadInstance));
 
     VkCommandBuffer cmd = frame.cmd;
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
+    struct MeshPush { glm::mat4 model; glm::vec4 color; glm::vec4 emissive; };
+    auto drawMeshes = [&](VkPipeline pipe) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+        uint32_t bound = UINT32_MAX;
+        for (const MeshInstance& mi : meshes) {
+            if (mi.mesh >= meshes_.size() || !meshes_[mi.mesh].alive) continue;
+            const MeshRes& m = meshes_[mi.mesh];
+            if (bound != mi.mesh) {
+                VkDeviceSize off = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &m.vb.buffer, &off);
+                vkCmdBindIndexBuffer(cmd, m.ib.buffer, 0, VK_INDEX_TYPE_UINT32);
+                bound = mi.mesh;
+            }
+            MeshPush pc{mi.model, mi.color, mi.emissive};
+            vkCmdPushConstants(cmd, pipeLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+            vkCmdDrawIndexed(cmd, m.indexCount, 1, 0, 0, 0);
+        }
+    };
+
+    // --- Shadow pass: depth from the sun into the shadow map --------------------
+    {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        b.srcAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        b.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        b.image = shadowMap_.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+
+        VkRenderingAttachmentInfo sdepth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        sdepth.imageView = shadowMap_.view;
+        sdepth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        sdepth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        sdepth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        sdepth.clearValue.depthStencil = {1.f, 0};
+        VkRenderingInfo sri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        sri.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+        sri.layerCount = 1;
+        sri.pDepthAttachment = &sdepth;
+        vkCmdBeginRendering(cmd, &sri);
+        VkViewport svp{0.f, 0.f, static_cast<float>(kShadowMapSize), static_cast<float>(kShadowMapSize), 0.f, 1.f};
+        VkRect2D ssc{{0, 0}, {kShadowMapSize, kShadowMapSize}};
+        vkCmdSetViewport(cmd, 0, 1, &svp);
+        vkCmdSetScissor(cmd, 0, 1, &ssc);
+        vkCmdSetDepthTestEnable(cmd, VK_TRUE);
+        vkCmdSetDepthWriteEnable(cmd, VK_TRUE);
+        if (!cubes.empty()) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowCubePipe_);
+            VkBuffer vbs[2] = {cubeVB_.buffer, cubeInst_[fi].buffer};
+            VkDeviceSize offs[2] = {0, 0};
+            vkCmdBindVertexBuffers(cmd, 0, 2, vbs, offs);
+            vkCmdBindIndexBuffer(cmd, cubeIB_.buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, cubeIndexCount_, static_cast<uint32_t>(cubes.size()), 0, 0, 0);
+        }
+        if (!worldQuads.empty()) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadowQuadPipe_);
+            VkDeviceSize off = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &quadInst_[fi].buffer, &off);
+            vkCmdDraw(cmd, 6, static_cast<uint32_t>(worldQuads.size()), 0, 0);
+        }
+        if (!meshes.empty()) drawMeshes(shadowMeshPipe_);
+        vkCmdEndRendering(cmd);
+
+        b.srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        b.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    }
+
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     color.imageView = frame.imageView;
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -367,7 +559,6 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     VkRect2D scissor{{0, 0}, ext};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
 
     if (!cubes.empty()) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, cubePipe_);
@@ -378,6 +569,11 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdBindVertexBuffers(cmd, 0, 2, vbs, offs);
         vkCmdBindIndexBuffer(cmd, cubeIB_.buffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, cubeIndexCount_, static_cast<uint32_t>(cubes.size()), 0, 0, 0);
+    }
+    if (!meshes.empty()) {
+        vkCmdSetDepthTestEnable(cmd, VK_TRUE);
+        vkCmdSetDepthWriteEnable(cmd, VK_TRUE);
+        drawMeshes(meshPipe_);
     }
     if (quadTotal > 0) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, quadPipe_);

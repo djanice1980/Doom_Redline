@@ -179,13 +179,53 @@ instanced draw.
 - `QuadInstance`: mode 0 = world billboard rotating about Y only (Doom style),
   mode 1 = screen space in pixels, top-left origin. Anchor is a 0..1 point in
   the quad; sprites use their WAD offsets so the origin is at the feet.
-- One descriptor set: frame UBO (matrices, camera, sun, ambient/fog, 16 point
-  lights) + atlas sampler (nearest mag, linear min).
+- One descriptor set: frame UBO (matrices, camera, sun, ambient/fog, 32 point
+  lights, sun light matrix and shadow params) + atlas sampler (nearest mag,
+  linear min) + the shadow map (comparison sampler, white border).
+- Sun shadows: before the main pass, cubes, world billboards (alpha tested) and
+  meshes are drawn depth-only into a 2048x2048 map from an orthographic box
+  (`FrameParams::shadowCenter/shadowRadius`, looking along `-sunDir`). The
+  fragment shaders' `shade()` multiplies the sun term by a 3x3 PCF lookup;
+  `shadowStrength` scales it (0 = off). The arena has no ceiling so the sun can
+  reach the floor.
+- `MeshInstance`: a static mesh id (`createMesh` uploads 12-byte vertices:
+  int16 corner xyz + face-normal index, RGBA8 colour) with a model matrix, tint
+  and emissive passed as 96 bytes of push constants. Used for voxel models;
+  the mesh fragment shader bends the axis-aligned normals 0.6 towards the
+  viewer so voxel monsters read as brightly as the camera-facing sprites.
 - Depth test/write toggled with core 1.3 dynamic state so HUD quads share the
   billboard pipeline.
 - Negative-height viewport keeps GL conventions (+Y up, CCW front faces).
 - `screenshot()` copies the last presented swapchain image to a PNG (stored
   deflate; no zlib dependency).
+
+## Voxel models (`src/game/kvx.cpp`, `src/game/voxels.cpp`)
+
+`loadKvx` reads mip 0 of a Build-engine `.kvx` (header, per-column slab
+offsets relative to the xoffset table, trailing 6-bit palette) into a dense
+grid, flips z (KVX z points down) into a Y-up frame with the feet at y = 0,
+and greedy-meshes the exposed faces per axis and colour. Cheello's models are
+mostly solid inside, so face culling matters more than the slab format's own
+cull bits (ignored). `VoxelModels` finds the pack, parses `VOXELDEF.txt`
+(`sprite = "file" { AngleOffset = .. Scale = .. }`, comments stripped), maps
+atlas keys `TROO_A` to `trooa`, and meshes each frame on first use, caching
+misses. `App::actor()` draws a frame as a mesh when voxels are on and the pack
+has it, otherwise as the usual billboard. Model matrix: translate(feet) *
+rotateY(yaw + AngleOffset - 90) * scale(metresPerPixel * Scale) *
+translate(-pivot). Yaw is the world heading (sin, 0, cos): monsters face the
+player, brawlers face their opponent, projectiles follow their velocity,
+pickups spin, decor faces +Z. Voxel units equal sprite pixels, so the per-class
+`metresPerPixel` carries over unchanged.
+
+## Ambient brawlers (`src/game/ambient.cpp`)
+
+Decorative infighting while the board stands: three monsters per side in the
+strip x in [7.5, 13.5], z in [-1.2, 2.6] (the only floor the overview camera
+sees; its bottom edge meets the floor at z = 3). Tiers 0..min(3, 1 + level/2),
+60% class health, double damage so brawls end quickly; hitscan / projectile /
+melee attacks reuse `enemyStats()`. Dead ones respawn after 6-12 s. Cleared on
+FlyIn, re-seeded when Blocks resumes after a fight. Their sounds are played
+quietly and throttled; they never touch the player, the board or the score.
 
 ## Assets (`src/game/assets.cpp`)
 
