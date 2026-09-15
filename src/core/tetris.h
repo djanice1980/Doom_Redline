@@ -170,8 +170,9 @@ public:
     // Remove a single cell without side effects (e.g. enemy walked away).
     void clearCell(int col, int row);
     // Call when the FPS mode is over; resumes normal play and raises the level
-    // by one so each fight makes the stacking harder. Every remaining block
-    // (not just red ones) then falls to the floor, one row per settle step.
+    // by one so each fight makes the stacking harder. Leftover red, flickering
+    // and spawning cells are cleansed, then every remaining block falls to the
+    // floor, one row per settle step.
     void resumeAfterRedLine();
     bool collapsing() const { return collapseAll_; }
     // Removes every red cell (used when the FPS phase consumed them all).

@@ -570,7 +570,29 @@ static void testPrizes() {
     CHECK(h.prizes().bonusHealth == 0.f && h.prizes().shield == 5.f && h.prizes().invulnChance == 0.f);
 }
 
+static void testFightCleansesBoard() {
+    // A red line with a flickering block and a stray red cell elsewhere: after
+    // the fight nothing red or half-turned may remain.
+    Game g(1, fastRules());
+    fill(g, 19, CellKind::Red);
+    g.setCell(4, 15, Cell{CellKind::Normal, 2});
+    g.at(4, 15).corrupt = 0.5f;
+    g.setCell(7, 12, Cell{CellKind::Red, 0});
+    g.forcePiece(Shape::O, {});
+    g.spawnNow();
+    g.hardDrop();
+    runUntil(g, Phase::RedLine);
+    CHECK(g.phase() == Phase::RedLine);
+    g.resumeAfterRedLine();
+    runUntil(g, Phase::Falling);
+    int reds = 0, flick = 0;
+    for (int row = 0; row < 20; ++row) for (int c = 0; c < 10; ++c) { reds += g.at(c, row).red(); flick += g.at(c, row).corrupt > 0.f; }
+    CHECK(reds == 0 && flick == 0);
+    CHECK(g.level() == 2);
+}
+
 int main() {
+    testFightCleansesBoard();
     testPrizes();
     testPanicAndPurge();
     testCorruptionBuildsSurround();

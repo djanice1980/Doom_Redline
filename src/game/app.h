@@ -151,6 +151,7 @@ private:
     HighScores highScores_;
     Trophies trophies_;
     int lastRank_ = 0;
+    float lastInvulnChance_ = 0.f;   // the prize rolled at the last fight start (for the failure notice)
     enum class MusicSet { Classic, Sc55, Modern };
     MusicSet musicSet_ = MusicSet::Classic;
     std::string settingsPath_;

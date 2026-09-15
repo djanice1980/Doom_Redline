@@ -10,10 +10,20 @@ namespace rl::game {
 namespace {
 // The floor strips either side of the standing board (board frame is at x = +-5.5),
 // kept to the band in front of the back wall that the overview camera can see:
-// its bottom edge meets the floor at about z = 3.
+// its bottom edge meets the floor at about z = 3. Nobody walks in front of the
+// board (it would hide the stack), but the ranged classes trade shots across
+// it once both stand in front of its face (z >= kFrontZ).
 constexpr float kZoneInner = 7.5f, kZoneOuter = 13.5f;
 constexpr float kZoneZ0 = -1.2f, kZoneZ1 = 2.6f;
+constexpr float kFrontZ = 1.4f;
 constexpr int kPerZone = 3;
+constexpr int kBrawlBossTier = 5;   // cyberdemon: at most one alive; spiders never brawl
+
+// Tier window per level: zombies and imps early, barons by level 6, a
+// cyberdemon from level 8. Health follows the fight's level curve.
+int brawlTierLo(int level) { return std::clamp(level / 3, 0, 3); }
+int brawlTierHi(int level) { return std::clamp(1 + level / 2, 1, kBrawlBossTier); }
+float brawlHpScale(int level) { return std::clamp(0.45f + 0.15f * static_cast<float>(level - 1), 0.45f, 2.5f) * 0.7f; }
 }  // namespace
 
 Ambient::Ambient() : rng_(777) {}
@@ -25,14 +35,17 @@ glm::vec3 Ambient::randomSpot(int zone) {
 }
 
 void Ambient::spawn(Brawler& b, int zone) {
-    std::uniform_int_distribution<int> tierPick(0, std::min(3, 1 + level_ / 2));   // zombies to cacodemons
+    int hi = brawlTierHi(level_);
+    if (hi >= kBrawlBossTier)
+        for (const Brawler& o : brawlers_) if (&o != &b && o.alive() && o.tier >= kBrawlBossTier) { hi = kBrawlBossTier - 1; break; }
+    std::uniform_int_distribution<int> tierPick(std::min(brawlTierLo(level_), hi), hi);
     b = Brawler{};
     b.tier = tierPick(rng_);
     const EnemyStats& st = enemyStats(b.tier);
     b.zone = zone;
     b.pos = randomSpot(zone);
     b.pos.y = st.flies ? 0.8f : 0.f;
-    b.maxHp = b.hp = st.hp * 0.6f;   // shorter brawls than the real fight
+    b.maxHp = b.hp = st.hp * brawlHpScale(level_);   // shorter brawls than the real fight, tougher with the level
     b.radius = st.radius;
     b.height = st.height;
     std::uniform_real_distribution<float> u(0.f, 1.f);
@@ -99,12 +112,14 @@ void Ambient::update(float dt) {
         b.flashT = std::max(0.f, b.flashT - dt * 6.f);
         float restY = st.flies ? 0.8f + 0.15f * std::sin(elapsed_ * 2.f + static_cast<float>(i)) : 0.f;
 
-        // Pick a living opponent in the same zone.
+        // Pick the nearest living opponent: melee classes on their own side,
+        // ranged ones on either side of the board.
         if (b.target < 0 || b.target >= static_cast<int>(brawlers_.size()) || !brawlers_[static_cast<size_t>(b.target)].alive() || static_cast<size_t>(b.target) == i) {
             b.target = -1;
             float best = 1e9f;
             for (size_t j = 0; j < brawlers_.size(); ++j) {
-                if (j == i || brawlers_[j].zone != b.zone || !brawlers_[j].alive() || brawlers_[j].state == Brawler::State::Emerging) continue;
+                if (j == i || !brawlers_[j].alive() || brawlers_[j].state == Brawler::State::Emerging) continue;
+                if (st.attack == AttackKind::Melee && brawlers_[j].zone != b.zone) continue;
                 float d = glm::length(brawlers_[j].pos - b.pos);
                 if (d < best) { best = d; b.target = static_cast<int>(j); }
             }
@@ -128,17 +143,22 @@ void Ambient::update(float dt) {
         case Brawler::State::Idle: {
             b.pos.y = restY;
             if (b.target >= 0) {
+                const Brawler& tgt = brawlers_[static_cast<size_t>(b.target)];
                 float want = (st.attack == AttackKind::Melee) ? 1.0f : 4.f;
                 float speed = st.speed > 0.f ? st.speed : 1.2f;   // even stationary classes shuffle around here
-                if (dist > want + 0.3f) b.pos += toT * speed * dt;
+                bool otherSide = tgt.zone != b.zone;
+                // The board stands between the sides: a shot across it is only
+                // taken from in front of its face, so step forward first.
+                if (otherSide) { if (b.pos.z < kFrontZ) b.pos.z += speed * dt; }
+                else if (dist > want + 0.3f) b.pos += toT * speed * dt;
                 else if (dist < want - 0.8f) b.pos -= toT * speed * 0.6f * dt;
-                // Stay in the zone.
-                float ax = std::fabs(b.pos.x);
-                ax = std::clamp(ax, kZoneInner, kZoneOuter);
+                // Stay on this side of the board.
+                float ax = std::clamp(std::fabs(b.pos.x), kZoneInner, kZoneOuter);
                 b.pos.x = b.zone == 0 ? -ax : ax;
                 b.pos.z = std::clamp(b.pos.z, kZoneZ0, kZoneZ1);
                 b.attackTimer -= dt;
-                bool inRange = (st.attack == AttackKind::Melee) ? dist < 1.5f : dist < 9.f;
+                bool clearShot = !otherSide || (b.pos.z >= kFrontZ - 0.1f && tgt.pos.z >= kFrontZ - 0.1f);
+                bool inRange = clearShot && ((st.attack == AttackKind::Melee) ? dist < 1.5f : dist < 26.f);
                 if (b.attackTimer <= 0.f && inRange) { b.state = Brawler::State::Attack; b.stateT = 0.f; b.animT = 0.f; b.attacked = false; }
             }
             break;

@@ -217,6 +217,7 @@ void App::newGame() {
 }
 
 void App::applyScenario() {
+    if (opts_.scenario == "blocks" && opts_.level > 1) { game_->setLevel(opts_.level); ambient_.reset(static_cast<uint32_t>(opts_.seed ? opts_.seed : 7u), opts_.level); }
     if (opts_.stackRows > 0) {
         for (int r = std::max(0, core::kBoardH - opts_.stackRows); r < core::kBoardH; ++r)
             for (int c = 0; c < core::kBoardW; ++c)
@@ -320,6 +321,7 @@ void App::enterMode(Mode m) {
         fps_.setGodMode(opts_.god);
         {
             core::Prizes p = game_->takePrizes();
+            lastInvulnChance_ = p.invulnChance;
             fps_.begin(*game_, game_->level(), p);
             std::fprintf(stderr, "[fps] prizes: +%d health, %d armour, %d%% invuln -> %s\n", static_cast<int>(p.bonusHealth), static_cast<int>(p.shield),
                          static_cast<int>(p.invulnChance * 100.f), fps_.startedInvulnerable() ? "INVULNERABLE" : "no");
@@ -1237,6 +1239,7 @@ void App::handleFpsEvents() {
             for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.tier, 0, kEnemyTiers - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
             std::fprintf(stderr, "[fps] level %d roster: %s\n", fps_.level(), roster.c_str());
             if (fps_.startedInvulnerable()) { announce("INVULNERABLE", glm::vec4(1.f, 0.95f, 0.5f, 1.f), 1.8f); play("levelup", 1.f, 0.7f); trophy("invuln"); }
+            else if (lastInvulnChance_ > 0.f) announce("INVULNERABILITY ROLL FAILED (" + std::to_string(static_cast<int>(lastInvulnChance_ * 100.f)) + "%)", glm::vec4(1.f, 0.6f, 0.4f, 1.f), 1.0f);
             fightStats_ = {};
             break;
         }

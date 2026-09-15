@@ -499,6 +499,13 @@ void Game::resumeAfterRedLine() {
     score_ += 1000 * level_;
     ++level_;
     push(EventType::LevelUp, level_);
+    // The fight consumed the red; anything still red, half-turned or being
+    // spawned is cleansed so the stack that collapses is all normal blocks.
+    for (auto& row : grid_)
+        for (auto& c : row) {
+            if (c.red() || c.spawning()) c = Cell{};
+            else c.corrupt = 0.f;
+        }
     collapseAll_ = true;
     phase_ = Phase::Settling;
     phaseAcc_ = 0.f;

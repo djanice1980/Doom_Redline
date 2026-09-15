@@ -605,18 +605,19 @@ void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     int growCap = std::min(kMaxTier, maxTierForLevel(level_) + 1);
     if (e.tier + 1 >= kBossTier)   // growing into a boss is only allowed if none is alive
         for (const Enemy& other : enemies_) if (&other != &e && other.alive() && other.tier >= kBossTier) return;
-    if (e.tier >= growCap || u(rng_) > 0.75f) return;
+    if (e.tier >= growCap) return;
+    // Nearby blocks are pulled in and add to the new body's health; with no
+    // cover left the monster still grows, it just starts a little weaker.
     int ec, er;
-    if (!flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er)) return;
     std::vector<std::pair<int, int>> food;
-    for (int y = er - 3; y <= er + 3; ++y)
-        for (int x = ec - 3; x <= ec + 3; ++x) {
-            if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
-            float dx = static_cast<float>(x - ec), dy = static_cast<float>(y - er);
-            if (dx * dx + dy * dy > 2.5f * 2.5f) continue;
-            if (game.at(x, y).kind == core::CellKind::Normal) food.push_back({x, y});
-        }
-    if (food.empty()) return;
+    if (flatToCell(glm::vec3(e.pos.x, 0.5f, e.pos.z), ec, er))
+        for (int y = er - 3; y <= er + 3; ++y)
+            for (int x = ec - 3; x <= ec + 3; ++x) {
+                if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
+                float dx = static_cast<float>(x - ec), dy = static_cast<float>(y - er);
+                if (dx * dx + dy * dy > 2.5f * 2.5f) continue;
+                if (game.at(x, y).kind == core::CellKind::Normal) food.push_back({x, y});
+            }
     for (auto [x, y] : food) {
         game.clearCell(x, y);
         e.cells.push_back({x, y});   // its death blast now covers them too
@@ -635,7 +636,7 @@ void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
     ++e.tier;
     const EnemyStats& st = enemyStats(e.tier);
     float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(level_ - 1), 0.45f, 2.5f);
-    e.maxHp = e.hp = st.hp * hpScale;
+    e.maxHp = e.hp = st.hp * hpScale * (food.empty() ? 0.8f : std::min(1.2f, 1.f + 0.04f * static_cast<float>(food.size())));
     e.radius = st.radius;
     e.height = st.height;
     e.growT = 1.f;

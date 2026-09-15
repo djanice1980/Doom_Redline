@@ -41,7 +41,9 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
 - **Prizes.** `finishClear` adds `prizeHealth/Shield/Invuln[n] * mult` to
   `prizes_` (caps 100 / 200 / 0.9). `App` calls `takePrizes()` at FlyIn and
   passes them to `FpsMode::begin`: health = 100 + bonus (cap 200), shield,
-  and one roll against `invulnChance` for `invulnSeconds` of immunity.
+  and one roll against `invulnChance` for `invulnSeconds` of immunity. A
+  failed roll is announced with the percentage, so a 90 % miss is visibly bad
+  luck rather than a bug.
   `hurtPlayer` ignores damage while invulnerable and lets armour absorb half
   of a hit first. Health pickups never raise health above 100.
 - **Panic.** `panic()` is true within `panicRows` (4) of the top; corruption
@@ -146,11 +148,13 @@ instanced draw.
   the player is destroyed (barons take the 3x3 around it); with a clear line
   it chews a random block within two cells half the time.
 - **Absorb** (`tryAbsorb`): `absorbTimer` starts at `max(8, period - (level-1))`
-  seconds (period 20 by default, `--absorb` overrides). On expiry, 75 % chance
-  (if below baron and there are normal blocks within 2.5 cells) to clear those
-  blocks, fly them into the monster as homing debris, add them to its `cells`
-  (so its death blast covers them), bump the tier, and reset hp/radius/height
-  to the new class at full health. The sprite pulses red for the last 4 s and
+  seconds (period 20 by default, `--absorb` overrides). On expiry the monster
+  grows one tier (if below the level's cap + 1, and only one boss at a time):
+  normal blocks within 2.5 cells are cleared, fly into it as homing debris and
+  join its `cells` (so its death blast covers them), and hp/radius/height reset
+  to the new class, at 80 % health with no blocks nearby and up to 120 % with
+  many. Growth no longer needs cover or a coin flip, so a lone survivor always
+  changes. The sprite pulses red for the last 4 s and
   flashes white while `growT` decays; the HUD shows a warning.
 - **Ammo on wound** (`damageEnemy`): a non-lethal hit has a 12 % chance,
   gated by a 2.5 s per-monster cooldown, to spawn ammo for the current weapon
@@ -223,11 +227,16 @@ pickups spin, decor faces +Z. Voxel units equal sprite pixels, so the per-class
 
 Decorative infighting while the board stands: three monsters per side in the
 strip x in [7.5, 13.5], z in [-1.2, 2.6] (the only floor the overview camera
-sees; its bottom edge meets the floor at z = 3). Tiers 0..min(3, 1 + level/2),
-60% class health, double damage so brawls end quickly; hitscan / projectile /
-melee attacks reuse `enemyStats()`. Dead ones respawn after 6-12 s. Cleared on
-FlyIn, re-seeded when Blocks resumes after a fight. Their sounds are played
-quietly and throttled; they never touch the player, the board or the score.
+sees; its bottom edge meets the floor at z = 3). Tier window per level:
+lo = level/3 (max 3), hi = 1 + level/2 (max 5, one cyberdemon at a time,
+never spiders); health = class hp x the fight's level curve x 0.7; double
+damage so brawls end quickly; hitscan / projectile / melee attacks reuse
+`enemyStats()`. Melee classes fight their own side; ranged ones also target
+the other side, stepping in front of the board face (z >= 1.4) before
+shooting across it, and never walk in front of the stack. Dead ones respawn
+after 6-12 s. Cleared on FlyIn, re-seeded at the new level when Blocks
+resumes after a fight. Silent; they never touch the player, the board or the
+score. `--scenario blocks --level N` seeds them at that level for testing.
 
 ## Assets (`src/game/assets.cpp`)
 
