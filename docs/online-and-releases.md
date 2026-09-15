@@ -199,6 +199,33 @@ when the service exists: the verification flow (email a six-digit code the
 player types into the game, since the game is not a browser), the run
 record, and the opt-in upload.
 
+### Encryption at rest (decided 2026-09-15)
+
+Emails, machine names and operating-system details are stored **encrypted**
+in the online database, not merely access-controlled. Working notes for when
+the schema is written:
+
+- **Email.** Let Supabase Auth hold the login email (it encrypts its own
+  tables and never exposes them through the public API). In our own tables
+  keep only a *blind index* of the address, `HMAC-SHA256(lowercase email,
+  server key)`, so a player can be looked up by address without the address
+  being readable, plus the ciphertext if we need to show it back to its owner.
+- **Machine and OS facts.** Encrypt the `machines` row fields (install id,
+  platform, OS string, GPU, cores, RAM, pad model) with `pgsodium` /
+  Supabase Vault (`pgsodium.crypto_aead_det_encrypt` with a per-column key
+  held in Vault, decrypted only inside SQL views that the service role can
+  read). Aggregate statistics ("38 % of runs on a gamepad", GPU share) are
+  computed once a day into a separate plain table so the dashboard never
+  touches the encrypted rows.
+- **Key handling.** Keys live in Supabase Vault and the Vercel project's
+  encrypted environment variables only; never in the repo, never in the game
+  binary. The game sends plain JSON over TLS to the submit route, which
+  encrypts before insert.
+- **Also do:** row-level security denies all direct reads of `players` and
+  `machines`; public pages read only from views that expose display name and
+  gameplay numbers; the account deletion path wipes the encrypted rows and
+  the blind index together.
+
 ## 8. Order of work when you pick this up
 
 1. Clean-ups in section 1, push, tag `v0.1.0`, and get the release workflow
