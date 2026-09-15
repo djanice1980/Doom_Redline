@@ -300,6 +300,21 @@ Anything missing falls back to `procedural.cpp`. Block tiles are always ours.
 Top 10 in SDL's pref path as whitespace-separated lines; `add()` returns the
 1-based rank (0 = not placed) and saves.
 
+## Identity and play statistics (`src/game/playerstats.cpp`)
+
+`PlayerStats` owns three files per profile: `identity.txt` (`player_id`, a
+version-4 UUID minted on first load; `email`; `email_verified`), `stats.txt`
+(lifetime seconds in the block / fight / menu phases, keyboard / mouse / pad
+action counts, sessions, first and last played) and `machines/<install_id>.txt`
+(the same counters for this machine plus platform, OS name from
+`/etc/os-release`, GPU from the Vulkan device, cores, RAM, gamepad model).
+The install id lives in `<pref>/install.txt`. `App` feeds it every frame
+(`addTime` by mode) and on each key press, mouse button and pad button, saves
+every 30 s, on profile switch and at exit. The email is optional, validated
+only for shape, lower-cased, and its verified flag resets when it changes;
+the future account feature (docs/online-and-releases.md section 7) verifies
+it server-side. `stats_test` covers the round trip across two machines.
+
 ## Profiles, trophies, gamepad (`src/game/app.cpp`, `trophies.cpp`)
 
 - Profiles live in `<pref>/profiles/<NAME>/{settings,highscores,trophies}.txt`;

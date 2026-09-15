@@ -54,6 +54,34 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (!opts_.mute) audio_.init();
     if (char* p = SDL_GetPrefPath("redline", "redline")) { prefDir_ = p; SDL_free(p); }
     if (const char* b = SDL_GetBasePath()) baseDir_ = b;
+    {
+        // One random install id per save folder: the key for "which machine was this played on".
+        std::string idFile = prefDir_ + "install.txt";
+        if (std::FILE* f = std::fopen(idFile.c_str(), "r")) { char buf[64] = {}; if (std::fgets(buf, sizeof buf, f)) machine_.installId = buf; std::fclose(f); }
+        while (!machine_.installId.empty() && (machine_.installId.back() == '\n' || machine_.installId.back() == '\r')) machine_.installId.pop_back();
+        if (machine_.installId.size() != 36) {
+            machine_.installId = newUuid();
+            if (std::FILE* f = std::fopen(idFile.c_str(), "w")) { std::fprintf(f, "%s\n", machine_.installId.c_str()); std::fclose(f); }
+        }
+        machine_.platform = SDL_GetPlatform();
+        machine_.os = machine_.platform;
+        if (std::FILE* f = std::fopen("/etc/os-release", "r")) {   // distro name on Linux; harmlessly absent elsewhere
+            char buf[256];
+            while (std::fgets(buf, sizeof buf, f)) {
+                std::string line = buf;
+                if (line.rfind("PRETTY_NAME=", 0) == 0) {
+                    line = line.substr(12);
+                    while (!line.empty() && (line.back() == '\n' || line.back() == '"')) line.pop_back();
+                    if (!line.empty() && line.front() == '"') line.erase(0, 1);
+                    machine_.os = line;
+                }
+            }
+            std::fclose(f);
+        }
+        machine_.gpu = ctx_->gpuName();
+        machine_.cpuCores = SDL_GetNumLogicalCPUCores();
+        machine_.ramMb = SDL_GetSystemRAM();
+    }
     std::optional<std::filesystem::path> wad;
     if (!opts_.noWad && opts_.reloadWad.empty()) wad = Assets::findWad(opts_.wad, prefDir_, baseDir_);
     if (!wad && !opts_.noWad) {
@@ -196,6 +224,7 @@ void App::browseForWad(bool extras) {
 }
 
 App::~App() {
+    stats_.save();
     // Order matters: the music stream, then the audio device and effect
     // streams, must go before SDL_Quit (they are members, so they would
     // otherwise be destroyed after it).
@@ -442,6 +471,9 @@ void App::switchProfile(const std::string& name) {
     highScores_.load(dir + "highscores.txt");
     trophies_.load(dir + "trophies.txt");
     loadSettings();
+    stats_.save();   // the previous profile's counters
+    stats_.load(dir, machine_);
+    if (pad_) stats_.setPadModel(padName_);
     if (std::FILE* f = std::fopen((base + "profile.txt").c_str(), "w")) { std::fputs(name.c_str(), f); std::fclose(f); }
     std::fprintf(stderr, "[app] profile %s: %zu scores, %d/%d trophies, music %s, pad sens %.2f\n", name.c_str(), highScores_.entries().size(),
                  trophies_.unlockedCount(), trophies_.total(), musicSetName(), padSens_);
@@ -478,6 +510,7 @@ void App::openGamepad(uint32_t which) {
     if (!pad_) return;
     const char* n = SDL_GetGamepadName(pad_);
     padName_ = n ? n : "GAMEPAD";
+    stats_.setPadModel(padName_);
     std::fprintf(stderr, "[pad] connected: %s\n", padName_.c_str());
     announce("GAMEPAD: " + padName_, glm::vec4(0.8f, 0.9f, 1.f, 1.f), 0.9f);
 }
@@ -487,6 +520,7 @@ void App::rumble(float low, float high, int ms) {
 }
 
 void App::padButton(int button, bool down) {
+    if (down) stats_.addInput(InputDevice::Gamepad);
     auto key = [&](SDL_Keycode k) { screenKey(k, true); };
     if (screen_ != kScreenNone) {
         if (!down) return;
@@ -589,11 +623,12 @@ void App::openScreen(int screen) {
     if (screen == kScreenProfiles) profileList_ = listProfiles();
     if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; SDL_StartTextInput(window_); }
     if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
+    if (screen == kScreenEmailEntry) { emailEntry_ = stats_.email(); wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenWadSetup) wadStatus_.clear();
 }
 
 void App::closeScreen() {
-    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath) SDL_StopTextInput(window_);
+    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath || screen_ == kScreenEmailEntry) SDL_StopTextInput(window_);
     if (nameRequired_ && profileName_.empty()) { openScreen(kScreenNameEntry); return; }   // no dodging the name
     screen_ = kScreenNone;
 }
@@ -613,6 +648,7 @@ void App::adjustOption(int dir) {
     case 8: if (voxels_.available()) useVoxels_ = !useVoxels_; break;
     case 9: if (dir > 0) browseForWad(); break;
     case 10: if (dir > 0) browseForWad(true); break;
+    case 11: if (dir > 0) openScreen(kScreenEmailEntry); break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -634,12 +670,12 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 12;   // 11 options + BACK
+        const int n = 13;   // 12 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 11) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 11) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 11) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 12) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 12) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 12) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
@@ -658,6 +694,20 @@ void App::screenKey(int key, bool fromPad) {
             else if (screenIndex_ == 2) closeScreen();
             else running_ = false;
         }
+        else if (key == SDLK_ESCAPE) closeScreen();
+        break;
+    }
+    case kScreenEmailEntry: {
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            std::string e = emailEntry_;
+            size_t at = e.find('@');
+            bool ok = e.empty() || (at != std::string::npos && at > 0 && e.find('.', at) != std::string::npos && e.find('.', at) < e.size() - 1);
+            if (!ok) { wadStatus_ = "THAT DOES NOT LOOK LIKE AN EMAIL ADDRESS"; play("menu", 0.6f); return; }
+            stats_.setEmail(e);
+            play("menu_select", 0.7f);
+            closeScreen();
+        }
+        else if (key == SDLK_BACKSPACE) { if (!emailEntry_.empty()) emailEntry_.pop_back(); }
         else if (key == SDLK_ESCAPE) closeScreen();
         break;
     }
@@ -710,6 +760,7 @@ void App::screenKey(int key, bool fromPad) {
             play("menu_select", 0.8f);
             announce("WELCOME, " + name, glm::vec4(0.8f, 0.9f, 1.f, 1.f), 1.2f);
             if (mode_ == Mode::Title) menu_.items[1] = "PLAYER: " + name;
+            openScreen(kScreenEmailEntry);   // optional; groundwork for the online leaderboard
         } else if (!fromPad && key == SDLK_BACKSPACE) { if (!nameEntry_.empty()) nameEntry_.pop_back(); }
         else if (!fromPad && key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) { SDL_StopTextInput(window_); screen_ = kScreenNone; } }
         break;
@@ -957,6 +1008,13 @@ int App::run() {
         }
         handleEvents();
         update(dt);
+        if (stats_.loaded()) {
+            bool blocks = mode_ == Mode::Blocks || mode_ == Mode::Alert || mode_ == Mode::FlyOut;
+            bool fight = mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps;
+            stats_.addTime(blocks ? PlayPhase::Blocks : fight ? PlayPhase::Fps : PlayPhase::Menu, dt);
+            statsSaveT_ += dt;
+            if (statsSaveT_ >= 30.f) { statsSaveT_ = 0.f; stats_.save(); }
+        }
         audio_.update();
         buildScene();
         renderer_->render(frame_, cubes_, worldQuads_, screenQuads_, meshes_);
@@ -1031,9 +1089,15 @@ void App::handleEvents() {
             } else if (screen_ == kScreenWadPath && e.text.text) {
                 for (const char* c = e.text.text; *c; ++c)
                     if (static_cast<unsigned char>(*c) >= 32 && wadEntry_.size() < 400) wadEntry_.push_back(*c);
+            } else if (screen_ == kScreenEmailEntry && e.text.text) {
+                for (const char* c = e.text.text; *c; ++c) {
+                    char ch = static_cast<char>(std::tolower(static_cast<unsigned char>(*c)));
+                    if ((std::isalnum(static_cast<unsigned char>(ch)) || ch == '@' || ch == '.' || ch == '_' || ch == '-' || ch == '+') && emailEntry_.size() < 80) emailEntry_.push_back(ch);
+                }
             }
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            stats_.addInput(InputDevice::Mouse);
             if (e.button.button == SDL_BUTTON_LEFT) {
                 if (mode_ == Mode::Fps) fpsIn_.fire = true;
                 else if (!menu_.items.empty()) { play("menu_select", 0.7f); menuSelect(); }
@@ -1047,6 +1111,7 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_KEY_DOWN: {
             SDL_Keycode k = e.key.key;
+            if (!e.key.repeat) stats_.addInput(InputDevice::Keyboard);
             if (k == SDLK_F12) {
                 renderer_->screenshot("redline-screenshot.png");
                 break;
@@ -2208,7 +2273,7 @@ void App::addHud() {
         text(W * 0.5f, H - lh * 1.5f, (assets_.usingWad() ? ("ASSETS: " + assets_.wadName()) : std::string("ASSETS: PROCEDURAL (NO WAD FOUND)")) + (useVoxels_ && voxels_.available() ? "  +  VOXEL DOOM" : ""), s * 0.65f, dim, 1);
         text(W - 24.f, H - lh * 1.5f, std::string("MUSIC: ") + (music_.trackNames().empty() ? "NONE" : (std::string(musicSetName()) + (musicSet_ == MusicSet::Classic ? std::string(" / ") + music_.backendName() : ""))) + "   M MUTE  N SET", s * 0.6f, dim, 2);
         text(24.f, H - lh * 1.5f, pad_ ? "GAMEPAD: " + padName_ : std::string("NO GAMEPAD"), s * 0.6f, dim);
-        if (!profileName_.empty()) text(24.f, H - lh * 2.4f, "PLAYER " + profileName_ + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()) + "   (T)", s * 0.6f, dim);
+        if (!profileName_.empty()) text(24.f, H - lh * 2.4f, "PLAYER " + profileName_ + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()) + "   (T)" + (stats_.loaded() ? "   PLAYTIME " + PlayerStats::formatDuration(stats_.lifetime().total()) + (stats_.machineCount() > 1 ? " ON " + std::to_string(stats_.machineCount()) + " MACHINES" : "") : ""), s * 0.6f, dim);
     }
     // Overlay screens ---------------------------------------------------------
     if (screen_ != kScreenNone) {
@@ -2219,24 +2284,25 @@ void App::addHud() {
             text(W * 0.5f + 20.f, y, value, s, sel ? white : dim, 0);
         };
         if (screen_ == kScreenOptions) {
-            text(W * 0.5f, H * 0.10f, "OPTIONS", s * 2.f, white, 1);
-            float y = H * 0.22f;
+            text(W * 0.5f, H * 0.07f, "OPTIONS", s * 1.8f, white, 1);
+            float y = H * 0.17f;
             char buf[80];
-            row(y, "MUSIC", musicSetName(), screenIndex_ == 0); y += lh * 1.4f;
+            row(y, "MUSIC", musicSetName(), screenIndex_ == 0); y += lh * 1.25f;
             std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(music_.volume() * 100.f)));
-            row(y, "MUSIC VOLUME", buf, screenIndex_ == 1); y += lh * 1.4f;
-            row(y, "MUSIC ENABLED", music_.enabled() ? "ON" : "OFF", screenIndex_ == 2); y += lh * 1.4f;
+            row(y, "MUSIC VOLUME", buf, screenIndex_ == 1); y += lh * 1.25f;
+            row(y, "MUSIC ENABLED", music_.enabled() ? "ON" : "OFF", screenIndex_ == 2); y += lh * 1.25f;
             std::snprintf(buf, sizeof buf, "%.1f", padSens_);
-            row(y, "STICK SENSITIVITY", buf, screenIndex_ == 3); y += lh * 1.4f;
-            row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 4); y += lh * 1.4f;
-            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.4f;
-            row(y, "DISPLAY", displayModeName(), screenIndex_ == 6); y += lh * 1.4f;
+            row(y, "STICK SENSITIVITY", buf, screenIndex_ == 3); y += lh * 1.25f;
+            row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 4); y += lh * 1.25f;
+            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.25f;
+            row(y, "DISPLAY", displayModeName(), screenIndex_ == 6); y += lh * 1.25f;
             std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
-            row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.4f;
-            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.4f;
-            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER TO BROWSE)", screenIndex_ == 9); y += lh * 1.4f;
-            row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC MUSIC ONLY  (ENTER TO BROWSE FOR EXTRAS.WAD)", screenIndex_ == 10); y += lh * 1.8f;
-            text(W * 0.5f, y, screenIndex_ == 11 ? "> BACK <" : "BACK", s, screenIndex_ == 11 ? yellow : dim, 1);
+            row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.25f;
+            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.25f;
+            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 9); y += lh * 1.25f;
+            row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER: FIND EXTRAS.WAD)", screenIndex_ == 10); y += lh * 1.25f;
+            row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.6f;
+            text(W * 0.5f, y, screenIndex_ == 12 ? "> BACK <" : "BACK", s, screenIndex_ == 12 ? yellow : dim, 1);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
@@ -2291,6 +2357,18 @@ void App::addHud() {
             }
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 0.5f, wadStatus_, s * 0.8f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "YOU CAN CHANGE THIS LATER UNDER OPTIONS > DOOM WAD", s * 0.7f, dim, 1);
+        } else if (screen_ == kScreenEmailEntry) {
+            text(W * 0.5f, H * 0.20f, "YOUR EMAIL ADDRESS (OPTIONAL)", s * 1.4f, white, 1);
+            float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
+            text(W * 0.5f, H * 0.32f, emailEntry_ + (f > 0.5f ? "_" : " "), s * 1.1f, yellow, 1);
+            float y = H * 0.32f + lh * 2.2f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c) { text(W * 0.5f, y, t, s * sc, c, 1); y += lh * 1.0f; };
+            line("THIS IS FOR THE ONLINE LEADERBOARD THAT IS COMING: IT WILL LET YOUR SCORES,", 0.7f, dim);
+            line("TROPHIES AND PLAY TIME FOLLOW YOU BETWEEN MACHINES ONCE THE ADDRESS IS VERIFIED.", 0.7f, dim);
+            line("IT IS KEPT ON THIS MACHINE ONLY UNTIL THEN, AND IT IS NEVER SHOWN TO OTHER PLAYERS.", 0.7f, dim);
+            y += lh * 0.6f;
+            line("ENTER SAVE   LEAVE EMPTY AND PRESS ENTER TO SKIP   ESC BACK", 0.8f, dim);
+            if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 0.5f, wadStatus_, s * 0.9f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
         } else if (screen_ == kScreenWadPath) {
             text(W * 0.5f, H * 0.22f, "TYPE THE FULL PATH TO DOOM.WAD", s * 1.4f, white, 1);
             float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
@@ -2324,6 +2402,7 @@ void App::addHud() {
             y += lh * 0.95f;
             std::string line2 = (profileName_.empty() ? std::string("") : profileName_ + "   ") + "BEST " + std::to_string(std::max(highScores_.best(), game_->score())) + "   TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total());
             if (fps_.totalEnemies() > 0 && pausedFrom_ == Mode::Fps) line2 += "   DEMONS LEFT " + std::to_string(fps_.enemiesLeft());
+            if (stats_.loaded()) line2 += "   PLAYTIME " + PlayerStats::formatDuration(stats_.lifetime().total());
             text(W * 0.5f, y, line2, s * 0.75f, dim, 1);
         }
         drawMenu(H * 0.22f + lh * 5.2f);

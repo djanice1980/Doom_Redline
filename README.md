@@ -140,6 +140,16 @@ scores, trophies and settings (music set and volume, stick sensitivity,
 inverted look, rumble). Switch or add players from the PLAYER item on the
 title screen; the last player is remembered.
 
+Each profile also carries a random player id, an optional email address
+(OPTIONS > PLAYER EMAIL, or the prompt after a new name) that stays unused
+and unverified until the online leaderboard exists, and play statistics:
+time in the block phase, the fight and the menus, and how many actions came
+from the keyboard, the mouse and a gamepad, kept both as lifetime totals and
+per machine (each save folder gets a random install id; the machine file
+also notes the OS, GPU, core count, memory and gamepad model). The title
+screen and the pause menu show your play time. None of this leaves the
+machine: this build has no network code.
+
 Trophies are one-time achievements (20 of them, from FIRST BLOOD to DOOM
 SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one pops a gold banner with a
 jingle; the full list with unlock dates is under TROPHIES on the title screen

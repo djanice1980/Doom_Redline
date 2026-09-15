@@ -181,13 +181,23 @@ What gives the same outcome safely:
   the server holds the profile (scores, trophies, settings) and a new
   machine's `player_id` is merged into it on first login.
 
-Prep that can be done now, before any network code, and that fits either
-design: mint the two UUIDs; count play time per profile and per machine
-(block phase, fight phase, menus); count input by device (keyboard/mouse
-versus gamepad actions, and the pad model); record per-session machine facts
-(OS, GPU, resolution, voxels on) as local JSON; add an optional `email` field
-to the profile file that stays empty and unused until the account feature
-exists. Nothing leaves the machine until the opt-in toggle arrives.
+Counterpoints raised the same day: the address will be verified before it
+counts, emails are never published, and the profile + address exist locally
+first. Agreed: that is an account, and it is fine. The one implementation
+detail kept is that the database key is the random `player_id`, with the
+verified email as a unique login attribute (which is also how Supabase Auth
+models users), so a player changing address keeps their history.
+
+**Prep done 2026-09-15** (`src/game/playerstats.cpp`, `stats_test`): every
+profile has a `player_id` UUID and an optional email (asked once after a new
+name, editable under OPTIONS > PLAYER EMAIL, marked NOT VERIFIED until the
+account feature exists); every save folder has an `install_id`; play time is
+counted per phase, lifetime and per machine; keyboard, mouse and gamepad
+actions are counted the same way; each machine file records platform, OS,
+GPU, cores, RAM and gamepad model. Nothing leaves the machine. Still to do
+when the service exists: the verification flow (email a six-digit code the
+player types into the game, since the game is not a browser), the run
+record, and the opt-in upload.
 
 ## 8. Order of work when you pick this up
 

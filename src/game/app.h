@@ -18,6 +18,7 @@
 #include "game/fps_mode.h"
 #include "game/ambient.h"
 #include "game/voxels.h"
+#include "game/playerstats.h"
 #include "render/renderer.h"
 #include "render/vk_context.h"
 
@@ -153,6 +154,10 @@ private:
     bool useVoxels_ = false;
     HighScores highScores_;
     Trophies trophies_;
+    MachineInfo machine_;              // this save folder's install id and hardware facts
+    PlayerStats stats_;                // per-profile identity, play time and input counters
+    float statsSaveT_ = 0.f;
+    std::string emailEntry_;
     int lastRank_ = 0;
     float lastInvulnChance_ = 0.f;   // the prize rolled at the last fight start (for the failure notice)
     enum class MusicSet { Classic, Sc55, Modern };
@@ -168,7 +173,7 @@ private:
     bool dialogDone_ = false, dialogOpen_ = false, dialogForExtras_ = false;
     std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
-    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath };
+    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     std::string nameEntry_;

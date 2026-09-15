@@ -90,6 +90,7 @@ if(REDLINE_BUILD_GAME)
       src/game/ambient.cpp
       src/game/kvx.cpp
       src/game/voxels.cpp
+      src/game/playerstats.cpp
       src/audio/audio.cpp
       src/audio/opl3.cpp
       src/audio/opl_driver.cpp
@@ -189,6 +190,9 @@ if(REDLINE_BUILD_GAME)
     add_test(NAME music_test COMMAND music_test)
   endif()
   if(REDLINE_BUILD_TESTS)
+    add_executable(stats_test tests/stats_test.cpp src/game/playerstats.cpp)
+    target_include_directories(stats_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    add_test(NAME stats_test COMMAND stats_test)
     add_executable(kvx_test tests/kvx_test.cpp src/game/kvx.cpp)
     target_include_directories(kvx_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(kvx_test PRIVATE glm::glm)
