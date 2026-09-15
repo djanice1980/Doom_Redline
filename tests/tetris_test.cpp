@@ -521,13 +521,23 @@ static void testPanicAndPurge() {
     CHECK(corrupting >= 4);   // ~2 s at >= 6 events/s with bursts of up to 4 extra
     // The BFG: every red block and every flicker gone, pieces cleansed.
     g.setCell(3, 19, Cell{CellKind::Red, 0});
+    runUntil(g, Phase::Falling);   // the corruption loop may have locked the piece; get one in the air
     g.forcePiece(Shape::T, {true, false, true, false});
+    CHECK(g.active() && g.phase() == Phase::Falling);
     int removed = g.purgeRed();
     CHECK(removed >= 1);
     int reds = 0, flick = 0;
     for (int row = 0; row < 20; ++row) for (int c = 0; c < 10; ++c) { reds += g.at(c, row).red(); flick += g.at(c, row).corrupt > 0.f; }
     CHECK(reds == 0 && flick == 0);
     CHECK(!g.next().red[0] && !g.active()->red[0]);
+    // ...and the whole stack collapses to the floor, then the same piece resumes falling.
+    CHECK(g.phase() == Phase::Settling && g.collapsing());
+    Shape held = g.active()->shape;
+    runUntil(g, Phase::Falling);
+    for (int row = 0; row < 19; ++row)
+        for (int c = 0; c < 10; ++c)
+            if (!g.at(c, row).empty()) CHECK(!g.at(c, row + 1).empty());   // nothing floats
+    CHECK(g.active() && g.active()->shape == held);
     // Lines no longer raise the level by default.
     Game h(1, fastRules());
     for (int row = 16; row < 20; ++row) fill(h, row, CellKind::Normal, 0);

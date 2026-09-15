@@ -29,6 +29,7 @@ const std::vector<TrophyDef>& trophyCatalogue() {
         {"collector", "COLLECTOR", "PICK UP 20 ITEMS IN ONE GAME"},
         {"grown", "TOO SLOW", "KILL A DEMON THAT HAS GROWN"},
         {"doom_slayer", "DOOM SLAYER!", "SET A NEW HIGH SCORE"},
+        {"rip_and_tear", "RIP AND TEAR!!!", "EARN EVERY OTHER TROPHY"},
     };
     return kAll;
 }

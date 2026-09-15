@@ -54,8 +54,10 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   stacking (`App::bfgHoldT_`, once per playthrough via `bfgUsed_`; a green
   glow builds while charging and resets if a key is released) calls
   `Game::purgeRed()`: every red
-  block is erased, all flickering and spawning stops, and the red minos of the
-  falling and next pieces become normal. Green flash, DSBFG, "BFG SPENT" in
+  block is erased, all flickering and spawning stops, the red minos of the
+  falling and next pieces become normal, and the whole stack collapses to the
+  floor (Settling with `collapseAll_`, the post-fight collapse; the falling
+  piece waits and resumes). Green flash, DSBFG, "BFG SPENT" in
   the side panel afterwards. Not mentioned in the README or in-game hints.
 - **Evil spawn.** `evilSpawnCandidates()` lists empty cells whose four
   neighbours are all red or corrupting: the floor and side walls count as red,
@@ -294,7 +296,9 @@ Top 10 in SDL's pref path as whitespace-separated lines; `add()` returns the
   once with a banner, jingle and rumble. Hooks: kills (first blood, boss
   tiers, grown), fights survived (red line, untouchable, survivor), clears
   (tetris, combo x3, chain), pickups (collector, arsenal), BFG, invulnerable,
-  level-ups, blocks destroyed, and a #1 high score (doom_slayer).
+  level-ups, blocks destroyed, a #1 high score (doom_slayer), and
+  `rip_and_tear` (RIP AND TEAR!!!), awarded by `App::trophy` itself the moment
+  the other 19 are all held.
 - Level card: 4 s after the fly-out; block gravity pauses while a piece would
   be falling, the collapse still animates.
 - Gamepad: SDL3 gamepad API; axes polled per frame with an 18 % dead zone and

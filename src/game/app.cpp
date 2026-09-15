@@ -379,6 +379,17 @@ void App::trophy(const char* id) {
         }
     play("pickup_weapon", 1.f, 1.3f);
     rumble(0.3f, 0.6f, 200);
+    // The ultimate trophy: everything else in the cabinet.
+    if (std::string(id) != "rip_and_tear" && !trophies_.unlocked("rip_and_tear") && trophies_.unlockedCount() == trophies_.total() - 1) {
+        trophies_.unlock("rip_and_tear");
+        announce("RIP AND TEAR!!!", glm::vec4(1.f, 0.2f, 0.1f, 1.f), 2.6f);
+        announce("ULTIMATE TROPHY: EVERY TROPHY EARNED", glm::vec4(1.f, 0.85f, 0.2f, 1.f), 1.1f);
+        std::fprintf(stderr, "[app] trophy unlocked: RIP AND TEAR!!!\n");
+        play("levelup", 1.f, 0.8f);
+        play("bfg", 0.8f);
+        shakeT_ = 0.8f;
+        rumble(1.f, 1.f, 900);
+    }
 }
 
 // --- gamepad -----------------------------------------------------------------
@@ -1151,7 +1162,7 @@ void App::update(float dt) {
             play("rocket_hit", 1.f, 0.8f);   // the blast
             play("explode", 0.8f, 0.7f);
             announce("BFG9000", glm::vec4(0.5f, 1.f, 0.5f, 1.f), 2.2f);
-            announce(std::to_string(removed) + " RED BLOCKS ERASED", glm::vec4(0.7f, 1.f, 0.7f, 1.f), 1.1f);
+            announce(std::to_string(removed) + " RED BLOCKS ERASED  -  THE STACK FALLS", glm::vec4(0.7f, 1.f, 0.7f, 1.f), 1.1f);
             std::fprintf(stderr, "[app] BFG9000 fired: %d red blocks erased\n", removed);
             trophy("bfg");
             rumble(1.f, 1.f, 600);

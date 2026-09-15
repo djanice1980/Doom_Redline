@@ -198,7 +198,8 @@ public:
     float danger() const;                         // 0..1 corruption pressure
     bool panic() const { return stackRows() >= kBoardH - rules_.panicRows; }
     // The secret weapon: removes every red block, stops all corruption and
-    // spawning, and cleanses the red minos of the falling and next pieces.
+    // spawning, cleanses the red minos of the falling and next pieces, and
+    // drops every remaining block to the floor (Settling with collapseAll).
     // Returns the number of red cells removed.
     int purgeRed();
     int corruptionTargetRow() const;              // row the next corruption hits, -1 if none

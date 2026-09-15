@@ -127,8 +127,8 @@ scores, trophies and settings (music set and volume, stick sensitivity,
 inverted look, rumble). Switch or add players from the PLAYER item on the
 title screen; the last player is remembered.
 
-Trophies are one-time achievements (19 of them, from FIRST BLOOD to DOOM
-SLAYER! for a new #1 high score). Unlocking one pops a gold banner with a
+Trophies are one-time achievements (20 of them, from FIRST BLOOD to DOOM
+SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one pops a gold banner with a
 jingle; the full list with unlock dates is under TROPHIES on the title screen
 (or press T). The pause menu shows the run so far (score, level, lines, red
 lines, your best and trophy count, demons left during a fight) and has its

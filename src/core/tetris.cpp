@@ -627,6 +627,15 @@ int Game::purgeRed() {
         }
     if (active_) active_->red = {};
     next_.red = {};
+    // The blast knocks the whole stack loose: every block falls to the floor
+    // (same collapse as after a fight). A falling piece waits and resumes.
+    if (phase_ != Phase::GameOver) {
+        collapseAll_ = true;
+        phase_ = Phase::Settling;
+        phaseAcc_ = 0.f;
+        gravityAcc_ = 0.f;
+        lockAcc_ = 0.f;
+    }
     return removed;
 }
 
