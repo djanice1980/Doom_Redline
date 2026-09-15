@@ -6,6 +6,9 @@
 
 #include "game/app.h"
 
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>   // WinMain shim on Windows; a no-op elsewhere
+
 namespace {
 void usage() {
     std::printf(
@@ -30,6 +33,7 @@ void usage() {
         "  --no-music           Sound effects only\n"
         "  --music-volume <0-1> Music level (default 0.45)\n"
         "  --profile <name>     Player profile to use (created if new)\n"
+        "  --reload-wad <file>  Testing: start with placeholder art, then switch to this WAD after 30 frames\n"
         "  --voxels-dir <dir>   Folder of Voxel Doom .kvx files (default: $REDLINE_VOXELS, ./voxels, ~/Downloads/doom-voxel-models/...)\n"
         "  --voxels | --sprites Force voxel models on or off for this run (default: saved option)\n"
         "  --music <set>        classic (OPL) | sc55 (original score recordings) | modern (Andrew Hulshult); remembered\n"
@@ -72,12 +76,22 @@ int main(int argc, char** argv) {
         else if (a == "--music-volume") o.musicVolume = static_cast<float>(std::atof(next()));
         else if (a == "--music") o.musicSet = next();
         else if (a == "--profile") o.profile = next();
+        else if (a == "--reload-wad") o.reloadWad = next();
         else if (a == "--voxels-dir") o.voxelDir = next();
         else if (a == "--voxels") o.voxels = 1;
         else if (a == "--sprites") o.voxels = 0;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }
+#ifdef _WIN32
+    // No console under the GUI subsystem: keep the log next to the save data.
+    if (char* pref = SDL_GetPrefPath("redline", "redline")) {
+        std::string log = std::string(pref) + "redline.log";
+        SDL_free(pref);
+        std::freopen(log.c_str(), "w", stderr);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
+#endif
     try {
         rl::game::App app(o);
         return app.run();

@@ -54,11 +54,17 @@ The game looks for an IWAD in this order and uses the first that exists:
 
 1. `--wad <file>` on the command line
 2. `$REDLINE_WAD`
-3. `./wads/*.wad` (this folder is git-ignored; drop or symlink a WAD there)
-4. The Steam install of Ultimate Doom / Doom II (`~/.steam/steam/steamapps/common/Ultimate Doom/rerelease/doom.wad`, etc.)
+3. The path you picked in the game, saved as `wad.txt` in the save folder
+4. `redline.cfg` next to the executable (`wad=<path>`, written by the Windows installer)
+5. `./wads/*.wad` and `<exe folder>/wads/*.wad` (git-ignored; drop or symlink a WAD there)
+6. The Steam / GOG install of Ultimate Doom / Doom II on Linux or Windows
 
-If nothing is found it says so on stderr and uses procedural art. You need to own
-the game; the WADs are never copied into the repo.
+If nothing is found, the title screen asks: **REDLINE NEEDS DOOM** offers a
+native file browser, a typed path, or playing on with placeholder art. The
+chosen WAD is checked, swapped in live (art, sounds, music) and remembered;
+OPTIONS > DOOM WAD changes it later. You need to own the game; the WADs are
+never copied anywhere. `docs/packaging.md` covers the Windows installer and
+the Linux packages.
 
 `build/src/wad/wadinfo <file.wad>` prints what a WAD contains (sprites, textures,
 flats, font glyphs, sounds) and can dump individual lumps; `--help` lists flags.
@@ -297,7 +303,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --screenshot <png>  --frames <n>       --bot              --mute
 --level <n>         --absorb <sec>     --god              --arsenal <n>
 --keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
---voxels-dir <dir>  --voxels           --sprites
+--voxels-dir <dir>  --voxels           --sprites          --reload-wad <file>
 ```
 
 `--scenario redline` starts with a nearly complete red row plus a few red
@@ -330,7 +336,8 @@ src/audio     SDL3 stream mixer, MUS sequencer, GENMIDI, OPL3 emulator, FluidSyn
 shaders       GLSL, compiled by glslc at build time and embedded
 tests         tetris_test, wad_test, opl_test, music_test, kvx_test
 tools         wadinfo, embed.cmake
-docs          design.md (rules and scene layout), remix.md (RTX Remix plan)
+packaging     linux (desktop entry, icon), windows (Inno Setup script, icon), arch (PKGBUILD)
+docs          design.md (rules and scene layout), packaging.md (installers), remix.md (RTX Remix plan)
 ```
 
 ## RTX Remix

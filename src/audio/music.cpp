@@ -107,8 +107,18 @@ void Music::shutdown() {
     if (!dumpPath_.empty() && !dumpDone_ && !dump_.empty()) { dumpDone_ = true; writeWav(dumpPath_, dump_, sampleRate_); }
 }
 
+void Music::clearTracks() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    track_ = nullptr;
+    currentName_.clear();
+    nextName_.clear();
+    tracks_.clear();
+    oggTracks_.clear();
+}
+
 bool Music::init(uint32_t deviceId, uint32_t sampleRate, const GenMidiBank& bank, const std::string& soundfontPath) {
     sampleRate_ = sampleRate;
+    backend_.reset();   // a re-init (new WAD) gets the new GENMIDI bank
 #ifdef REDLINE_HAVE_FLUIDSYNTH
     if (!soundfontPath.empty()) {
         if (auto f = FluidBackend::create(sampleRate, soundfontPath)) {

@@ -41,6 +41,7 @@ public:
     // no backend could be created (music stays silent).
     bool init(uint32_t deviceId, uint32_t sampleRate, const GenMidiBank& bank, const std::string& soundfontPath);
     void shutdown();   // unbind/destroy the stream; must run before the audio device closes and before SDL_Quit
+    void clearTracks();   // forget every track (after shutdown; before re-init with a new WAD)
     void addTrack(const std::string& name, std::vector<uint8_t> musData);
     // A streamed Ogg Vorbis track living at a byte range of a file (size 0 = whole file).
     void addOggTrack(const std::string& name, const std::string& path, uint64_t offset, uint64_t size, float gain = 1.f);

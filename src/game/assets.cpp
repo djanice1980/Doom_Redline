@@ -18,17 +18,78 @@ namespace {
 const char* kTierNames[kEnemyTiers] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON", "CYBERDEMON", "SPIDER MASTERMIND"};
 }
 
-std::optional<fs::path> Assets::findWad(const std::optional<fs::path>& explicitPath) {
+namespace {
+std::string readFirstLine(const fs::path& p) {
+    std::string line;
+    if (std::FILE* f = std::fopen(p.string().c_str(), "r")) {
+        char buf[1024] = {};
+        if (std::fgets(buf, sizeof buf, f)) line = buf;
+        std::fclose(f);
+    }
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    return line;
+}
+}  // namespace
+
+std::string Assets::savedWadPath(const std::string& prefDir) {
+    if (prefDir.empty()) return "";
+    return readFirstLine(fs::path(prefDir) / "wad.txt");
+}
+
+// redline.cfg is a tiny key=value file an installer can drop next to the
+// executable: `wad=C:\Games\DOOM\doom.wad`.
+std::string Assets::configWadPath(const std::string& baseDir) {
+    if (baseDir.empty()) return "";
+    std::string out;
+    if (std::FILE* f = std::fopen((fs::path(baseDir) / "redline.cfg").string().c_str(), "r")) {
+        char buf[1024];
+        while (std::fgets(buf, sizeof buf, f)) {
+            std::string line = buf;
+            while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
+            if (line.rfind("wad=", 0) == 0) { out = line.substr(4); break; }
+        }
+        std::fclose(f);
+    }
+    return out;
+}
+
+std::optional<fs::path> Assets::findWad(const std::optional<fs::path>& explicitPath, const std::string& prefDir, const std::string& baseDir) {
     std::vector<fs::path> candidates;
     if (explicitPath) candidates.push_back(*explicitPath);
     if (const char* e = std::getenv("REDLINE_WAD")) candidates.emplace_back(e);
+    if (std::string s = savedWadPath(prefDir); !s.empty()) candidates.emplace_back(s);
+    if (std::string s = configWadPath(baseDir); !s.empty()) candidates.emplace_back(s);
     std::error_code ec;
-    if (fs::is_directory("wads", ec))
-        for (auto& entry : fs::directory_iterator("wads", ec)) candidates.push_back(entry.path());
+    for (const fs::path& dir : {fs::path("wads"), fs::path(baseDir.empty() ? "." : baseDir) / "wads"})
+        if (fs::is_directory(dir, ec))
+            for (auto& entry : fs::directory_iterator(dir, ec)) candidates.push_back(entry.path());
+    const char* names[] = {"doom.wad", "DOOM.WAD", "doom2.wad", "DOOM2.WAD", "freedoom1.wad", "freedoom2.wad"};
+#ifdef _WIN32
+    {
+        std::vector<std::string> roots;
+        for (const char* env : {"ProgramFiles(x86)", "ProgramFiles", "ProgramW6432"})
+            if (const char* v = std::getenv(env)) roots.emplace_back(v);
+        roots.emplace_back("C:\\Program Files (x86)");
+        roots.emplace_back("C:\\Program Files");
+        const char* dirs[] = {"\\Steam\\steamapps\\common\\Ultimate Doom\\rerelease\\", "\\Steam\\steamapps\\common\\Ultimate Doom\\base\\",
+                              "\\Steam\\steamapps\\common\\Doom 2\\rerelease\\", "\\Steam\\steamapps\\common\\Doom 2\\base\\",
+                              "\\GOG Galaxy\\Games\\DOOM\\", "\\GOG Galaxy\\Games\\DOOM II\\", "\\GOG Galaxy\\Games\\DOOM + DOOM II\\"};
+        for (const std::string& r : roots)
+            for (const char* d : dirs)
+                for (const char* n : names) candidates.emplace_back(r + d + n);
+        for (const char* n : names) candidates.emplace_back(std::string("C:\\DOOM\\") + n);
+    }
+    const char* home = std::getenv("USERPROFILE");
+    if (home) {
+        std::string h = home;
+        const char* dirs[] = {"\\Saved Games\\id Software\\DOOM\\", "\\Documents\\DOOM\\"};
+        for (const char* d : dirs)
+            for (const char* n : names) candidates.emplace_back(h + d + n);
+    }
+#else
     const char* home = std::getenv("HOME");
     if (home) {
         std::string h = home;
-        const char* names[] = {"doom.wad", "DOOM.WAD", "doom2.wad", "DOOM2.WAD", "freedoom1.wad", "freedoom2.wad"};
         const char* dirs[] = {"/.steam/steam/steamapps/common/Ultimate Doom/rerelease/",
                               "/.steam/steam/steamapps/common/Ultimate Doom/base/",
                               "/.local/share/Steam/steamapps/common/Ultimate Doom/rerelease/",
@@ -40,6 +101,7 @@ std::optional<fs::path> Assets::findWad(const std::optional<fs::path>& explicitP
         candidates.emplace_back("/usr/share/games/doom/freedoom1.wad");
         candidates.emplace_back("/usr/share/games/doom/doom.wad");
     }
+#endif
     for (const fs::path& p : candidates) {
         std::string ext = p.extension().string();
         for (auto& ch : ext) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));

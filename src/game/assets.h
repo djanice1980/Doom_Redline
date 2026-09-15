@@ -45,8 +45,13 @@ struct WeaponArt {
 
 class Assets {
 public:
-    // Searches: explicit path, $REDLINE_WAD, ./wads/*.wad, the Steam Doom folders.
-    static std::optional<std::filesystem::path> findWad(const std::optional<std::filesystem::path>& explicitPath);
+    // Searches, in order: explicit path, $REDLINE_WAD, the player's saved choice
+    // (<pref>/wad.txt), the installer's redline.cfg next to the executable,
+    // ./wads and <exe>/wads, then the Steam / GOG Doom folders of this OS.
+    static std::optional<std::filesystem::path> findWad(const std::optional<std::filesystem::path>& explicitPath,
+                                                        const std::string& prefDir = "", const std::string& baseDir = "");
+    static std::string savedWadPath(const std::string& prefDir);     // <pref>/wad.txt, "" if none
+    static std::string configWadPath(const std::string& baseDir);    // wad= line of <exe>/redline.cfg
 
     bool load(const std::optional<std::filesystem::path>& wadPath, audio::Audio& audio);
 

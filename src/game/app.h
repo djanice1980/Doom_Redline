@@ -2,6 +2,7 @@
 // Top-level game: window, modes, scene assembly, menu and HUD.
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -49,6 +50,7 @@ struct Options {
     float musicVolume = 0.45f;
     std::string musicSet;              // "classic" | "sc55" | "modern" (empty = saved preference, default modern when available)
     std::string profile;               // player profile to use (skips the name prompt)
+    std::string reloadWad;             // testing: swap to this WAD after 30 frames
     std::optional<std::filesystem::path> voxelDir;   // KVX pack directory (default: auto-detect)
     int voxels = -1;                   // -1 saved preference, 0 sprites, 1 voxel models
 };
@@ -108,6 +110,12 @@ private:
     const char* musicSetName() const;
     void loadSettings();
     void saveSettings() const;
+    // Doom data: the WAD can be chosen at runtime (first-run screen, OPTIONS) and swapped in live.
+    void initMusic();
+    bool reloadAssets(const std::filesystem::path& wad);
+    void browseForWad();
+    void saveWadChoice(const std::string& path) const;
+    static void dialogCallback(void* userdata, const char* const* files, int filter);   // SDL_DialogFileCallback
     // Profiles: one directory per player holding settings, scores and trophies.
     std::string profilesRoot() const;
     std::vector<std::string> listProfiles() const;
@@ -147,8 +155,15 @@ private:
     MusicSet musicSet_ = MusicSet::Classic;
     std::string settingsPath_;
     std::string profileName_;
+    std::string prefDir_, baseDir_;    // SDL pref path (save data) and executable folder (installer config)
+    bool wadMissing_ = false;          // running on placeholder art; the setup screen is offered
+    std::string wadEntry_;             // typed path on the WAD path screen
+    std::string wadStatus_;            // last result line on the WAD screens
+    std::mutex dialogMutex_;
+    std::vector<std::string> dialogFiles_;
+    bool dialogDone_ = false, dialogOpen_ = false;
     // Overlay screens on top of the title / pause menus.
-    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits };
+    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     std::string nameEntry_;

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 #include <glm/gtc/constants.hpp>
@@ -51,9 +52,14 @@ App::App(Options opts) : opts_(std::move(opts)) {
     renderer_ = std::make_unique<render::Renderer>(*ctx_);
 
     if (!opts_.mute) audio_.init();
+    if (char* p = SDL_GetPrefPath("redline", "redline")) { prefDir_ = p; SDL_free(p); }
+    if (const char* b = SDL_GetBasePath()) baseDir_ = b;
     std::optional<std::filesystem::path> wad;
-    if (!opts_.noWad) wad = Assets::findWad(opts_.wad);
-    if (!wad && !opts_.noWad) std::fprintf(stderr, "[assets] no Doom WAD found; using procedural art (pass --wad <file> or set REDLINE_WAD)\n");
+    if (!opts_.noWad && opts_.reloadWad.empty()) wad = Assets::findWad(opts_.wad, prefDir_, baseDir_);
+    if (!wad && !opts_.noWad) {
+        wadMissing_ = true;
+        std::fprintf(stderr, "[assets] no Doom WAD found; using procedural art (the game will ask for one; or pass --wad <file> / set REDLINE_WAD)\n");
+    }
     if (!assets_.load(wad, audio_)) throw std::runtime_error("asset build failed");
     renderer_->setAtlas(assets_.atlas().image());
     buildEnvironment();
@@ -65,34 +71,11 @@ App::App(Options opts) : opts_(std::move(opts)) {
         else std::fprintf(stderr, "[voxels] no Voxel Doom pack found (set REDLINE_VOXELS or --voxels-dir); sprites only\n");
     }
 
-    // Music: MUS tracks from the WAD through the OPL3 emulator with GENMIDI,
-    // or FluidSynth when a soundfont is available.
-    if (!opts_.mute && !opts_.noMusic) {
-        audio::GenMidiBank bank;
-        if (auto parsed = audio::parseGenMidi(assets_.genmidi)) bank = std::move(*parsed);
-        else bank = audio::builtinGenMidi();
-        std::string soundfont;
-        if (const char* e = std::getenv("REDLINE_SOUNDFONT")) soundfont = e;
-        else {
-            const char* candidates[] = {"/usr/share/soundfonts/FluidR3_GM.sf2", "/usr/share/soundfonts/default.sf2", "/usr/share/sounds/sf2/FluidR3_GM.sf2",
-                                        "/usr/share/soundfonts/FluidR3_GM2-2.sf2", "/usr/share/sounds/sf2/default-GM.sf2"};
-            std::error_code ec;
-            for (const char* c : candidates) if (std::filesystem::is_regular_file(c, ec)) { soundfont = c; break; }
-        }
-        bool ok = music_.init(audio_.deviceId(), audio::Audio::kRate, bank, soundfont);
-        for (auto& [name, data] : assets_.music) music_.addTrack(name, data);
-        // The recorded soundtracks are mastered hot; bring them level with the synth.
-        if (music_.oggAvailable())
-            for (const Assets::OggLump& l : assets_.oggMusic) music_.addOggTrack(l.name, l.path, l.offset, l.size, l.name[0] == 'H' ? 0.55f : 0.8f);
-        music_.setVolume(opts_.musicVolume);
-        std::fprintf(stderr, "[music] %s, %zu tracks, backend %s\n", ok ? "ready" : "unavailable", music_.trackNames().size(), music_.backendName());
-    }
+    initMusic();
     // Profiles: pick up the last player, or ask for a name on first launch.
     {
         std::string last;
-        char* pref = SDL_GetPrefPath("redline", "redline");
-        std::string base = pref ? pref : "";
-        if (pref) SDL_free(pref);
+        std::string base = prefDir_;
         if (std::FILE* f = std::fopen((base + "profile.txt").c_str(), "r")) {
             char buf[64] = {};
             if (std::fgets(buf, sizeof buf, f)) { last = buf; while (!last.empty() && (last.back() == '\n' || last.back() == '\r')) last.pop_back(); }
@@ -116,6 +99,88 @@ App::App(Options opts) : opts_(std::move(opts)) {
 
     newGame();
     applyScenario();
+    // First run without Doom data: offer to find it before anything else.
+    if (wadMissing_ && opts_.scenario == "title") openScreen(kScreenWadSetup);
+}
+
+// Music: MUS tracks from the WAD through the OPL3 emulator with GENMIDI, or
+// FluidSynth when a soundfont is available; the rerelease Ogg sets stream from
+// extras.wad. Safe to call again after the WAD changes.
+void App::initMusic() {
+    music_.shutdown();
+    music_.clearTracks();
+    if (!opts_.mute && !opts_.noMusic) {
+        audio::GenMidiBank bank;
+        if (auto parsed = audio::parseGenMidi(assets_.genmidi)) bank = std::move(*parsed);
+        else bank = audio::builtinGenMidi();
+        std::string soundfont;
+        if (const char* e = std::getenv("REDLINE_SOUNDFONT")) soundfont = e;
+        else {
+            const char* candidates[] = {"/usr/share/soundfonts/FluidR3_GM.sf2", "/usr/share/soundfonts/default.sf2", "/usr/share/sounds/sf2/FluidR3_GM.sf2",
+                                        "/usr/share/soundfonts/FluidR3_GM2-2.sf2", "/usr/share/sounds/sf2/default-GM.sf2"};
+            std::error_code ec;
+            for (const char* c : candidates) if (std::filesystem::is_regular_file(c, ec)) { soundfont = c; break; }
+        }
+        bool ok = music_.init(audio_.deviceId(), audio::Audio::kRate, bank, soundfont);
+        for (auto& [name, data] : assets_.music) music_.addTrack(name, data);
+        // The recorded soundtracks are mastered hot; bring them level with the synth.
+        if (music_.oggAvailable())
+            for (const Assets::OggLump& l : assets_.oggMusic) music_.addOggTrack(l.name, l.path, l.offset, l.size, l.name[0] == 'H' ? 0.55f : 0.8f);
+        music_.setVolume(std::max(music_.volume(), 0.f) > 0.f ? music_.volume() : opts_.musicVolume);
+        std::fprintf(stderr, "[music] %s, %zu tracks, backend %s\n", ok ? "ready" : "unavailable", music_.trackNames().size(), music_.backendName());
+    }
+}
+
+// Swaps every Doom-derived asset for the ones in `wad`: atlas, sounds, music.
+// Game state is untouched (it only refers to art by logical name).
+bool App::reloadAssets(const std::filesystem::path& wad) {
+    Assets fresh;
+    if (!fresh.load(wad, audio_) || !fresh.usingWad()) {
+        std::fprintf(stderr, "[assets] %s is not a usable Doom WAD\n", wad.string().c_str());
+        return false;
+    }
+    assets_ = std::move(fresh);
+    renderer_->setAtlas(assets_.atlas().image());
+    buildEnvironment();
+    buildProps();
+    initMusic();
+    music_.stop(0.f);   // updateMusic() restarts the right track from the new set
+    wadMissing_ = false;
+    wadStatus_.clear();
+    if (screen_ == kScreenWadSetup || screen_ == kScreenWadPath) closeScreen();
+    saveWadChoice(wad.string());
+    announce("DOOM DATA: " + assets_.wadName(), glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
+    std::fprintf(stderr, "[assets] switched to %s\n", wad.string().c_str());
+    return true;
+}
+
+void App::saveWadChoice(const std::string& path) const {
+    if (prefDir_.empty()) return;
+    if (std::FILE* f = std::fopen((prefDir_ + "wad.txt").c_str(), "w")) { std::fprintf(f, "%s\n", path.c_str()); std::fclose(f); }
+}
+
+void App::dialogCallback(void* userdata, const char* const* files, int) {
+    App* app = static_cast<App*>(userdata);
+    std::lock_guard<std::mutex> lock(app->dialogMutex_);
+    app->dialogFiles_.clear();
+    if (files) for (const char* const* f = files; *f; ++f) app->dialogFiles_.emplace_back(*f);
+    else std::fprintf(stderr, "[app] file dialog: %s\n", SDL_GetError());
+    app->dialogDone_ = true;
+}
+
+// Native "open file" dialog (SDL3: Windows common dialog, GTK/portal/kdialog on
+// Linux). The result arrives through dialogCallback and is applied in update().
+void App::browseForWad() {
+    if (dialogOpen_) return;
+    dialogOpen_ = true;
+    wadStatus_ = "CHOOSE DOOM.WAD IN THE FILE WINDOW";
+    static const SDL_DialogFileFilter filters[] = {{"Doom WAD files", "wad;WAD"}, {"All files", "*"}};
+    std::string start;
+    if (assets_.usingWad()) {
+        std::string saved = Assets::savedWadPath(prefDir_);
+        if (!saved.empty()) start = std::filesystem::path(saved).parent_path().string();
+    }
+    SDL_ShowOpenFileDialog(&App::dialogCallback, this, window_, filters, 2, start.empty() ? nullptr : start.c_str(), false);
 }
 
 App::~App() {
@@ -509,10 +574,12 @@ void App::openScreen(int screen) {
     screenIndex_ = 0;
     if (screen == kScreenProfiles) profileList_ = listProfiles();
     if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; SDL_StartTextInput(window_); }
+    if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
+    if (screen == kScreenWadSetup) wadStatus_.clear();
 }
 
 void App::closeScreen() {
-    if (screen_ == kScreenNameEntry) SDL_StopTextInput(window_);
+    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath) SDL_StopTextInput(window_);
     if (nameRequired_ && profileName_.empty()) { openScreen(kScreenNameEntry); return; }   // no dodging the name
     screen_ = kScreenNone;
 }
@@ -530,6 +597,7 @@ void App::adjustOption(int dir) {
     case 5: padRumble_ = !padRumble_; if (padRumble_) rumble(0.5f, 0.5f, 150); break;
     case 6: displayMode_ = (displayMode_ + 3 + dir) % 3; applyDisplay(); break;
     case 8: if (voxels_.available()) useVoxels_ = !useVoxels_; break;
+    case 9: if (dir > 0) browseForWad(); break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -551,12 +619,12 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 10;   // 9 options + BACK
+        const int n = 11;   // 10 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 9) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 9) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 9) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 10) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 10) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 10) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
@@ -564,6 +632,34 @@ void App::screenKey(int key, bool fromPad) {
     case kScreenCredits:
         if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_BACKSPACE || key == SDLK_SPACE) closeScreen();
         break;
+    case kScreenWadSetup: {
+        const int n = 4;   // browse, type, placeholder, quit
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+            play("menu_select", 0.7f);
+            if (screenIndex_ == 0) browseForWad();
+            else if (screenIndex_ == 1) openScreen(kScreenWadPath);
+            else if (screenIndex_ == 2) closeScreen();
+            else running_ = false;
+        }
+        else if (key == SDLK_ESCAPE) closeScreen();
+        break;
+    }
+    case kScreenWadPath: {
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+            std::string p = wadEntry_;
+            while (!p.empty() && p.back() == ' ') p.pop_back();
+            if (!p.empty() && p.front() == '"' && p.back() == '"' && p.size() > 1) p = p.substr(1, p.size() - 2);
+            std::error_code ec;
+            if (p.empty()) return;
+            if (!std::filesystem::is_regular_file(p, ec)) { wadStatus_ = "FILE NOT FOUND"; play("menu", 0.6f); return; }
+            if (!reloadAssets(p)) wadStatus_ = "NOT A DOOM WAD";
+        }
+        else if (key == SDLK_BACKSPACE) { if (!wadEntry_.empty()) wadEntry_.pop_back(); }
+        else if (key == SDLK_ESCAPE) { SDL_StopTextInput(window_); if (wadMissing_) openScreen(kScreenWadSetup); else closeScreen(); }
+        break;
+    }
     case kScreenProfiles: {
         int n = static_cast<int>(profileList_.size()) + 1;   // + NEW PLAYER
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
@@ -917,6 +1013,9 @@ void App::handleEvents() {
                     char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(*c)));
                     if (((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == ' ') && nameEntry_.size() < 12) nameEntry_.push_back(ch);
                 }
+            } else if (screen_ == kScreenWadPath && e.text.text) {
+                for (const char* c = e.text.text; *c; ++c)
+                    if (static_cast<unsigned char>(*c) >= 32 && wadEntry_.size() < 400) wadEntry_.push_back(*c);
             }
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -1147,6 +1246,15 @@ void App::handleFpsEvents() {
 
 void App::update(float dt) {
     modeT_ += dt;
+    if (dialogDone_) {
+        std::vector<std::string> files;
+        { std::lock_guard<std::mutex> lock(dialogMutex_); files.swap(dialogFiles_); dialogDone_ = false; }
+        dialogOpen_ = false;
+        if (files.empty()) wadStatus_ = wadMissing_ ? "NO FILE CHOSEN" : "";
+        else if (reloadAssets(files.front())) {}
+        else wadStatus_ = "NOT A DOOM WAD: " + std::filesystem::path(files.front()).filename().string();
+    }
+    if (!opts_.reloadWad.empty() && frameCount_ == 30) reloadAssets(opts_.reloadWad);
     for (Announcement& a : announcements_) a.t += dt;
     bfgFlash_ = std::max(0.f, bfgFlash_ - dt * 1.2f);
     // The secret chord: B, F and G held together for two seconds while stacking.
@@ -2086,8 +2194,10 @@ void App::addHud() {
             row(y, "DISPLAY", displayModeName(), screenIndex_ == 6); y += lh * 1.4f;
             std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
             row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.4f;
-            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.8f;
-            text(W * 0.5f, y, screenIndex_ == 9 ? "> BACK <" : "BACK", s, screenIndex_ == 9 ? yellow : dim, 1);
+            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.4f;
+            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER TO BROWSE)", screenIndex_ == 9); y += lh * 1.8f;
+            text(W * 0.5f, y, screenIndex_ == 10 ? "> BACK <" : "BACK", s, screenIndex_ == 10 ? yellow : dim, 1);
+            if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
             text(W * 0.5f, H * 0.12f, "TROPHIES  " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()), s * 1.6f, yellow, 1);
@@ -2125,6 +2235,31 @@ void App::addHud() {
             line("MODERN SOUNDTRACK: ANDREW HULSHULT   SC-55 RECORDINGS: THE DOOM RERELEASE", 0.7f, dim, 0.85f);
             line("LIBVORBIS, FLUIDSYNTH, GLM", 0.7f, dim, 1.4f);
             line("ESC OR B BACK", 0.7f, dim, 1.f);
+        } else if (screen_ == kScreenWadSetup) {
+            text(W * 0.5f, H * 0.12f, "REDLINE NEEDS DOOM", s * 2.f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
+            float y = H * 0.12f + lh * 3.f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap) { text(W * 0.5f, y, t, s * sc, c, 1); y += lh * gap; };
+            line("THE MONSTERS, WEAPONS, SOUNDS AND MUSIC COME FROM YOUR OWN COPY OF DOOM.", 0.8f, white, 1.0f);
+            line("POINT REDLINE AT DOOM.WAD OR DOOM2.WAD (STEAM, GOG, OR THE ORIGINAL DISC).", 0.8f, white, 1.0f);
+            line("EXTRAS.WAD FROM THE DOOM + DOOM II RERELEASE, KEPT NEXT TO IT, ADDS THE SOUNDTRACKS.", 0.7f, dim, 1.0f);
+            line("NOTHING IS COPIED: THE FILE STAYS WHERE IT IS AND THE CHOICE IS REMEMBERED.", 0.7f, dim, 2.0f);
+            const char* items[4] = {"BROWSE FOR THE WAD FILE", "TYPE THE PATH", "PLAY WITH PLACEHOLDER ART FOR NOW", "QUIT"};
+            for (int i = 0; i < 4; ++i) {
+                bool sel = screenIndex_ == i;
+                text(W * 0.5f, y, sel ? std::string("> ") + items[i] + " <" : items[i], s * 1.05f, sel ? yellow : dim, 1);
+                y += lh * 1.35f;
+            }
+            if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 0.5f, wadStatus_, s * 0.8f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
+            text(W * 0.5f, H - lh * 2.f, "YOU CAN CHANGE THIS LATER UNDER OPTIONS > DOOM WAD", s * 0.7f, dim, 1);
+        } else if (screen_ == kScreenWadPath) {
+            text(W * 0.5f, H * 0.22f, "TYPE THE FULL PATH TO DOOM.WAD", s * 1.4f, white, 1);
+            float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
+            std::string shown = wadEntry_;
+            if (shown.size() > 70) shown = "..." + shown.substr(shown.size() - 67);
+            text(W * 0.5f, H * 0.36f, shown + (f > 0.5f ? "_" : " "), s * 0.9f, yellow, 1);
+            text(W * 0.5f, H * 0.36f + lh * 1.6f, "(SHOWN IN CAPITALS; THE PATH IS KEPT EXACTLY AS TYPED)", s * 0.65f, dim, 1);
+            text(W * 0.5f, H * 0.50f, "ENTER LOAD   ESC BACK", s * 0.8f, dim, 1);
+            if (!wadStatus_.empty()) text(W * 0.5f, H * 0.58f, wadStatus_, s * 0.9f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
         } else if (screen_ == kScreenNameEntry) {
             static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
             text(W * 0.5f, H * 0.22f, "WHAT IS YOUR NAME, MARINE?", s * 1.4f, white, 1);

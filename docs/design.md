@@ -231,6 +231,15 @@ quietly and throttled; they never touch the player, the board or the score.
 
 ## Assets (`src/game/assets.cpp`)
 
+WAD discovery (`Assets::findWad`) takes the pref and executable folders so the
+player's saved `wad.txt` and an installer's `redline.cfg` are honoured; the
+order and the first-run **REDLINE NEEDS DOOM** screen are described in
+`docs/packaging.md`. `App::reloadAssets` rebuilds `Assets` from a new WAD and
+swaps the atlas, environment, props, sound bank and music (`initMusic`)
+without touching game state, which only refers to art by logical name. The
+file browser is SDL3's `SDL_ShowOpenFileDialog`; its callback stores the
+result under a mutex and `update()` applies it on the main thread.
+
 Logical names only. From a Doom IWAD: monsters `POSS` (zombieman), `TROO`
 (imp), `SARG` (demon), `HEAD` (cacodemon), `BOSS` (baron), `CYBR` (cyberdemon),
 `SPID` (spider mastermind) with walk / attack /
