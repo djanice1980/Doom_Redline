@@ -39,7 +39,8 @@ void main() {
     vNormal = R * inNormal;
     vTangent = R * inTangent;
     vFaceUV = inUV;
-    vUV = mix(iUVRect.xy, iUVRect.zw, inUV);
+    vec2 halfTexel = 0.5 / u.misc.xy;
+    vUV = mix(iUVRect.xy + halfTexel, iUVRect.zw - halfTexel, inUV);
     vColor = iColor;
     vEmissive = iEmissive;
     vParams = iParams;

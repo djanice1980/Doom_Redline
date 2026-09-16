@@ -83,6 +83,7 @@ struct FrameParams {
     // Post-processing: exposure multiplier and bloom strength (0 = no bloom passes).
     float exposure = 1.f;
     float bloom = 0.4f;
+    float grade = 0.5f;   // colour grading amount (warm Doom palette), 0 = off
 };
 
 class Renderer {

@@ -23,9 +23,11 @@ layout(set = 0, binding = 0, std140) uniform FrameUBO {
     ivec4 counts;       // x = light count, y = ray-tracing mode (0 off, 1 sun, 2 all lights, 3 + reflections)
     mat4 lightViewProj; // sun shadow map projection
     vec4 shadow;        // x = texel size, y = bias, z = strength (0 = off), w = normal offset
+    vec4 misc;          // xy = atlas size in texels, z = colour grade amount
 } u;
 
 layout(set = 0, binding = 1) uniform sampler2D atlas;
+
 layout(set = 0, binding = 2) uniform sampler2DShadow shadowMap;
 
 #ifdef RT_SHADOWS

@@ -42,6 +42,7 @@ struct Renderer::Ubo {
     glm::ivec4 counts;
     glm::mat4 lightViewProj;
     glm::vec4 shadow;
+    glm::vec4 misc;   // x, y = atlas size in texels; z = colour grade amount
 };
 
 namespace {
@@ -56,12 +57,14 @@ constexpr size_t kInitialQuads = 4096;
 }  // namespace
 
 Renderer::Renderer(VkContext& ctx) : ctx_(ctx), rt_(ctx.rayQuerySupported()) {
+    // The atlas is sampled bilinearly with mips; the shaders sharpen the bilinear transition to one
+    // screen pixel (sampleAtlas in common.glsl), which keeps the chunky Doom pixels without shimmer.
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-    sci.magFilter = VK_FILTER_NEAREST;   // chunky Doom pixels
+    sci.magFilter = VK_FILTER_LINEAR;
     sci.minFilter = VK_FILTER_LINEAR;
-    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sci.maxLod = 0.f;
+    sci.maxLod = VK_LOD_CLAMP_NONE;
     vkCheck(vkCreateSampler(ctx_.device(), &sci, nullptr, &sampler_), "vkCreateSampler");
     {
         VkSamplerCreateInfo mi{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -346,9 +349,38 @@ void Renderer::createDescriptors() {
 void Renderer::setAtlas(const Image& img) {
     ctx_.waitIdle();
     ctx_.destroyTexture(atlas_);
+    // Three mip levels (down to a quarter): enough to stop far walls shimmering, few enough that
+    // neighbouring atlas regions do not bleed into each other much. Transparent texels are
+    // excluded from the average so sprite edges keep their colour.
+    std::vector<std::vector<uint8_t>> levels;
+    levels.push_back(img.rgba);
+    int w = img.width, h = img.height;
+    for (int lvl = 1; lvl < 3 && w > 1 && h > 1; ++lvl) {
+        const std::vector<uint8_t>& src = levels.back();
+        const int nw = w / 2, nh = h / 2;
+        std::vector<uint8_t> dst(static_cast<size_t>(nw) * nh * 4);
+        for (int y = 0; y < nh; ++y)
+            for (int x = 0; x < nw; ++x) {
+                int sum[4] = {0, 0, 0, 0}, opaque = 0;
+                for (int dy = 0; dy < 2; ++dy)
+                    for (int dx = 0; dx < 2; ++dx) {
+                        const uint8_t* p = &src[(static_cast<size_t>(y * 2 + dy) * w + (x * 2 + dx)) * 4];
+                        if (p[3] > 0) { sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; ++opaque; }
+                        sum[3] += p[3];
+                    }
+                uint8_t* o = &dst[(static_cast<size_t>(y) * nw + x) * 4];
+                o[0] = static_cast<uint8_t>(opaque ? sum[0] / opaque : 0);
+                o[1] = static_cast<uint8_t>(opaque ? sum[1] / opaque : 0);
+                o[2] = static_cast<uint8_t>(opaque ? sum[2] / opaque : 0);
+                o[3] = static_cast<uint8_t>(sum[3] / 4);
+            }
+        levels.push_back(std::move(dst));
+        w = nw; h = nh;
+    }
     atlas_ = ctx_.createTexture2D(static_cast<uint32_t>(img.width), static_cast<uint32_t>(img.height), VK_FORMAT_R8G8B8A8_UNORM,
-                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
-    ctx_.uploadTexture(atlas_, img.rgba.data(), img.rgba.size());
+                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, static_cast<uint32_t>(levels.size()));
+    ctx_.uploadTextureLevels(atlas_, levels);
     writeDescriptors();
 }
 
@@ -910,6 +942,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         u.lightColor[i] = glm::vec4(params.lights[i].color, params.lights[i].intensity);
     }
     u.counts = glm::ivec4(nl, rt_ ? params.rtShadows : 0, 0, 0);
+    u.misc = glm::vec4(static_cast<float>(atlas_.width), static_cast<float>(atlas_.height), params.grade, 0.f);
     {
         glm::vec3 dir = glm::normalize(params.sunDir);
         glm::vec3 up = std::fabs(dir.y) > 0.95f ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
@@ -1197,7 +1230,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
             bloomPass(a, blurPipe_, postSets_[kSetB0 + b], glm::vec4(0.f, step(a).y, 0.f, 0.f));
         }
     }
-    fullscreen(frame.imageView, ext, compositePipe_, postSets_[bloom ? kSetComposite : kSetHdr], glm::vec4(params.exposure, bloom ? params.bloom : 0.f, 0.75f, 0.f));
+    fullscreen(frame.imageView, ext, compositePipe_, postSets_[bloom ? kSetComposite : kSetHdr], glm::vec4(params.exposure, bloom ? params.bloom : 0.f, 0.75f, params.grade));
     // HUD and text on top, untouched by the tone curve.
     if (quadScratch_.size() > hdrQuads) {
         vkCmdSetViewport(cmd, 0, 1, &viewport);

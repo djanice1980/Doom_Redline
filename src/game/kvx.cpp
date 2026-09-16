@@ -91,6 +91,25 @@ bool loadKvx(const std::vector<uint8_t>& d, VoxelMeshData& out, std::string* err
                     int32_t m = 0;
                     if (a && !b) m = static_cast<int32_t>(a);          // a's +axis face
                     else if (b && !a) m = -static_cast<int32_t>(b);    // b's -axis face
+                    if (m != 0) {
+                        // Baked ambient occlusion: for each corner of this face, count the solid cells
+                        // on the outer layer touching that corner (0-4). The counts ride in the mask
+                        // above the colour so greedy merging only joins cells with the same shading.
+                        const int outer = m > 0 ? slice : slice - 1;
+                        int key = 0;
+                        for (int c = 0; c < 4; ++c) {
+                            const int cu = i + (c & 1), cv = j + (c >> 1);
+                            int count = 0;
+                            for (int du2 = -1; du2 <= 0; ++du2)
+                                for (int dv2 = -1; dv2 <= 0; ++dv2) {
+                                    int o[3];
+                                    o[axis] = outer; o[u] = cu + du2; o[v] = cv + dv2;
+                                    if (at(o[0], o[1], o[2])) ++count;
+                                }
+                            key = key * 5 + count;
+                        }
+                        m = (m > 0 ? 1 : -1) * ((m > 0 ? m : -m) + 256 * key);
+                    }
                     mask[static_cast<size_t>(j) * nu + i] = m;
                 }
             for (int j = 0; j < nv; ++j)
@@ -107,7 +126,11 @@ bool loadKvx(const std::vector<uint8_t>& d, VoxelMeshData& out, std::string* err
                     }
                     // Emit the quad.
                     const bool positive = m > 0;
-                    const uint32_t rgba = colour(static_cast<uint8_t>(positive ? m : -m));
+                    const int packed = positive ? m : -m;
+                    const uint32_t rgba = colour(static_cast<uint8_t>(packed & 0xFF));
+                    int aoKey = packed >> 8;
+                    int ao[4];   // corner (i,j), (i+1,j), (i,j+1), (i+1,j+1)
+                    for (int c = 3; c >= 0; --c) { ao[c] = aoKey % 5; aoKey /= 5; }
                     int base[3] = {0, 0, 0};
                     base[axis] = slice; base[u] = i; base[v] = j;
                     int du[3] = {0, 0, 0}, dv[3] = {0, 0, 0};
@@ -123,7 +146,13 @@ bool loadKvx(const std::vector<uint8_t>& d, VoxelMeshData& out, std::string* err
                         render::MeshVertex mv;
                         mv.x = static_cast<int16_t>(ox); mv.y = static_cast<int16_t>(oy); mv.z = static_cast<int16_t>(oz);
                         mv.n = static_cast<int16_t>(nIdx);
-                        mv.rgba = rgba;
+                        // Which corner of the merged quad this is, in (u, v) terms, picks its occlusion.
+                        const int o[3] = {ox, oy, oz};
+                        const int corner = (o[u] > base[u] ? 1 : 0) + (o[v] > base[v] ? 2 : 0);
+                        const float shade = 1.f - 0.2f * static_cast<float>(ao[corner]);
+                        uint32_t c = rgba;
+                        uint32_t r = static_cast<uint32_t>((c & 0xFF) * shade), g = static_cast<uint32_t>(((c >> 8) & 0xFF) * shade), b = static_cast<uint32_t>(((c >> 16) & 0xFF) * shade);
+                        mv.rgba = (c & 0xFF000000u) | (b << 16) | (g << 8) | r;
                         out.verts.push_back(mv);
                     };
                     push(base[0], base[1], base[2]);

@@ -232,6 +232,8 @@ private:
     bool msaa_ = true;                 // machine settings (display.txt): multisampling and bloom
     bool bloom_ = true;
     bool hdrQuads_ = false;            // while set, screen sprites/panels go into the HDR world pass (weapon + flash)
+    float viewKick_ = 0.f;             // camera pitch kick from firing (radians), decays
+    float lastYaw_ = 0.f, lastPitch_ = 0.f, swayX_ = 0.f, swayY_ = 0.f;   // weapon lag behind the view
     int resW_ = 1600, resH_ = 900;
     std::vector<std::pair<int, int>> resolutions_;
     // Level-up card and per-game stats for trophies.

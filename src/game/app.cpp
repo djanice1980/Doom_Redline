@@ -1428,6 +1428,7 @@ void App::handleFpsEvents() {
             if (brutalActive() && assets_.brWeaponSounds) play(std::string("br_") + assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
             else play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
             muzzleLight_ = 1.f;
+            viewKick_ += ev.a == kRocketLauncher ? 0.045f : ev.a == kShotgun ? 0.03f : ev.a == kChaingun ? 0.006f : 0.004f;
             shakeT_ = ev.a == kRocketLauncher ? 0.2f : (ev.a == kShotgun ? 0.12f : 0.04f);
             rumble(ev.a == kChaingun ? 0.15f : 0.3f, ev.a == kRocketLauncher ? 0.8f : 0.5f, ev.a == kChaingun ? 40 : 90);
             break;
@@ -1574,6 +1575,16 @@ void App::update(float dt) {
     announcements_.erase(std::remove_if(announcements_.begin(), announcements_.end(), [](const Announcement& a) { return a.t > 2.f; }), announcements_.end());
     shakeT_ = std::max(0.f, shakeT_ - dt);
     muzzleLight_ = std::max(0.f, muzzleLight_ - dt * 8.f);
+    viewKick_ *= std::exp(-9.f * dt);
+    {   // weapon lag: the gun trails the view when you turn, then catches up
+        const float dyaw = fps_.yaw() - lastYaw_, dpitch = fps_.pitch() - lastPitch_;
+        lastYaw_ = fps_.yaw(); lastPitch_ = fps_.pitch();
+        const float targetX = std::clamp(-dyaw / std::max(dt, 1e-3f) * 4.f, -22.f, 22.f);
+        const float targetY = std::clamp(dpitch / std::max(dt, 1e-3f) * 3.f, -14.f, 14.f);
+        const float k = 1.f - std::exp(-10.f * dt);
+        swayX_ += (targetX - swayX_) * k;
+        swayY_ += (targetY - swayY_) * k;
+    }
     for (size_t i = 0; i < bursts_.size();) {
         bursts_[i].t += dt;
         if (bursts_[i].t >= bursts_[i].ttl) { bursts_[i] = bursts_.back(); bursts_.pop_back(); }
@@ -1747,7 +1758,9 @@ App::Camera App::blocksCamera() const {
 App::Camera App::fpsCamera() const {
     Camera c;
     c.eye = fps_.eye();
-    c.target = c.eye + fps_.forward();
+    // The view kicks up a little when a gun goes off and settles back.
+    const float p = fps_.pitch() + viewKick_, yaw = fps_.yaw();
+    c.target = c.eye + glm::normalize(glm::vec3(std::sin(yaw) * std::cos(p), std::sin(p), std::cos(yaw) * std::cos(p)));
     c.fov = 80.f;
     return c;
 }
@@ -1811,7 +1824,9 @@ void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& t
     c.color = color;
     c.emissive = glm::vec4(emissive, emissiveStrength);
     c.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
-    c.params = glm::vec4(0.7f, 0.05f, phase, flags);
+    // Blocks and the frame are glossy tiles: smoother, and reflective (flag bit 2) under ray tracing.
+    const bool glossy = tex == assets_.block || tex == assets_.redBlock;
+    c.params = glm::vec4(glossy ? 0.42f : 0.7f, 0.05f, phase, flags + (glossy ? 2.f : 0.f));
     c.rot = glm::vec4(rotX, 0.f, 0.f, 0.f);
     cubes_.push_back(c);
 }
@@ -2525,7 +2540,8 @@ void App::addHud() {
             float gs = H / 200.f;
             bool moving = fpsIn_.fwd || fpsIn_.back || fpsIn_.left || fpsIn_.right;
             float bob = std::sin(time_ * 6.f) * 3.f * gs * (moving ? 1.f : 0.15f);
-            float recoil = fps_.recoil() * 18.f * gs;
+            const float swayX = (std::sin(time_ * 3.f) * 2.5f * (moving ? 1.f : 0.25f) + swayX_) * gs;   // side-to-side while walking, lag when turning
+            float recoil = fps_.recoil() * 18.f * gs + swayY_ * gs;
             hdrQuads_ = true;   // the weapon and its flash bloom with the scene; the HUD after it does not
             if (!gun.empty()) {
                 // Doom draws weapon sprites with their own patch origin at (161, 32) of a 320x200 screen,
@@ -2535,7 +2551,7 @@ void App::addHud() {
                     float ax = r.w > 0 ? static_cast<float>(r.offsetX) / r.w : 0.5f;
                     float ay = r.h > 0 ? 1.f - static_cast<float>(r.offsetY) / r.h : 1.f;
                     // Doom: left edge = 1 - leftoffset in 320-wide space, so the origin sits 1px right of the frame's left edge.
-                    screenSprite(key, (W - 320.f * gs) * 0.5f + 1.f * gs, 32.f * gs + dy, gs, tint, ax, ay, fl);
+                    screenSprite(key, (W - 320.f * gs) * 0.5f + 1.f * gs + swayX, 32.f * gs + dy, gs, tint, ax, ay, fl);
                 };
                 float dy = recoil + std::fabs(bob) + (H - 200.f * gs) * 0.5f;   // centre the 320x200 frame vertically... anchored to the bottom
                 dy = recoil + std::fabs(bob) + (H - 200.f * gs);                 // keep the weapon at the bottom edge

@@ -1,4 +1,5 @@
 #include "common.glsl"
+#include "atlas_frag.glsl"
 
 layout(location = 0) in vec3 vWorldPos;
 layout(location = 1) in vec3 vNormal;
@@ -101,7 +102,7 @@ vec3 traceReflection(vec3 P, vec3 N, vec3 R) {
 #endif
 
 void main() {
-    vec4 tex = texture(atlas, vUV);
+    vec4 tex = sampleAtlas(vUV);
     vec3 albedo = tex.rgb * vColor.rgb;
     vec3 N = normalize(vNormal);
     float rough = vParams.x;
