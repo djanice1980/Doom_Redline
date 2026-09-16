@@ -2027,7 +2027,9 @@ void App::addLights() {
     for (const Prop& p : props_) {
         if (p.lightRadius <= 0.f) continue;
         float f = 0.82f + 0.12f * std::sin(time_ * 9.f + p.phase) + 0.06f * std::sin(time_ * 23.f + p.phase * 3.f);
-        cands.push_back({glm::length(p.pos - cam) - 2.f, {p.pos + glm::vec3(0.f, p.lightHeight, 0.f), p.lightRadius * 1.3f, p.lightColor, 2.4f * f}});
+        // With ray-traced shadows the torches can burn brighter: nothing bleeds through walls any more.
+        float boost = (renderer_->rayTracingAvailable() && rtShadows_ == 2) ? 1.5f : 1.f;
+        cands.push_back({glm::length(p.pos - cam) - 2.f, {p.pos + glm::vec3(0.f, p.lightHeight, 0.f), p.lightRadius * 1.3f, p.lightColor, 2.4f * f * boost}});
     }
     // Every red (or turning) cell glows.
     for (int r = 0; r < core::kBoardH; ++r)
