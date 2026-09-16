@@ -657,6 +657,8 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
     brGibSounds = brShellSounds = brCasingSounds = brDripSounds = brSparkSounds = brRicochetSounds = brDirtSounds = 0;
     brWeaponSounds = brPlayerPain = false;
     brExplodeSounds = brBoneSounds = brImpSounds = brZombieSight = 0;
+    for (EnemyArt& e : enemies) for (SpriteAnim& a : e.brDeath) a = SpriteAnim{};
+    for (WeaponArt& w : weapons) { w.brIdle = SpriteAnim{}; w.brFire = SpriteAnim{}; }
     if (!brutalPackDir) return;
     const fs::path dir = *brutalPackDir;
     int sprites = 0, sounds = 0;
@@ -718,6 +720,54 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
         pngAnim(brSpray[c], spraySets[c], "ABCDEFGHIJ", 24.f);        // blood cloud at the hit point
     }
     pngAnim(brBlast, "EXP4", "ABCDEFGHIJKLMNOPQRSTUVWXY", 40.f, 1);   // fireball at half size (128px)
+    // Brutal Doom's weapons: idle frame plus fire frames with the flash baked in (hands included).
+    pngAnim(weapons[0].brIdle, "SHTN", "A", 1.f);   pngAnim(weapons[0].brFire, "SHTA", "ABCDEJ", 10.f);
+    pngAnim(weapons[1].brIdle, "CHAG", "A", 1.f);   pngAnim(weapons[1].brFire, "CHAF", "ABCD", 40.f);
+    pngAnim(weapons[2].brIdle, "RLNG", "A", 1.f);   pngAnim(weapons[2].brFire, "RLNF", "ABCDEFGH", 16.f);
+    pngAnim(weapons[3].brIdle, "PLSN", "A", 1.f);   pngAnim(weapons[3].brFire, "PLST", "ABCD", 24.f);
+    // Per-weapon deaths, traced from Brutal Doom's DECORATE: segments of sprite:frames:tics.
+    // Frames repeat by tics/2 at 17.5 fps so the pacing matches the mod.
+    struct DeathSpec { int tier; int kind; const char* segments; };
+    const DeathSpec deaths[] = {
+        {0, 0, "POS4:KLMNOPQRST:4"}, {0, 1, "12DG:A:5;12DG:BCD:5;12DG:E:5;12DG:FGHI:5"}, {0, 2, "XBRN:ABCDEF:3"},
+        {0, 3, "ZZD6:AABBCCDD:4;ZZD6:EE:3;ZZD6:FFG:3"}, {0, 4, "ZXZ1:A:6;ZXZ1:B:8"}, {0, 5, "POSL:MO:6;POSR:KL:6"},
+        {1, 0, "TR06:ABCDE:4;TR06:FGHIJK:4"}, {1, 1, "IZD1:ABCDEFGH:4"}, {1, 2, "PBR1:AB:6;PBR1:CDEFGH:3"},
+        {1, 3, "TROH:AAAABBBB:2;TROH:CCCCCCCC:2;TROH:DDD:2;TROH:E:4"}, {1, 4, "TRO3:A:6;TRO3:BBB:3;TRO3:CD:3"}, {1, 5, "TR97:AB:8;TR97:CD:6"},
+        {2, 0, "SAAR:AB:8;SAAR:J:8"}, {2, 1, "SARH:AAAABBBBCCCC:2;SARH:DDDD:2"}, {2, 2, "CRB7:GHIJKL:5"},
+        {2, 3, "S2RG:IJ:8;S2RG:KLMN:4"}, {2, 4, "SARC:AABBCCDD:2;SARC:DD:2"}, {2, 5, "S2RG:IJ:8;S2RG:KLMN:4"},
+        {3, 0, "CCD1:AAEEAAEEAAAAEEAAEEAA:5"}, {3, 1, "CCD1:AAEEAAEEAAAAEEAAEEAA:5"}, {3, 2, "CACB:A:3;CACB:BBBBBB:3"},
+        {3, 3, "CCD1:AAEEAAEEAAAAEEAAEEAA:5"}, {3, 4, "CCD3:A:6;CCD3:B:6"}, {3, 5, "H3D2:AB:6;H3D2:CD:6;H3D2:E:6"},
+        {4, 0, "KSA8:DEFG:6"}, {4, 1, "KSA8:A:8;KSA8:BCBCBC:6;KSA8:C:6"}, {4, 2, "BOSC:ABC:7;BOSC:DEF:7"},
+        {4, 3, "BADH:ABC:9;BADH:D:9"}, {4, 4, "BOH3:AB:8;BOH3:CCC:8;BOH3:D:8"}, {4, 5, "BADD:ABCD:6;BADD:EF:6"},
+    };
+    for (const DeathSpec& ds : deaths) {
+        SpriteAnim a;
+        a.fps = 17.5f;
+        std::string spec = ds.segments;
+        size_t pos = 0;
+        while (pos < spec.size()) {
+            size_t end = spec.find(';', pos);
+            if (end == std::string::npos) end = spec.size();
+            const std::string seg = spec.substr(pos, end - pos);
+            pos = end + 1;
+            const size_t c1 = seg.find(':'), c2 = seg.rfind(':');
+            if (c1 == std::string::npos || c2 == c1) continue;
+            const std::string sprite = seg.substr(0, c1), frames = seg.substr(c1 + 1, c2 - c1 - 1);
+            const int tics = std::atoi(seg.c_str() + c2 + 1);
+            const int repeat = std::max(1, (tics + 1) / 2);
+            for (char f : frames) {
+                const std::string key = sprite + "_" + f;
+                if (!atlas_.has(key)) {
+                    auto img = decodePng(readAll(dir / "sprites" / (sprite + f + "0.png")));
+                    if (!img) continue;
+                    atlas_.add(key, *img);
+                    ++sprites;
+                }
+                for (int r = 0; r < repeat; ++r) { a.frames.push_back(key); a.mirrored.push_back(false); }
+            }
+        }
+        if (!a.frames.empty()) enemies[ds.tier].brDeath[ds.kind] = a;
+    }
     pngAnim(brSparks, "SPKN", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 40.f, 1); // sparks at half size
     pngAnim(brPlasmaHit, "PLX6", "ABCDEFGHIJKLMNOPQRSTUVWXY", 50.f);  // blue plasma burst (128px)
     const char* flareSets[5] = {"LENR", "LENY", "LENB", "LENG", "LENW"};

@@ -413,7 +413,7 @@ void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
 }
 
 // ---------------------------------------------------------------------------
-void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir) {
+void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir, int weapon, bool head) {
     if (!e.alive()) return;
     e.hp -= dmg;
     push(FpsEvent::Type::EnemyHit, hitPos, e.tier);
@@ -429,6 +429,21 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir) 
         std::uniform_real_distribution<float> lucky(0.f, 1.f);
         e.gibbed = brutal_ && e.tier <= 4 && (dmg >= 60.f || -e.hp >= 0.4f * e.maxHp || lucky(rng_) < 0.3f);
         if (e.gibbed) { spawnGibs(e); push(FpsEvent::Type::EnemyGibbed, e.pos, e.tier); }
+        // Otherwise the death animation follows the weapon: a close shotgun blast throws the
+        // body back, the chaingun shreds, plasma carbonises, rockets that fail to gib still blast,
+        // and a high hitscan hit takes the head.
+        e.deathKind = -1;
+        if (brutal_ && !e.gibbed) {
+            const float dist = glm::length(glm::vec3(e.pos.x - playerPos_.x, 0.f, e.pos.z - playerPos_.z));
+            const float roll = lucky(rng_);
+            if (head && (weapon == kShotgun || weapon == kChaingun) && roll < 0.6f) e.deathKind = kDeathHead;
+            else if (weapon == kShotgun) e.deathKind = dist < 4.5f ? kDeathShotgun : (roll < 0.5f ? kDeathAlt : -1);
+            else if (weapon == kChaingun) e.deathKind = roll < 0.7f ? kDeathChaingun : kDeathAlt;
+            else if (weapon == kPlasmaRifle) e.deathKind = kDeathPlasma;
+            else if (weapon == kRocketLauncher) e.deathKind = kDeathBlast;
+            else if (roll < 0.35f) e.deathKind = kDeathAlt;
+        }
+        if (brutal_ && std::getenv("REDLINE_LOG_DEATHS")) std::fprintf(stderr, "[brutal] tier %d killed by weapon %d%s: %s kind %d\n", e.tier, weapon, head ? " (head)" : "", e.gibbed ? "gibbed" : "death", e.deathKind);
         push(FpsEvent::Type::EnemyDied, e.pos, e.tier, e.gibbed ? 1 : 0);
         dropLoot(e);
     } else if (e.state != Enemy::State::Emerging) {
@@ -451,7 +466,7 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir) 
     }
 }
 
-void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game) {
+void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game, int weapon) {
     float blockT = rayBlockDistance(o, d, 60.f, game);
     Enemy* best = nullptr;
     float bestT = blockT;
@@ -490,7 +505,9 @@ void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game) 
         else if (tWall < 60.f) { addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2); if (brutal_) push(FpsEvent::Type::BulletHole, o + d * tWall + nWall * 0.12f, 0, nWall.y > 0.5f ? 0 : 1); }
         return;
     }
-    damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), o + d * bestT, d);
+    const glm::vec3 hit = o + d * bestT;
+    const bool head = hit.y >= best->pos.y + 0.72f * best->height;
+    damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), hit, d, weapon, head);
 }
 
 void FpsMode::fire(core::Game& game) {
@@ -524,7 +541,7 @@ void FpsMode::fire(core::Game& game) {
         d = glm::normalize(d + right * (u(rng_) * w.spread) + up * (u(rng_) * w.spread));
     }
     if (!w.projectile) {
-        hitscan(o, d, w.damage, game);
+        hitscan(o, d, w.damage, game, weapon_);
         return;
     }
     Projectile p;
@@ -547,7 +564,7 @@ void FpsMode::rocketBlast(glm::vec3 pos, float radius, float damage, core::Game&
         if (!e.alive()) continue;
         glm::vec3 c = e.pos + glm::vec3(0.f, e.height * 0.5f, 0.f);
         float d = glm::length(c - pos);
-        if (d < radius + e.radius) damageEnemy(e, damage * (1.f - std::max(0.f, d - e.radius) / radius), c);
+        if (d < radius + e.radius) damageEnemy(e, damage * (1.f - std::max(0.f, d - e.radius) / radius), c, glm::vec3(0.f), kRocketLauncher);
     }
     float pd = glm::length((playerPos_ + glm::vec3(0.f, 0.6f, 0.f)) - pos);
     if (pd < radius) hurtPlayer(45.f * (1.f - pd / radius), pos);
@@ -964,7 +981,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 if (!e.alive() || e.state == Enemy::State::Emerging) continue;
                 glm::vec2 d(p.pos.x - e.pos.x, p.pos.z - e.pos.z);
                 if (glm::length(d) < e.radius + 0.15f && p.pos.y > e.pos.y - 0.1f && p.pos.y < e.pos.y + e.height + 0.1f) {
-                    if (p.blast <= 0.f) damageEnemy(e, p.damage, p.pos);
+                    if (p.blast <= 0.f) damageEnemy(e, p.damage, p.pos, glm::normalize(p.vel), p.fromPlayer ? (p.type == kProjPlasma ? kPlasmaRifle : -1) : -1);
                     remove = true;
                     break;
                 }

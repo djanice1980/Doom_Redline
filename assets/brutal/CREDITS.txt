@@ -22,7 +22,11 @@ sprites/  (from the Brutal Doom Community Expansion, GPLv3)
     C4S1  bullet casing                            (SPRITES/WEAPONS/CASINGS)
     C4S2  shotgun shell                            (SPRITES/WEAPONS/CASINGS)
     EXP4  rocket / BFG fireball, 25 frames         (SPRITES/EXPLOSIONS)
+    SHTN/SHTA, CHAG/CHAF, RLNG/RLNF, PLSN/PLST  shotgun, minigun, rocket launcher and plasma gun (SPRITES/WEAPONS)
     PLX6  plasma bolt burst, 25 frames             (SPRITES/EXPLOSIONS)
+    Per-weapon death animations (SPRITES/MONSTERS): zombieman POS4, 12DG, XBRN, ZXZ1, ZZD6, POSL, POSR;
+      imp TROO V-Y, TR06, IZD1, PBR1, TROH, TRO3, TR97; demon SAAR, SARH, CRB7, S2RG, SARC;
+      cacodemon CCD1, CACB, CCD3, H3D2; baron KSA8, BOSC, BADH, BOH3, BADD
     SPKN  sparks, 26 frames                        (SPRITES/PARTICLES)
     LENR, LENY, LENB, LENG, LENW  soft light discs for the torches and lamps (SPRITES/FLARES)
     FLAR  muzzle flare                             (SPRITES/FLARES)

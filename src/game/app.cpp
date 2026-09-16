@@ -2122,14 +2122,22 @@ void App::addFpsActors() {
         case Enemy::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
         }
         // Gibbed: the XDEATH frames where Doom has them (zombies, imps), otherwise the chunks are the corpse.
+        // Brutal deaths: the per-weapon animation runs through Dying into Dead (its own pace, then holds).
+        float brutalLife = 0.f;
         if (e.gibbed && !e.alive()) {
             if (art.xdeath.empty()) continue;
             anim = &art.xdeath;
+        } else if (!e.alive() && brutal_ && e.deathKind >= 0 && e.deathKind < kDeathKinds && !art.brDeath[e.deathKind].empty()) {
+            anim = &art.brDeath[e.deathKind];
+            loop = false;
+            t = e.state == Enemy::State::Dead ? e.stateT + 0.8f : e.stateT;
+            brutalLife = static_cast<float>(anim->frames.size()) / anim->fps;
         }
         // Corpses fade out; cacodemons (a big sprite lying in the way) go quickest.
         float corpseScale = 1.f;
         if (e.state == Enemy::State::Dead) {
             float life = (e.tier == 3) ? 0.35f : (e.tier >= 5 ? 1.2f : 1.6f);
+            if (brutalLife > 0.f) life = std::max(life, brutalLife - 0.8f + (e.deathKind == kDeathPlasma ? 0.4f : 1.4f));   // let the animation finish, then fade
             float fadeStart = life - 0.35f;
             if (e.stateT >= life) continue;
             if (e.stateT > fadeStart) {
@@ -2466,10 +2474,13 @@ void App::addHud() {
         if (mode_ == Mode::Fps || mode_ == Mode::Countdown) {
             const WeaponArt& wa = assets_.weapons[std::clamp(fps_.currentWeapon(), 0, kWeaponArt - 1)];
             bool flip = false;
+            // Brutal mode with the pack: Brutal Doom's weapon art, flash baked into the fire frames.
+            const bool brutalArt = brutal_ && assets_.usingWad() && !wa.brIdle.empty() && !wa.brFire.empty();
             // Firing: the fire frames with the flash on top. Just released (the plasma rifle's
             // vents): the cool-down frame for a moment. Otherwise idle.
             const float coolFor = std::max(0.25f, weaponDef(fps_.currentWeapon()).cycle) + 0.55f;
-            const std::string& gun = fps_.gunFiring() ? animFrame(wa.fire, fps_.gunAnimT(), false, &flip)
+            const std::string& gun = brutalArt ? (fps_.gunFiring() ? animFrame(wa.brFire, fps_.gunAnimT(), false, &flip) : animFrame(wa.brIdle, 0.f, true, &flip))
+                                   : fps_.gunFiring() ? animFrame(wa.fire, fps_.gunAnimT(), false, &flip)
                                    : (!wa.cooldown.empty() && fps_.gunAnimT() < coolFor) ? animFrame(wa.cooldown, 0.f, true, &flip)
                                    : animFrame(wa.idle, 0.f, true, &flip);
             float gs = H / 200.f;
@@ -2490,8 +2501,8 @@ void App::addHud() {
                 float dy = recoil + std::fabs(bob) + (H - 200.f * gs) * 0.5f;   // centre the 320x200 frame vertically... anchored to the bottom
                 dy = recoil + std::fabs(bob) + (H - 200.f * gs);                 // keep the weapon at the bottom edge
                 if (assets_.usingWad()) {
-                    originSprite(gun, dy, wa.tint, flip);
-                    if (fps_.gunFiring() && fps_.gunAnimT() < wa.flashFor && !wa.flash.empty())
+                    originSprite(gun, dy, brutalArt ? glm::vec4(1.f) : wa.tint, flip);
+                    if (!brutalArt && fps_.gunFiring() && fps_.gunAnimT() < wa.flashFor && !wa.flash.empty())
                         originSprite(animFrame(wa.flash, fps_.gunAnimT(), false), dy, glm::vec4(1.8f, 1.8f, 1.8f, 1.f), false);
                 } else {
                     const render::AtlasRegion& r = assets_.region(gun);

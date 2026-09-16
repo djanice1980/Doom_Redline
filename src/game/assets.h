@@ -27,6 +27,7 @@ struct EnemyArt {
     std::string name;
     SpriteAnim walk, attack, pain, death;
     SpriteAnim xdeath;        // gib death frames (zombies and imps have them); empty otherwise
+    SpriteAnim brDeath[6];    // community pack: per-weapon deaths, indexed by DeathKind (empty when absent)
     float metresPerPixel = 0.031f;
     glm::vec4 tint{1.f};
     std::string sightSound, painSound, deathSound, attackSound;   // logical sound names
@@ -42,6 +43,7 @@ struct WeaponArt {
     SpriteAnim idle, fire, flash;
     SpriteAnim cooldown;      // shown briefly after the trigger is released (plasma rifle's vent frame); may be empty
     float flashFor = 0.12f;   // seconds the muzzle flash is drawn after a shot (matches the frame it was drawn for)
+    SpriteAnim brIdle, brFire;   // community pack: Brutal Doom's weapon art (flash baked into the fire frames); empty when absent
     std::string fireSound;
     glm::vec4 tint{1.f};
 };

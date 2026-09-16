@@ -112,6 +112,7 @@ struct Enemy {
     float growT = 0.f;       // visual flash after growing
     bool grown = false;      // has absorbed blocks at least once
     bool gibbed = false;     // brutal: blown apart (XDEATH frames / chunks instead of the death animation)
+    int deathKind = -1;      // brutal: which per-weapon death animation plays (see kDeathKinds), -1 = the stock one
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 
@@ -156,6 +157,9 @@ struct Decal {
     int kind = 0;            // 0 blood pool, 1 blood splat, 2 bullet hole
     int color = 0;           // as Gore::color
 };
+
+// Brutal death animations, by what killed the monster.
+enum DeathKind { kDeathShotgun = 0, kDeathChaingun = 1, kDeathPlasma = 2, kDeathHead = 3, kDeathBlast = 4, kDeathAlt = 5, kDeathKinds = 6 };
 
 // Doom's monsters bleed red except cacodemons (blue) and the baron family (green).
 inline int bloodColorForTier(int tier) { return tier == 3 ? 2 : tier == 4 ? 1 : 0; }
@@ -256,8 +260,9 @@ public:
 
 private:
     void fire(core::Game& game);
-    void hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game);
-    void damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir = glm::vec3(0.f));
+    void hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game, int weapon = -1);
+    // weapon: the player's weapon id that did it (-1 = monster or unknown); head: a hitscan that struck high.
+    void damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir = glm::vec3(0.f), int weapon = -1, bool head = false);
     void explodeEnemy(Enemy& e, core::Game& game);
     void dropLoot(const Enemy& e);
     void spawnPickup(PickupKind kind, glm::vec3 from, glm::vec3 home);
