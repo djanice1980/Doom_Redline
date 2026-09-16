@@ -2330,7 +2330,7 @@ void App::addLights() {
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});
             }
     for (const BrawlProjectile& p : ambient_.projectiles())
-        cands.push_back({glm::length(p.pos - cam), {p.pos, 3.f, {1.f, 0.5f, 0.1f}, 1.f}});
+        cands.push_back({glm::length(p.pos - cam) - 4.f, {p.pos, 5.f, {1.f, 0.5f, 0.1f}, 2.2f}});   // the brawlers' fireballs light their corner too
     for (const Brawler& b : ambient_.brawlers())
         if (b.flashT > 0.f) cands.push_back({glm::length(b.pos - cam), {b.pos + glm::vec3(0.f, 1.2f, 0.f), 4.f, {1.f, 0.85f, 0.5f}, 2.f * b.flashT}});
     bool inFps = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_));
@@ -2349,7 +2349,11 @@ void App::addLights() {
         }
         for (const Projectile& p : fps_.projectiles()) {
             glm::vec3 col = p.type == kProjBaron ? glm::vec3(0.3f, 1.f, 0.3f) : (p.type == kProjPlasma || p.type == kProjArach) ? glm::vec3(0.4f, 0.6f, 1.f) : p.type == kProjRevenant ? glm::vec3(1.f, 0.75f, 0.4f) : glm::vec3(1.f, 0.5f, 0.1f);
-            cands.push_back({-50.f, {p.pos, p.type == kProjRocket ? 4.f : 3.f, col, 1.2f}});
+            // Fireballs and rockets light their flight path: a strong light with a wide reach,
+            // flickering a little so the glow on the walls moves with the flame.
+            const float flicker = 0.9f + 0.1f * std::sin(time_ * 31.f + p.pos.x * 5.f);
+            const bool rocket = p.type == kProjRocket || p.type == kProjRevenant;
+            cands.push_back({-160.f, {p.pos, rocket ? 8.f : 6.5f, col, (rocket ? 4.2f : 3.2f) * flicker}});
         }
         for (const Pickup& p : fps_.pickups())
             if (p.landed) cands.push_back({glm::length(p.pos - cam), {p.pos + glm::vec3(0.f, 0.4f, 0.f), 1.5f, {0.6f, 0.8f, 1.f}, 0.5f}});
