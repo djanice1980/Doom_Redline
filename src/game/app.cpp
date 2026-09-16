@@ -1158,6 +1158,13 @@ void App::handleEvents() {
                 break;
             }
             if (k == SDLK_T && mode_ == Mode::Title && !e.key.repeat) { openScreen(kScreenTrophies); break; }
+            if (mode_ == Mode::GameOver && gameOverT_ > 1.2f && !e.key.repeat && k != SDLK_UP && k != SDLK_DOWN && k != SDLK_W && k != SDLK_S && k != SDLK_RETURN && k != SDLK_SPACE && k != SDLK_KP_ENTER) {
+                // "Press any key to try again": everything but the menu keys restarts.
+                menu_.index = 0;
+                play("menu_select", 0.7f);
+                menuSelect();
+                break;
+            }
             if (!menu_.items.empty() && !e.key.repeat) { menuKey(k); break; }
             if (k == SDLK_B) keyB_ = true;
             if (k == SDLK_F) keyF_ = true;
@@ -1554,8 +1561,21 @@ App::Camera App::currentCamera() const {
     }
     case Mode::Paused:
         return (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown) ? fpsCamera() : blocksCamera();
-    case Mode::GameOver:
-        return diedInFps_ ? fpsCamera() : blocksCamera();
+    case Mode::GameOver: {
+        if (!diedInFps_) return blocksCamera();
+        // Death camera: the view sinks to the floor and rolls over the first second.
+        Camera c = fpsCamera();
+        float t = std::clamp(gameOverT_ / 1.1f, 0.f, 1.f);
+        t = t * t * (3.f - 2.f * t);
+        glm::vec3 fwd = glm::normalize(c.target - c.eye);
+        c.eye.y = glm::mix(c.eye.y, 0.35f, t);
+        c.target = c.eye + fwd;
+        float roll = 0.55f * t;
+        glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0.f, 1.f, 0.f)));
+        c.up = glm::normalize(glm::vec3(0.f, 1.f, 0.f) * std::cos(roll) + right * std::sin(roll));
+        c.fov = glm::mix(80.f, 66.f, t);
+        return c;
+    }
     case Mode::Alert: {
         Camera c = blocksCamera();
         float t = smoothstep(modeT_ / kAlertTime);
@@ -2426,8 +2446,17 @@ void App::addHud() {
         text(W * 0.5f, H * 0.32f + lh * 3.f + lh * 1.5f * static_cast<float>(menu_.items.size()) + lh, "UP/DOWN SELECT   ENTER CONFIRM   ESC RESUME", s * 0.7f, dim, 1);
     }
     if (mode_ == Mode::GameOver) {
-        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, std::min(0.6f, gameOverT_)));
-        text(W * 0.5f, H * 0.3f, diedInFps_ ? "YOU DIED" : "GAME OVER", s * 2.4f, red, 1);
+        // Death: a hard red flash that decays into the dark, then the title slams in.
+        if (diedInFps_) panel(0.f, 0.f, W, H, glm::vec4(0.6f, 0.f, 0.f, std::max(0.f, 0.75f - gameOverT_ * 0.6f)));
+        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, std::min(0.65f, gameOverT_ * 0.8f)));
+        float slam = 1.f - std::clamp((gameOverT_ - 0.15f) / 0.45f, 0.f, 1.f);
+        slam = slam * slam;
+        float pulse = 0.85f + 0.15f * std::sin(time_ * 4.f);
+        if (gameOverT_ > 0.15f) text(W * 0.5f, H * 0.3f, diedInFps_ ? "YOU DIED" : "GAME OVER", s * (2.4f + 2.5f * slam), glm::vec4(1.f, 0.15f * pulse, 0.1f * pulse, 1.f), 1);
+        if (gameOverT_ > 1.2f) {
+            float f = 0.5f + 0.5f * std::sin(time_ * 5.f);
+            text(W * 0.5f, H * 0.3f - lh * 1.6f, "PRESS ANY KEY TO TRY AGAIN", s * 1.0f, glm::vec4(1.f, 0.95f, 0.6f, 0.55f + 0.45f * f), 1);
+        }
         text(W * 0.5f, H * 0.3f + lh * 2.8f, "SCORE " + std::to_string(game_->score()) + "   BEST " + std::to_string(highScore_), s, white, 1);
         text(W * 0.5f, H * 0.3f + lh * 4.f, "LEVEL " + std::to_string(game_->level()) + "   RED LINES SURVIVED " + std::to_string(redLinesSurvived_), s, dim, 1);
         if (lastRank_ > 0) {
@@ -2464,7 +2493,7 @@ void App::buildScene() {
         float a = shakeT_ * 0.35f;
         eye += glm::vec3(std::sin(time_ * 90.f) * a, std::cos(time_ * 73.f) * a, 0.f);
     }
-    frame_.view = glm::lookAt(eye, cam.target + (eye - cam.eye), glm::vec3(0.f, 1.f, 0.f));
+    frame_.view = glm::lookAt(eye, cam.target + (eye - cam.eye), cam.up);
     frame_.proj = glm::perspective(glm::radians(cam.fov), aspect, 0.05f, 120.f);
     frame_.cameraPos = eye;
     frame_.time = time_;

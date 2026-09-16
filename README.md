@@ -313,7 +313,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
   by one (faster gravity, more red minos, tougher monsters next time).
 - When the board stands back up, every remaining block falls to the floor
   (column by column, animated), so the holes the explosions left collapse.
-- Reaching zero health ends the game.
+- Reaching zero health ends the game: the view drops to the floor under a red flash, YOU DIED slams in, and after a second any key (or a click, or a pad button) starts a new game; Up/Down still pick RESTART or QUIT.
 
 ## Command line
 

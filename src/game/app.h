@@ -65,7 +65,7 @@ public:
 
 private:
     enum class Mode { Title, Blocks, Alert, FlyIn, Countdown, Fps, FlyOut, GameOver, Paused };
-    struct Camera { glm::vec3 eye{0.f}; glm::vec3 target{0.f}; float fov = 50.f; };
+    struct Camera { glm::vec3 eye{0.f}; glm::vec3 target{0.f}; float fov = 50.f; glm::vec3 up{0.f, 1.f, 0.f}; };
     struct Menu { std::vector<std::string> items; int index = 0; };
 
     void newGame();
