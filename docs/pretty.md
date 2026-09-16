@@ -22,27 +22,27 @@ Effort is a rough estimate. Tick items off here as they land, with the commit.
       around torches, ray-marched against the shadow map.
 - [ ] **Ray-traced ambient occlusion** (1-2 days). Contact shadows where blocks
       meet the floor and between a monster's voxels; needs a temporal blend.
-- [ ] **Baked voxel AO** (half a day). Per-vertex darkening in crevices when a
+- [x] **Baked voxel AO** (done 2026-09-16, in the KVX mesher). Per-vertex darkening in crevices when a
       voxel mesh is built.
 
 ## Motion and feedback
 
-- [~] **Particles** (blood, chunks, casings, blood clouds, smoke puffs, sparks and torch flares done 2026-09-16 with the community gore pack; embers and dust still open). Sparks on a line clear, embers from torches, blood
+- [x] **Particles** (done 2026-09-16: blood, chunks, casings, blood clouds, smoke, sparks, torch flares, rising embers, landing and line-clear dust). Sparks on a line clear, embers from torches, blood
       on hits, dust when the BFG drops the stack, shell casings. Reuses the
       billboard path.
-- [ ] **Line-clear and landing effects** (half a day). Flash and ring shockwave
+- [x] **Line-clear and landing effects** (done 2026-09-16: flash, shockwave rings, dust and sparks on a clear, dust on landing, light on the falling piece). Flash and ring shockwave
       on a clear, dust puff on landing, a soft light following the falling piece.
 - [x] **Decals** (done 2026-09-16: blood pools, wall splats, bullet holes; Brutal mode). Bullet holes on walls and blood on the floor that stay.
-- [~] **Weapon feel** (screen blood, Brutal Doom weapon art and sounds done; bob/sway/recoil still open). Bob and sway while walking, recoil on the
+- [x] **Weapon feel** (done 2026-09-16: sway while walking, lag behind the view, camera kick per shot, screen blood, Brutal art and sounds). Bob and sway while walking, recoil on the
       shotgun, Doom-style red screen tint on damage.
-- [ ] **Glossy blocks and frame** (an hour). Extend the reflective flag to the
+- [x] **Glossy blocks and frame** (done 2026-09-16). Extend the reflective flag to the
       board frame and the blocks.
 
 ## Texture quality
 
-- [ ] **Pixel-art filtering** (small). Per-texel anti-aliased sampling so the
+- [x] **Pixel-art filtering** (done 2026-09-16: mipmapped atlas, sharpened bilinear sampling). Per-texel anti-aliased sampling so the
       64-128 px Doom textures keep their look without shimmering.
-- [ ] **Colour grading** (trivial after the post-process pass). A lookup-table
+- [x] **Colour grading** (done 2026-09-16: warm grade in the composite pass). A lookup-table
       pass toward Doom's warm palette.
 
 ## Bugs found on the way

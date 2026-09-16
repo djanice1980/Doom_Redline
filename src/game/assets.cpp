@@ -144,6 +144,18 @@ bool Assets::load(const std::optional<fs::path>& wadPath, audio::Audio& audio, c
 #endif
     if (!ok) loadProcedural(audio);
     loadBrutalPack(audio);
+    if (!atlas_.has(ring)) {   // a soft ring, 64 px: the line-clear shockwave
+        Image im(64, 64);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) {
+                const float dx = (x + 0.5f) / 64.f - 0.5f, dy = (y + 0.5f) / 64.f - 0.5f;
+                const float d = std::sqrt(dx * dx + dy * dy) * 2.f;
+                const float a = std::clamp(1.f - std::fabs(d - 0.8f) / 0.16f, 0.f, 1.f);
+                uint8_t* p = &im.rgba[(static_cast<size_t>(y) * 64 + x) * 4];
+                p[0] = p[1] = p[2] = 255; p[3] = static_cast<uint8_t>(a * a * 255.f);
+            }
+        atlas_.add(ring, im);
+    }
     if (!atlas_.build(4096)) {
         std::fprintf(stderr, "[assets] atlas overflow\n");
         return false;

@@ -183,7 +183,14 @@ private:
     bool brutalActive() const { return brutal_ && assets_.usingWad(); }   // the preference only applies on Doom art
     struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
     std::vector<ScreenBlood> screenBlood_;
-    struct Burst { glm::vec3 pos; float t, ttl, px; const SpriteAnim* anim; };   // one-shot sprite effects (blood clouds, smoke)
+    struct Burst { glm::vec3 pos; float t, ttl, px; const SpriteAnim* anim; glm::vec4 tint{1.3f, 1.3f, 1.3f, 1.f}; };   // one-shot sprite effects (blood clouds, smoke, dust)
+    struct Ember { glm::vec3 pos, vel; float ttl, life, size; glm::vec3 col; };   // rising sparks from the torches
+    std::vector<Ember> embers_;
+    float emberT_ = 0.f;
+    struct Ring { glm::vec3 pos; float t; };   // line-clear shockwaves
+    std::vector<Ring> rings_;
+    float clearFlash_ = 0.f;
+    std::vector<std::pair<int, int>> lastPieceCells_;   // where the falling piece was last frame (dust when it lands)
     std::vector<Decal> brawlDecals_;   // blood the brawlers beside the board leave behind (brutal)
     std::vector<Burst> bursts_;
     std::mt19937 rng_{1234u};

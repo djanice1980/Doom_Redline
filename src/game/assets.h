@@ -97,6 +97,7 @@ public:
     std::string wallLump, floorLump, ceilingLump;
     std::string crosshair = "crosshair";
     std::string white = "__white";
+    std::string ring = "__ring";   // soft ring for the line-clear shockwave (procedural, always present)
     EnemyArt enemies[kEnemyKinds];
     SpriteAnim projectile[kProjectileTypes], projectileHit[kProjectileTypes];
     WeaponArt weapons[kWeaponArt];

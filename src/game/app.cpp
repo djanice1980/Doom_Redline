@@ -1382,10 +1382,31 @@ void App::handleGameEvents() {
         switch (ev.type) {
         case core::EventType::PieceMoved: play("move", 0.5f, 1.f, 70); break;
         case core::EventType::PieceRotated: play("rotate", 0.6f, 1.f, 80); break;
-        case core::EventType::PieceLocked: play("lock", 0.8f); break;
+        case core::EventType::PieceLocked:
+            play("lock", 0.8f);
+            // Dust where the piece lands: a puff under each cell that has nothing of the piece below it.
+            if (!assets_.brSmoke.empty())
+                for (const auto& [cx, cy] : lastPieceCells_) {
+                    bool lowest = true;
+                    for (const auto& [ox, oy] : lastPieceCells_) if (ox == cx && oy > cy) lowest = false;
+                    if (lowest && cy >= 0) bursts_.push_back({boardPos(static_cast<float>(cx), static_cast<float>(cy)) + glm::vec3(0.f, -0.45f, 0.7f), 0.f, 0.55f, 0.009f, &assets_.brSmoke, glm::vec4(0.9f, 0.85f, 0.8f, 0.9f)});
+                }
+            break;
         case core::EventType::HardDrop: shakeT_ = 0.15f; break;
         case core::EventType::LinesCleared: {
             play("clear", 0.9f, ev.a >= 4 ? 1.3f : 1.f);
+            // Flash, a shockwave ring per row, dust along it and a few sparks.
+            clearFlash_ = std::min(1.f, 0.5f + 0.15f * static_cast<float>(ev.a));
+            shakeT_ = std::max(shakeT_, 0.08f + 0.04f * static_cast<float>(ev.a));
+            for (int row : game_->clearingRows()) {
+                const glm::vec3 centre = boardPos(core::kBoardW * 0.5f - 0.5f, static_cast<float>(row));
+                rings_.push_back({centre + glm::vec3(0.f, 0.f, 0.55f), 0.f});
+                for (int c = 0; c < core::kBoardW; c += 2) {
+                    const glm::vec3 cell = boardPos(static_cast<float>(c), static_cast<float>(row)) + glm::vec3(0.f, 0.f, 0.7f);
+                    if (!assets_.brSmoke.empty()) bursts_.push_back({cell, 0.f, 0.6f, 0.011f, &assets_.brSmoke, glm::vec4(1.f, 0.95f, 0.9f, 0.8f)});
+                    if (!assets_.brSparks.empty() && (c / 2) % 2 == 0) bursts_.push_back({cell, 0.f, 0.45f, 0.008f, &assets_.brSparks});
+                }
+            }
             static const char* names[5] = {"", "SINGLE", "DOUBLE", "TRIPLE", "TETRIS"};
             std::string label = names[std::clamp(ev.a, 0, 4)];
             if (game_->chain() > 0) label = "CHAIN X" + std::to_string(game_->chain() + 1) + "  " + label;
@@ -1585,6 +1606,34 @@ void App::update(float dt) {
         swayX_ += (targetX - swayX_) * k;
         swayY_ += (targetY - swayY_) * k;
     }
+    // Embers drift up from every flame; rings and the clear flash fade.
+    emberT_ += dt;
+    if (emberT_ > 0.05f) {
+        emberT_ = 0.f;
+        std::uniform_real_distribution<float> u(-1.f, 1.f);
+        for (const Prop& p : props_) {
+            const bool flame = p.anim == &assets_.torchRed || p.anim == &assets_.torchBlue || p.anim == &assets_.torchGreen || p.anim == &assets_.candelabra;
+            if (!flame || embers_.size() >= 400 || u(rng_) > -0.2f) continue;   // ~40% of ticks per flame
+            Ember e;
+            e.pos = p.pos + glm::vec3(u(rng_) * 0.08f, p.lightHeight - 0.3f + u(rng_) * 0.1f, u(rng_) * 0.08f);
+            e.vel = glm::vec3(u(rng_) * 0.35f, 0.7f + 0.4f * u(rng_), u(rng_) * 0.35f);
+            e.life = e.ttl = 0.9f + 0.6f * std::fabs(u(rng_));
+            e.size = 0.03f + 0.02f * std::fabs(u(rng_));
+            e.col = glm::mix(p.lightColor, glm::vec3(1.f, 0.9f, 0.6f), 0.35f);
+            embers_.push_back(e);
+        }
+    }
+    for (size_t i = 0; i < embers_.size();) {
+        Ember& e = embers_[i];
+        e.ttl -= dt;
+        e.vel.x += std::sin(time_ * 7.f + e.pos.y * 9.f) * 0.6f * dt;
+        e.vel.z += std::cos(time_ * 6.f + e.pos.x * 9.f) * 0.6f * dt;
+        e.pos += e.vel * dt;
+        if (e.ttl <= 0.f) { e = embers_.back(); embers_.pop_back(); } else ++i;
+    }
+    for (size_t i = 0; i < rings_.size();) { rings_[i].t += dt; if (rings_[i].t > 0.55f) { rings_[i] = rings_.back(); rings_.pop_back(); } else ++i; }
+    clearFlash_ = std::max(0.f, clearFlash_ - dt * 3.f);
+    if (game_ && game_->active()) { lastPieceCells_.clear(); for (int i = 0; i < 4; ++i) lastPieceCells_.push_back(game_->active()->cells()[i]); }
     for (size_t i = 0; i < bursts_.size();) {
         bursts_[i].t += dt;
         if (bursts_[i].t >= bursts_[i].ttl) { bursts_[i] = bursts_.back(); bursts_.pop_back(); }
@@ -2246,6 +2295,15 @@ void App::addLights() {
     glm::vec3 cam = frame_.cameraPos;
     struct Cand { float score; render::PointLight l; };
     std::vector<Cand> cands;
+    // The falling piece carries a soft light of its own colour.
+    if (game_ && game_->active() && (mode_ == Mode::Blocks || mode_ == Mode::Alert)) {
+        const core::Piece& p = *game_->active();
+        glm::vec3 centre(0.f);
+        bool red = false;
+        for (int i = 0; i < 4; ++i) { auto [cx, cy] = p.cells()[i]; centre += boardPos(static_cast<float>(cx), static_cast<float>(cy)); red = red || p.red[i]; }
+        centre = centre * 0.25f + glm::vec3(0.f, 0.f, 0.9f);
+        cands.push_back({-90.f, {centre, 5.5f, red ? glm::vec3(1.f, 0.25f, 0.1f) : kPieceColors[static_cast<int>(p.shape)], 1.6f}});
+    }
     // Decor lights with a torch flicker.
     for (const Prop& p : props_) {
         if (p.lightRadius <= 0.f) continue;
@@ -2383,7 +2441,16 @@ void App::addBursts() {
         const int n = static_cast<int>(b.anim->frames.size());
         const int i = std::clamp(static_cast<int>(k * static_cast<float>(n)), 0, n - 1);
         const float fade = k > 0.7f ? (1.f - k) / 0.3f : 1.f;
-        billboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(1.3f * fade, 1.3f * fade, 1.3f * fade, fade), false, false);
+        billboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(glm::vec3(b.tint) * fade, b.tint.a * fade), false, false);
+    }
+    // Embers: tiny glowing cubes; rings: an expanding, fading shockwave in the board plane.
+    for (const Ember& e : embers_) {
+        const float k = std::clamp(e.ttl / e.life, 0.f, 1.f);
+        cube(e.pos, e.size * (0.5f + 0.5f * k), glm::vec4(e.col * k, 1.f), assets_.white, e.col, 3.5f * k);
+    }
+    for (const Ring& r : rings_) {
+        const float k = r.t / 0.55f;
+        decal(assets_.ring, r.pos, glm::vec3(0.f, 0.f, 1.f), 1.f + 11.f * k, 0.f, glm::vec4(1.6f, 1.4f, 0.9f, 1.f - k));
     }
 }
 
@@ -2519,6 +2586,7 @@ void App::addHud() {
         const char* banner = game_->panic() ? "OVERRUN  -  EVIL SURGES" : (d < 0.5f ? "THE STACK IS TURNING EVIL" : "EVIL RISING");
         text(W * 0.5f, H * 0.2f, banner, s * (game_->panic() ? 1.2f : 0.9f), glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 0.4f + 0.6f * d), 1);
     }
+    if (clearFlash_ > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.95f, 0.8f, 0.22f * clearFlash_));
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 16.f);
         text(W * 0.5f, H * 0.42f, "RED LINE", s * 2.2f, glm::vec4(1.f, 0.2f * f, 0.1f * f, 1.f), 1);
