@@ -4,6 +4,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -179,6 +180,9 @@ private:
     bool brutal_ = true;               // OPTIONS > BRUTAL: blood, gibs, casings, bullet holes, screen blood
     struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
     std::vector<ScreenBlood> screenBlood_;
+    struct Burst { glm::vec3 pos; float t, ttl, px; const SpriteAnim* anim; };   // one-shot sprite effects (blood clouds, smoke)
+    std::vector<Burst> bursts_;
+    std::mt19937 rng_{1234u};
     HighScores highScores_;
     Trophies trophies_;
     MachineInfo machine_;              // this save folder's install id and hardware facts

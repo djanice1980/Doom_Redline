@@ -313,6 +313,7 @@ void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, i
         g.size = kind == 1 ? 0.05f + 0.07f * std::fabs(u(rng_)) : 0.03f + 0.03f * std::fabs(u(rng_));
         g.ttl = kind == 1 ? 8.f : 3.f;
         g.spin = u(rng_) * 7.f;
+        g.variant = static_cast<int>((u(rng_) + 1.f) * 127.5f) & 0xFF;
         gore_.push_back(g);
     }
 }
@@ -374,6 +375,7 @@ void FpsMode::updateGore(float dt) {
                 } else {
                     g.pos.y = half;
                     ++g.bounces;
+                    if (g.kind == 2 && g.bounces == 1) push(FpsEvent::Type::CasingBounce, g.pos, 0, g.variant & 1);
                     if (g.kind == 1 && g.bounces == 1) addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.25f + 0.3f * u(rng_), 0);
                     g.vel.y = -g.vel.y * (g.kind == 2 ? 0.3f : 0.35f);
                     g.vel.x *= 0.55f;
@@ -482,7 +484,7 @@ void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game) 
         plane(o.z, d.z, kArenaZMax, {0.f, 0.f, -1.f});
         plane(o.y, d.y, 0.f, {0.f, 1.f, 0.f});
         if (blockT < 60.f && blockT < tWall) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 2, false);
-        else if (tWall < 60.f) addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2);
+        else if (tWall < 60.f) { addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2); if (brutal_) push(FpsEvent::Type::BulletHole, o + d * tWall + nWall * 0.12f); }
         return;
     }
     damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), o + d * bestT, d);
@@ -509,6 +511,7 @@ void FpsMode::fire(core::Game& game) {
         g.size = weapon_ == kShotgun ? 0.05f : 0.035f;
         g.ttl = 6.f;
         g.spin = u(rng_) * 12.f;
+        g.variant = (static_cast<int>((u(rng_) + 1.f) * 127.f) & 0xFE) | (weapon_ == kShotgun ? 1 : 0);
         gore_.push_back(g);
     }
     if (w.spread > 0.f) {

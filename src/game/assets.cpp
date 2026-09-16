@@ -1,5 +1,8 @@
 #include "game/assets.h"
 
+#include "core/png_read.h"
+#include "audio/oggstream.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -139,6 +142,7 @@ bool Assets::load(const std::optional<fs::path>& wadPath, audio::Audio& audio, c
     if (wadPath) ok = loadFromWad(*wadPath, audio);
 #endif
     if (!ok) loadProcedural(audio);
+    loadBrutalPack(audio);
     if (!atlas_.build(4096)) {
         std::fprintf(stderr, "[assets] atlas overflow\n");
         return false;
@@ -287,6 +291,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         std::fprintf(stderr, "[assets] WAD has no PLAYPAL\n");
         return false;
     }
+    palette_.assign(&pal->rgb[0][0], &pal->rgb[0][0] + 768);
     std::fprintf(stderr, "[assets] %s: %s\n", path.filename().string().c_str(), wad::describe(*wad).c_str());
     usingWad_ = true;
     wadName_ = path.filename().string();
@@ -539,5 +544,192 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     return true;
 }
 #endif
+
+
+// ---------------------------------------------------------------------------
+// Community gore pack (assets/brutal): PNG sprites with grAb offsets, WAV/OGG/DMX
+// sounds and KVX gibs, curated from the Brutal Doom Community Expansion and the
+// Brutal Voxel Cyber Horror Monster Mix (credits and licences in CREDITS.txt there).
+std::optional<fs::path> Assets::findBrutalPack(const std::string& baseDir) {
+    std::vector<fs::path> candidates;
+    if (const char* e = std::getenv("REDLINE_BRUTAL_PACK")) candidates.emplace_back(e);
+    if (!baseDir.empty()) {
+        fs::path base(baseDir);
+        candidates.push_back(base / "brutal");                                   // Windows zip / installer
+        candidates.push_back(base / ".." / "share" / "redline" / "brutal");  // Linux: bin/../share
+        candidates.push_back(base / "assets" / "brutal");
+        candidates.push_back(base / ".." / "assets" / "brutal");             // build/ next to the checkout
+    }
+    candidates.emplace_back("assets/brutal");
+    candidates.emplace_back("/usr/share/redline/brutal");
+    candidates.emplace_back("/usr/local/share/redline/brutal");
+    std::error_code ec;
+    for (const fs::path& c : candidates) if (fs::is_directory(c / "sprites", ec)) return c;
+    return std::nullopt;
+}
+
+namespace {
+std::vector<uint8_t> readAll(const fs::path& p) {
+    std::vector<uint8_t> bytes;
+    if (FILE* f = std::fopen(p.string().c_str(), "rb")) {
+        uint8_t buf[65536];
+        size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+        std::fclose(f);
+    }
+    return bytes;
+}
+uint32_t le32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (static_cast<uint32_t>(p[3]) << 24); }
+uint16_t le16(const uint8_t* p) { return static_cast<uint16_t>(p[0] | (p[1] << 8)); }
+
+// PCM WAV (8/16-bit, mono or stereo) to mono floats.
+bool decodeWav(const std::vector<uint8_t>& d, int& rate, std::vector<float>& out) {
+    if (d.size() < 44 || std::memcmp(d.data(), "RIFF", 4) != 0 || std::memcmp(&d[8], "WAVE", 4) != 0) return false;
+    size_t pos = 12;
+    int channels = 0, bits = 0;
+    rate = 0;
+    while (pos + 8 <= d.size()) {
+        const uint32_t len = le32(&d[pos + 4]);
+        const uint8_t* body = &d[pos + 8];
+        if (pos + 8 + len > d.size()) return false;
+        if (std::memcmp(&d[pos], "fmt ", 4) == 0 && len >= 16) {
+            if (le16(body) != 1) return false;   // PCM only
+            channels = le16(body + 2);
+            rate = static_cast<int>(le32(body + 4));
+            bits = le16(body + 14);
+        } else if (std::memcmp(&d[pos], "data", 4) == 0) {
+            if (channels <= 0 || rate <= 0 || (bits != 8 && bits != 16)) return false;
+            const size_t frameBytes = static_cast<size_t>(channels) * static_cast<size_t>(bits / 8);
+            const size_t frames = len / frameBytes;
+            out.resize(frames);
+            for (size_t i = 0; i < frames; ++i) {
+                float sum = 0.f;
+                for (int c = 0; c < channels; ++c) {
+                    const uint8_t* s = body + i * frameBytes + static_cast<size_t>(c) * static_cast<size_t>(bits / 8);
+                    sum += bits == 8 ? (static_cast<float>(s[0]) - 128.f) / 128.f : static_cast<float>(static_cast<int16_t>(le16(s))) / 32768.f;
+                }
+                out[i] = sum / static_cast<float>(channels);
+            }
+            return true;
+        }
+        pos += 8 + len + (len & 1);
+    }
+    return false;
+}
+
+// DMX ("DS*" lump written to a file): format 3, rate, count, unsigned 8-bit samples with 16-byte padding.
+bool decodeDmx(const std::vector<uint8_t>& d, int& rate, std::vector<float>& out) {
+    if (d.size() < 8 || le16(&d[0]) != 3) return false;
+    rate = le16(&d[2]);
+    size_t count = std::min<size_t>(le32(&d[4]), d.size() - 8);
+    const uint8_t* pcm = &d[8];
+    if (count > 32) { pcm += 16; count -= 32; }
+    out.resize(count);
+    for (size_t i = 0; i < count; ++i) out[i] = (static_cast<float>(pcm[i]) - 128.f) / 128.f;
+    return rate > 0;
+}
+
+bool decodeOgg(const fs::path& p, int& rate, std::vector<float>& out) {
+#ifdef REDLINE_HAVE_VORBIS
+    rate = audio::Audio::kRate;
+    auto s = audio::OggStream::open(p.string(), 0, 0, static_cast<uint32_t>(rate));
+    if (!s) return false;
+    std::vector<float> buf;
+    for (;;) {
+        buf.assign(4096 * 2, 0.f);
+        int n = s->read(buf.data(), 4096, 1.f);
+        for (int i = 0; i < n; ++i) out.push_back(0.5f * (buf[static_cast<size_t>(i) * 2] + buf[static_cast<size_t>(i) * 2 + 1]));
+        if (n < 4096) break;
+    }
+    return !out.empty();
+#else
+    (void)p; (void)rate; (void)out;
+    return false;
+#endif
+}
+}  // namespace
+
+void Assets::loadBrutalPack(audio::Audio& audio) {
+    brutalPack = false;
+    for (SpriteAnim* a : {&brChunk, &brChunkBig, &brPool, &brSplat, &brSpray, &brSmoke, &brCasingBullet, &brCasingShell, &brBlast}) *a = SpriteAnim{};
+    brGibSounds = brShellSounds = brCasingSounds = brDripSounds = 0;
+    if (!brutalPackDir) return;
+    const fs::path dir = *brutalPackDir;
+    int sprites = 0, sounds = 0;
+    // Halves an image (box filter), offsets included: the 256px fireballs need no more.
+    auto halve = [](const Image& in) {
+        Image out(std::max(1, in.width / 2), std::max(1, in.height / 2));
+        out.offsetX = in.offsetX / 2;
+        out.offsetY = in.offsetY / 2;
+        for (int y = 0; y < out.height; ++y)
+            for (int x = 0; x < out.width; ++x)
+                for (int c = 0; c < 4; ++c) {
+                    int sum = 0;
+                    for (int dy = 0; dy < 2; ++dy)
+                        for (int dx = 0; dx < 2; ++dx) {
+                            const int sx = std::min(in.width - 1, x * 2 + dx), sy = std::min(in.height - 1, y * 2 + dy);
+                            sum += in.rgba[(static_cast<size_t>(sy) * in.width + sx) * 4 + c];
+                        }
+                    out.rgba[(static_cast<size_t>(y) * out.width + x) * 4 + c] = static_cast<uint8_t>(sum / 4);
+                }
+        return out;
+    };
+    auto pngAnim = [&](SpriteAnim& a, const char* prefix, const char* frames, float fps, int shrink = 0) {
+        a = SpriteAnim{};
+        a.fps = fps;
+        for (const char* f = frames; *f; ++f) {
+            const std::string name = std::string(prefix) + *f + "0";
+            const std::string key = std::string(prefix) + "_" + *f;
+            if (!atlas_.has(key)) {
+                std::string err;
+                std::vector<uint8_t> bytes = readAll(dir / "sprites" / (name + ".png"));
+                auto img = decodePng(bytes, &err);
+#ifdef REDLINE_HAVE_WAD
+                if (!img && palette_.size() == 768 && bytes.size() > 8) {   // a few pack files are Doom patches with a .png name
+                    wad::Palette pal;
+                    std::memcpy(&pal.rgb[0][0], palette_.data(), 768);
+                    img = wad::decodePatch(bytes, pal);
+                }
+#endif
+                if (!img) { if (!err.empty()) std::fprintf(stderr, "[brutal] %s.png: %s\n", name.c_str(), err.c_str()); continue; }
+                for (int i = 0; i < shrink; ++i) *img = halve(*img);
+                atlas_.add(key, *img);
+                ++sprites;
+            }
+            a.frames.push_back(key);
+            a.mirrored.push_back(false);
+        }
+    };
+    pngAnim(brChunk, "XDB1", "ABCDEFGHJKOP", 1.f);       // small meat chunks (one frame per chunk)
+    pngAnim(brBlast, "EXP4", "ABCDEFGHIJKLMNOPQRSTUVWXY", 40.f, 1);   // fireball at half size (128px)
+    pngAnim(brChunkBig, "XME1", "ABCD", 1.f);            // bigger gibs
+    pngAnim(brPool, "BLOR", "ABCDEFGHIJK", 14.f);        // blood pool spreading on the floor
+    pngAnim(brSplat, "BSP1", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12.f);   // wall splat: hits, spreads, dries dark
+    pngAnim(brSpray, "BLHT", "ABCDEFGHIJ", 24.f);        // blood cloud at the hit point
+    pngAnim(brSmoke, "PUF2", "ABCDEFGHIJKL", 18.f);      // smoke puff
+    pngAnim(brCasingBullet, "C4S1", "ABCDEFGHIJKLM", 20.f);   // A-H tumbling, I-M lying
+    pngAnim(brCasingShell, "C4S2", "ABCDEFGHIJKLMN", 20.f);
+    auto sound = [&](const std::string& name, const std::string& file) {
+        const fs::path p = dir / "sounds" / file;
+        std::vector<uint8_t> bytes = readAll(p);
+        if (bytes.empty()) return false;
+        int rate = 0;
+        std::vector<float> pcm;
+        bool ok = false;
+        if (bytes.size() > 4 && std::memcmp(bytes.data(), "RIFF", 4) == 0) ok = decodeWav(bytes, rate, pcm);
+        else if (bytes.size() > 4 && std::memcmp(bytes.data(), "OggS", 4) == 0) ok = decodeOgg(p, rate, pcm);
+        else ok = decodeDmx(bytes, rate, pcm);
+        if (!ok) { std::fprintf(stderr, "[brutal] %s: unsupported sound\n", file.c_str()); return false; }
+        audio.addSound(name, rate, std::move(pcm));
+        ++sounds;
+        return true;
+    };
+    for (int i = 1; i <= 6; ++i) if (sound("gibdeath" + std::to_string(i), std::string("DSXDTH1") + static_cast<char>('A' + i - 1) + ".lmp")) brGibSounds = i;
+    for (int i = 1; i <= 3; ++i) if (sound("shell" + std::to_string(i), "DSSHELL" + std::to_string(i) + ".wav")) brShellSounds = i;
+    for (int i = 1; i <= 3; ++i) if (sound("casing" + std::to_string(i), "DSCASIN" + std::to_string(i) + ".ogg")) brCasingSounds = i;
+    for (int i = 1; i <= 3; ++i) if (sound("drip" + std::to_string(i), "LQDRIP" + std::to_string(i) + ".ogg")) brDripSounds = i;
+    brutalPack = sprites > 0;
+    std::fprintf(stderr, "[brutal] %s: %d sprites, %d sounds\n", dir.string().c_str(), sprites, sounds);
+}
 
 }  // namespace rl::game

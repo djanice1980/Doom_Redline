@@ -140,6 +140,7 @@ struct Gore {
     float size = 0.05f;
     float spin = 0.f;
     int kind = 0;            // 0 blood drop, 1 meat chunk, 2 shell casing
+    int variant = 0;         // random: which chunk model/sprite; casings: bit 0 = shotgun shell
     int bounces = 0;
     bool resting = false;
 };
@@ -176,7 +177,8 @@ struct FpsInput {
 
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
-                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown, EnemyGibbed } type;
+                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown, EnemyGibbed,
+                      CasingBounce, BulletHole } type;
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)

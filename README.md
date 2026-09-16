@@ -201,12 +201,16 @@ settings): every hit sprays blood that pools on the floor and splats on the
 walls, overkill blows monsters apart (zombies and imps use Doom's own gib
 frames, the others leave chunks), the shotgun and chaingun eject casings,
 missed shots leave bullet holes, and taking damage throws blood on the
-screen. Everything comes from the player's own WAD (BLUD, POL5, PUFF, the
-XDEATH frames and the DSSLOP sound); the placeholder art has procedural
-stand-ins. Blood stays for about a minute. It is a native take on the
-Brutal Doom feel, not the mod itself: Brutal Doom is a GZDoom mod (DECORATE
-and ZScript) and its assets are not freely redistributable, so REDLINE does
-not load or bundle it.
+screen. The gore art comes from a bundled community pack (`assets/brutal`,
+see below): spreading blood pools and drying wall splats, blood clouds at
+the point of impact, sprite and voxel meat chunks, smoke at bullet holes
+and blasts, brass and shells that tumble and ring when they land, and
+squelching gib deaths. Without the pack the game falls back to the
+player's own WAD (BLUD, POL5, PUFF, the XDEATH frames and DSSLOP), and the
+placeholder art has procedural stand-ins. Blood stays for about a minute.
+It is a native take on the Brutal Doom feel, not the mod itself: Brutal
+Doom is a GZDoom mod (DECORATE and ZScript) and REDLINE's engine cannot run
+it, so only its art and sounds are used.
 
 ## Post-processing: HDR, bloom, anti-aliasing
 
@@ -249,8 +253,16 @@ art and can be disabled for a run with `REDLINE_NO_MATERIALS=1`.
 normal and roughness maps for the three Doom textures the arena uses, taken
 from the GZDoom: Ray Traced project (github.com/vs-shirokii/gzdoom-rt); they
 derive from id Software textures, are credited in the folder, and are only
-used alongside your own WAD. Neither is covered by the MIT licence of the
-code.
+used alongside your own WAD. `assets/brutal/` is a curated set of gore
+sprites and sounds from the Brutal Doom Community Expansion
+(github.com/BLOODWOLF333/Brutal-Doom-Community-Expansion, GPLv3) and voxel
+gibs from the Brutal Voxel Cyber Horror Monster Mix
+(github.com/RENEGADE-ANDROiD/Brutal_Voxel_Cyber_Horror_Monster_Mix, MIT);
+its CREDITS.txt lists every file and its origin. None of the three folders
+is covered by the MIT licence of the code, each is bundled with credit under
+its own terms, and each can be deleted without breaking the game (the
+brutal folder falls back to WAD art; `REDLINE_BRUTAL_PACK` points at a copy
+elsewhere). If an author objects, the folder goes.
 
 ## The arena
 

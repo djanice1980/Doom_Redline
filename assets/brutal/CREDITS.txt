@@ -1,0 +1,45 @@
+REDLINE community gore pack
+===========================
+
+Everything in this folder was taken from two community projects and is used
+by REDLINE's Brutal mode (OPTIONS > BRUTAL). None of it is covered by
+REDLINE's MIT licence. It is bundled with credit, under each project's own
+terms, so the game works out of the box; the folder is self-contained and can
+be deleted or left out of a release at any time. Without it the game falls
+back to the blood, pool and puff sprites of the player's own Doom WAD. Should
+any author object, the folder will be removed.
+
+sprites/  (from the Brutal Doom Community Expansion, GPLv3)
+    https://github.com/BLOODWOLF333/Brutal-Doom-Community-Expansion
+    BSP1  blood splat that spreads and dries       (SPRITES/GORE_GENERIC/BLOOD)
+    BLOR  blood pool spreading on the floor        (SPRITES/GORE_GENERIC/BLOOD)
+    BLHT  blood cloud at the point of impact       (SPRITES/GORE_GENERIC/BLOOD)
+    XDB1  small meat chunks                        (SPRITES/GORE_GENERIC/BLOOD)
+    XME1  larger gibs                              (SPRITES/GORE_GENERIC/BLOOD)
+    PUF2  smoke puff                               (SPRITES/SMOKE)
+    C4S1  bullet casing                            (SPRITES/WEAPONS/CASINGS)
+    C4S2  shotgun shell                            (SPRITES/WEAPONS/CASINGS)
+    EXP4  rocket / BFG fireball, 25 frames         (SPRITES/EXPLOSIONS)
+    The expansion is maintained by BLOODWOLF333 and the Brutal Doom community
+    on top of Brutal Doom by Sergeant_Mark_IV; its DetailedCredits.txt lists the
+    artists of the individual resources where known. The repository is
+    licensed under the GNU General Public License v3
+    (https://www.gnu.org/licenses/gpl-3.0.html).
+
+sounds/  (from the Brutal Doom Community Expansion, GPLv3, same source)
+    DSXDTH1A-F  gib death squelches                (SOUNDS/GORE)
+    DSSHELL1-3  shotgun shell hitting the floor    (SOUNDS/COMBAT/CASING)
+    DSCASIN1-3  bullet casing hitting the floor    (SOUNDS/COMBAT/CASING)
+    LQDRIP1-3   blood drips                        (SOUNDS/GORE)
+
+voxels/  (from the Brutal Voxel Cyber Horror Monster Mix, MIT)
+    https://github.com/RENEGADE-ANDROiD/Brutal_Voxel_Cyber_Horror_Monster_Mix
+    GIB0A-GIB9B  voxel gib chunks (NashGore NEXT voxels)
+    bluda-c      voxel blood drops
+    Copyright (c) 2026 RENEGADE ANDROiD, MIT License; the pack's credits.txt
+    names the further contributors (Nash Muhandes' NashGore, Cheello's Voxel
+    Doom and others).
+
+Loading: REDLINE looks for this folder next to the executable ("brutal"), in
+share/redline/brutal, or in assets/brutal of a source checkout; the
+REDLINE_BRUTAL_PACK environment variable points it elsewhere.

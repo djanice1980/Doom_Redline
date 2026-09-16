@@ -69,6 +69,7 @@ EOF
     cp /work/README.md /work/LICENSE "$DEST"/
     cp -r /work/assets/voxel-doom "$DEST"/voxels     # the MIT-licensed Voxel Doom pack, found next to the exe
     cp -r /work/assets/materials "$DEST"/materials   # normal/roughness maps for the arena textures (see CREDITS.txt inside)
+    cp -r /work/assets/brutal "$DEST"/brutal         # community gore sprites, sounds and voxel gibs (see CREDITS.txt inside)
     cp -r /work/docs "$DEST"/docs && rm -f "$DEST"/docs/*.pptx
     queue=$(ls "$DEST"/*.exe); seen=""
     while [ -n "$queue" ]; do

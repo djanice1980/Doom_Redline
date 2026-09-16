@@ -142,6 +142,25 @@ void VoxelModels::parseVoxelDef(const std::string& raw) {
     }
 }
 
+int VoxelModels::addPack(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec)) return 0;
+    int added = 0;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        std::string stem = e.path().stem().string(), ext = e.path().extension().string();
+        std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext != ".kvx" || defs_.count(stem)) continue;
+        Def d;
+        d.file = stem;
+        d.dir = dir;
+        defs_[stem] = d;
+        cache_.erase(stem);
+        ++added;
+    }
+    return added;
+}
+
 const VoxelModel* VoxelModels::get(const std::string& atlasKey) {
     if (!renderer_ || defs_.empty()) return nullptr;
     // "TROO_A" -> "trooa"; anything else (procedural keys) has no voxel.
@@ -153,12 +172,14 @@ const VoxelModel* VoxelModels::get(const std::string& atlasKey) {
     auto d = defs_.find(name);
     if (d == defs_.end()) { cache_[name] = nullptr; return nullptr; }
     std::string file = d->second.file;
-    fs::path p = dir_ / (file + ".kvx");
+    const fs::path& base = d->second.dir.empty() ? dir_ : d->second.dir;
+    fs::path p = base / (file + ".kvx");
     std::error_code ec;
     if (!fs::exists(p, ec)) {
         std::string upper = file;
         std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-        p = dir_ / (upper + ".KVX");
+        p = base / (upper + ".KVX");
+        if (!fs::exists(p, ec)) p = base / (upper + ".kvx");
     }
     std::ifstream f(p, std::ios::binary);
     if (!f) { std::fprintf(stderr, "[voxels] missing %s\n", p.string().c_str()); cache_[name] = nullptr; return nullptr; }

@@ -29,4 +29,8 @@ three Doom textures) come from the GZDoom: Ray Traced project and derive from
 id Software textures; they are not covered by this licence and are used only
 alongside the player's own copy of Doom. See assets/materials/CREDITS.txt.
 The voxel models under assets/voxel-doom/ are Cheello's Voxel Doom, MIT
-licensed; see the LICENSE file in that folder.
+licensed; see the LICENSE file in that folder. The gore sprites, sounds and
+voxel gibs under assets/brutal/ come from the Brutal Doom Community
+Expansion (GPLv3) and the Brutal Voxel Cyber Horror Monster Mix (MIT); they
+are not covered by this licence and are credited, with their sources, in
+assets/brutal/CREDITS.txt.

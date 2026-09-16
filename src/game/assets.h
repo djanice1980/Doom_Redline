@@ -76,6 +76,12 @@ public:
     // Brutal-mode gore: blood drops (BLUD), the pool-of-blood decoration (POL5) and bullet puffs (PUFF).
     SpriteAnim blood, puff;
     std::string bloodPool;
+    // The bundled community pack (assets/brutal, see CREDITS.txt there): richer gore. Empty anims when absent.
+    std::optional<std::filesystem::path> brutalPackDir;   // set before load(); found with findBrutalPack()
+    bool brutalPack = false;
+    SpriteAnim brChunk, brChunkBig, brPool, brSplat, brSpray, brSmoke, brCasingBullet, brCasingShell, brBlast;
+    int brGibSounds = 0, brShellSounds = 0, brCasingSounds = 0, brDripSounds = 0;   // "gibdeathN", "shellN", "casingN", "dripN" (1-based)
+    static std::optional<std::filesystem::path> findBrutalPack(const std::string& baseDir);
     // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
     std::string wallLump, floorLump, ceilingLump;
     std::string crosshair = "crosshair";
@@ -109,6 +115,8 @@ private:
     bool loadFromWad(const std::filesystem::path& path, audio::Audio& audio);
 
     render::Atlas atlas_;
+    void loadBrutalPack(audio::Audio& audio);
+    std::vector<uint8_t> palette_;   // PLAYPAL (768 bytes) when a WAD is loaded: decodes Doom-format sprites in the gore pack
     bool usingWad_ = false;
     std::string wadName_;
     std::string extrasHint_;

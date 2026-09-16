@@ -27,7 +27,7 @@ Effort is a rough estimate. Tick items off here as they land, with the commit.
 
 ## Motion and feedback
 
-- [~] **Particles** (blood, chunks and casings done 2026-09-16 as Brutal mode; sparks, embers, dust still open). Sparks on a line clear, embers from torches, blood
+- [~] **Particles** (blood, chunks, casings, blood clouds and smoke puffs done 2026-09-16 as Brutal mode with the community gore pack; sparks, embers, dust still open). Sparks on a line clear, embers from torches, blood
       on hits, dust when the BFG drops the stack, shell casings. Reuses the
       billboard path.
 - [ ] **Line-clear and landing effects** (half a day). Flash and ring shockwave

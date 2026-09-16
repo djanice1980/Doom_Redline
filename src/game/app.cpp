@@ -94,6 +94,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
         wadMissing_ = true;
         std::fprintf(stderr, "[assets] no Doom WAD found; using procedural art (the game will ask for one; or pass --wad <file> / set REDLINE_WAD)\n");
     }
+    assets_.brutalPackDir = Assets::findBrutalPack(baseDir_);
     if (!assets_.load(wad, audio_, extrasHint())) throw std::runtime_error("asset build failed");
     if (wad && assets_.usingWad()) wadPath_ = wad->string();
     renderer_->setAtlas(assets_.atlas().image());
@@ -108,6 +109,10 @@ App::App(Options opts) : opts_(std::move(opts)) {
         if (const char* b = SDL_GetBasePath()) base = b;
         if (auto dir = VoxelModels::findPack(opts_.voxelDir, pref, base)) voxels_.init(*renderer_, *dir);
         else std::fprintf(stderr, "[voxels] no Voxel Doom pack found (set REDLINE_VOXELS or --voxels-dir); sprites only\n");
+        if (assets_.brutalPackDir) {   // voxel gibs ride along with the monster pack
+            int n = voxels_.addPack(*assets_.brutalPackDir / "voxels");
+            if (n) std::fprintf(stderr, "[voxels] %d gore voxels from the brutal pack\n", n);
+        }
     }
 
     initMusic();
@@ -175,6 +180,7 @@ void App::initMusic() {
 // Game state is untouched (it only refers to art by logical name).
 bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extras) {
     Assets fresh;
+    fresh.brutalPackDir = assets_.brutalPackDir;
     if (!fresh.load(wad, audio_, extras.empty() ? extrasHint() : extras) || !fresh.usingWad()) {
         std::fprintf(stderr, "[assets] %s is not a usable Doom WAD\n", wad.string().c_str());
         return false;
@@ -274,6 +280,7 @@ void App::setDoomArt(bool on) {
     doomArtOff_ = true;
     if (!assets_.usingWad()) return;
     Assets fresh;
+    fresh.brutalPackDir = assets_.brutalPackDir;
     fresh.load(std::nullopt, audio_);
     applyAssets(std::move(fresh));
     announce("PLACEHOLDER ART", glm::vec4(0.8f, 0.9f, 1.f, 1.f), 1.1f);
@@ -1444,19 +1451,33 @@ void App::handleFpsEvents() {
             shakeT_ = 0.4f;
             break;
         case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f, 80); break;
-        case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f, 1.f, 120); break;
+        case FpsEvent::Type::EnemyHit:
+            play(art.painSound, 0.8f, 1.f, 120);
+            if (brutal_ && !assets_.brSpray.empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray});
+            break;
+        case FpsEvent::Type::BulletHole:
+            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos, 0.f, 0.6f, 0.006f, &assets_.brSmoke});
+            break;
+        case FpsEvent::Type::CasingBounce:
+            if (ev.a && assets_.brShellSounds) play("shell" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brShellSounds)), 0.5f, 1.f, 30);
+            else if (!ev.a && assets_.brCasingSounds) play("casing" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brCasingSounds)), 0.35f, 1.f, 30);
+            break;
         case FpsEvent::Type::EnemyDied: if (!ev.a) play(art.deathSound, 1.f); break;   // a = 1: gibbed, the slop plays instead
-        case FpsEvent::Type::EnemyGibbed: play("gib", 1.f); shakeT_ = std::max(shakeT_, 0.08f); break;
+        case FpsEvent::Type::EnemyGibbed:
+            if (assets_.brGibSounds) play("gibdeath" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brGibSounds)), 1.f);
+            else play("gib", 1.f);
+            shakeT_ = std::max(shakeT_, 0.08f);
+            break;
         case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
         case FpsEvent::Type::Explosion:
             play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
+            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke});
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
         case FpsEvent::Type::PlayerHit:
             play("pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200);
             if (brutal_ && !assets_.blood.empty()) {   // blood on the screen
-                static std::mt19937 rng_(1234u);
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 VkExtent2D ext = renderer_->extent();
                 for (int i = 0; i < 3; ++i)
@@ -1524,6 +1545,11 @@ void App::update(float dt) {
     announcements_.erase(std::remove_if(announcements_.begin(), announcements_.end(), [](const Announcement& a) { return a.t > 2.f; }), announcements_.end());
     shakeT_ = std::max(0.f, shakeT_ - dt);
     muzzleLight_ = std::max(0.f, muzzleLight_ - dt * 8.f);
+    for (size_t i = 0; i < bursts_.size();) {
+        bursts_[i].t += dt;
+        if (bursts_[i].t >= bursts_[i].ttl) { bursts_[i] = bursts_.back(); bursts_.pop_back(); }
+        else ++i;
+    }
     for (size_t i = 0; i < screenBlood_.size();) {
         screenBlood_[i].t += dt;
         if (screenBlood_[i].t >= screenBlood_[i].ttl) screenBlood_.erase(screenBlood_.begin() + static_cast<std::ptrdiff_t>(i));
@@ -2110,15 +2136,19 @@ void App::addFpsActors() {
     }
     for (const Explosion& ex : fps_.explosions()) {
         float t = ex.t / ex.duration;
-        const SpriteAnim& anim = ex.hitType < 0 ? assets_.explosion : assets_.projectileHit[std::clamp(ex.hitType, 0, kProjectileTypes - 1)];
+        // Blasts are always 2D fireballs (the pack's 25-frame one when present), never voxels.
+        const bool blast = ex.hitType < 0;
+        const bool packBlast = blast && !assets_.brBlast.empty();
+        const SpriteAnim& anim = blast ? (packBlast ? assets_.brBlast : assets_.explosion) : assets_.projectileHit[std::clamp(ex.hitType, 0, kProjectileTypes - 1)];
         int n = static_cast<int>(anim.frames.size());
         if (n == 0) continue;
         int i = std::clamp(static_cast<int>(t * n), 0, n - 1);
-        float scale = ex.hitType < 0 ? 0.031f * (1.6f + 0.4f * ex.radius) : 0.031f * 1.2f;
+        float scale = packBlast ? 0.02f * (1.2f + 0.35f * ex.radius) : blast ? 0.031f * (1.6f + 0.4f * ex.radius) : 0.031f * 1.2f;
         // Blasts: deeper orange-red, translucent, fading out over the burst; impact puffs stay as drawn.
-        const glm::vec4 tint = ex.hitType < 0 ? glm::vec4(2.0f, 0.6f, 0.25f, 0.9f - 0.45f * t) : glm::vec4(1.6f, 1.6f, 1.6f, 1.f);
-        const glm::vec3 glow = ex.hitType < 0 ? glm::vec3(1.f, 0.32f, 0.1f) : glm::vec3(1.f, 0.7f, 0.4f);
-        actor(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, ex.hitType < 0 ? 0.9f : 0.2f, 0.f), scale, tint, false, anim.mirrored[static_cast<size_t>(i)], 0.f, glow, ex.hitType < 0 ? 1.6f : 0.6f);
+        const glm::vec4 tint = packBlast ? glm::vec4(1.7f, 1.15f, 0.8f, 0.95f - 0.3f * t) : blast ? glm::vec4(2.0f, 0.6f, 0.25f, 0.9f - 0.45f * t) : glm::vec4(1.6f, 1.6f, 1.6f, 1.f);
+        const glm::vec3 glow = blast ? glm::vec3(1.f, 0.32f, 0.1f) : glm::vec3(1.f, 0.7f, 0.4f);
+        if (blast) billboard(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, packBlast ? 0.6f : 0.9f, 0.f), scale, tint, false, anim.mirrored[static_cast<size_t>(i)]);
+        else actor(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, 0.2f, 0.f), scale, tint, false, anim.mirrored[static_cast<size_t>(i)], 0.f, glow, 0.6f);
     }
     for (const Debris& d : fps_.debris()) {
         float fade = std::min(1.f, d.ttl / 0.4f);
@@ -2210,19 +2240,66 @@ void App::decal(const std::string& key, glm::vec3 pos, glm::vec3 normal, float s
 }
 
 void App::addGore() {
+    const bool pack = assets_.brutalPack;
     for (const Gore& g : fps_.gore()) {
         const float fade = std::min(1.f, g.ttl / 0.5f);
         const float age = std::max(0.f, (g.kind == 1 ? 8.f : g.kind == 2 ? 6.f : 3.f) - g.ttl);
-        if (g.kind == 0) cube(g.pos, g.size, glm::vec4(0.5f * fade, 0.02f, 0.02f, 1.f), assets_.white);
-        else if (g.kind == 1) cube(g.pos, g.size, glm::vec4(0.38f * fade, 0.04f * fade, 0.03f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
-        else cube(g.pos, g.size, glm::vec4(0.85f * fade, 0.68f * fade, 0.22f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
+        if (g.kind == 0) {
+            cube(g.pos, g.size, glm::vec4(0.5f * fade, 0.02f, 0.02f, 1.f), assets_.white);
+        } else if (g.kind == 1) {
+            // Meat: a voxel gib when the packs are there, a sprite chunk from the pack, else a dark cube.
+            const float k = g.size / 0.085f;
+            const VoxelModel* m = useVoxels_ ? voxels_.get("GIB" + std::to_string(g.variant % 10) + "_" + ((g.variant & 16) ? "A" : "B")) : nullptr;
+            if (m) {
+                render::MeshInstance mi;
+                mi.mesh = m->mesh;
+                glm::mat4 M = glm::translate(glm::mat4(1.f), g.pos);
+                M = glm::rotate(M, g.spin * age, glm::vec3(0.f, 1.f, 0.f));
+                M = glm::rotate(M, g.spin * 0.6f * age, glm::vec3(1.f, 0.f, 0.f));
+                M = glm::scale(M, glm::vec3(0.010f * k * m->scale));
+                M = glm::translate(M, -m->pivot);
+                mi.model = M;
+                mi.color = glm::vec4(fade, fade, fade, 1.f);
+                meshes_.push_back(mi);
+            } else if (pack && !assets_.brChunk.empty()) {
+                const SpriteAnim& a = (g.variant % 7 == 0 && !assets_.brChunkBig.empty()) ? assets_.brChunkBig : assets_.brChunk;
+                billboard(a.frames[static_cast<size_t>(g.variant) % a.frames.size()], g.pos, 0.013f * k, glm::vec4(fade, fade, fade, 1.f), true, (g.variant & 32) != 0);
+            } else {
+                cube(g.pos, g.size, glm::vec4(0.38f * fade, 0.04f * fade, 0.03f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
+            }
+        } else {
+            const SpriteAnim& a = (g.variant & 1) ? assets_.brCasingShell : assets_.brCasingBullet;
+            if (pack && a.frames.size() >= 13) {
+                const size_t frame = g.resting ? 8 + static_cast<size_t>(g.variant / 2) % 5 : static_cast<size_t>(age * 20.f + static_cast<float>(g.variant)) % 8;
+                billboard(a.frames[frame], g.pos, 0.0065f, glm::vec4(fade, fade, fade, 1.f), true, false);
+            } else {
+                cube(g.pos, g.size, glm::vec4(0.85f * fade, 0.68f * fade, 0.22f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
+            }
+        }
+    }
+    // One-shot sprite bursts: blood clouds at hits, smoke at bullet holes and blasts.
+    for (const Burst& b : bursts_) {
+        const float k = b.t / b.ttl;
+        const int n = static_cast<int>(b.anim->frames.size());
+        const int i = std::clamp(static_cast<int>(k * static_cast<float>(n)), 0, n - 1);
+        const float fade = k > 0.7f ? (1.f - k) / 0.3f : 1.f;
+        billboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(1.3f * fade, 1.3f * fade, 1.3f * fade, fade), false, false);
     }
     // Decals: oldest first so newer blood lands on top; a tiny lift per decal avoids z-fighting between them.
     size_t i = 0;
     for (const Decal& d : fps_.decals()) {
         const float alpha = d.age > 52.f ? std::max(0.f, 1.f - (d.age - 52.f) / 8.f) : 1.f;
         glm::vec3 pos = d.pos + d.normal * (0.006f + 0.0015f * static_cast<float>(i++ % 12));
-        if (d.kind == 0 && !assets_.bloodPool.empty()) decal(assets_.bloodPool, pos, d.normal, d.size, d.yaw, glm::vec4(0.65f, 0.55f, 0.55f, alpha));
+        if (d.kind == 0 && pack && !assets_.brPool.empty()) {
+            // The pool spreads over half a second, then stays.
+            const size_t f = std::min(assets_.brPool.frames.size() - 1, static_cast<size_t>(d.age * assets_.brPool.fps));
+            decal(assets_.brPool.frames[f], pos, d.normal, d.size * 1.3f, d.yaw, glm::vec4(0.85f, 0.85f, 0.85f, alpha));
+        } else if (d.kind == 1 && pack && !assets_.brSplat.empty()) {
+            // Hits, spreads, then dries dark over most of its life.
+            const size_t n = assets_.brSplat.frames.size();
+            const size_t f = d.age < 1.5f ? std::min<size_t>(19, static_cast<size_t>(d.age * 12.f)) : std::min(n - 1, 19 + static_cast<size_t>((d.age - 1.5f) / 8.f));
+            decal(assets_.brSplat.frames[f], pos, d.normal, d.size * 1.4f, d.yaw, glm::vec4(0.9f, 0.9f, 0.9f, alpha));
+        } else if (d.kind == 0 && !assets_.bloodPool.empty()) decal(assets_.bloodPool, pos, d.normal, d.size, d.yaw, glm::vec4(0.65f, 0.55f, 0.55f, alpha));
         else if (d.kind == 1 && !assets_.blood.empty()) decal(assets_.blood.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(0.75f, 0.2f, 0.2f, alpha));
         else if (d.kind == 2 && !assets_.puff.empty()) decal(assets_.puff.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(0.25f, 0.25f, 0.25f, alpha));
     }
@@ -2574,7 +2651,7 @@ void App::addHud() {
             row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 13); y += lh * 1.08f;
             row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 14); y += lh * 1.08f;
             row(y, "BLOOM", bloom_ ? "ON" : "OFF", screenIndex_ == 15); y += lh * 1.08f;
-            row(y, "BRUTAL", brutal_ ? "ON  (BLOOD, GIBS, CASINGS)" : "OFF", screenIndex_ == 16); y += lh * 1.3f;
+            row(y, "BRUTAL", brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 16); y += lh * 1.3f;
             hotText(W * 0.5f, y, screenIndex_ == 17 ? "> BACK <" : "BACK", s, screenIndex_ == 17 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);

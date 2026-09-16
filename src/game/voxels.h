@@ -32,6 +32,8 @@ public:
     static std::optional<std::filesystem::path> findPack(const std::optional<std::filesystem::path>& explicitDir, const std::string& prefDir, const std::string& baseDir = "");
 
     bool init(render::Renderer& renderer, const std::filesystem::path& dir);
+    // Adds the .kvx files of another folder (with its own optional VOXELDEF) under their names.
+    int addPack(const std::filesystem::path& dir);
     bool available() const { return !defs_.empty(); }
     const std::string& dirName() const { return dirName_; }
     int definitions() const { return static_cast<int>(defs_.size()); }
@@ -43,7 +45,7 @@ public:
     const VoxelModel* get(const std::string& atlasKey);
 
 private:
-    struct Def { std::string file; float scale = 1.f; float angleOffset = 90.f; };
+    struct Def { std::string file; float scale = 1.f; float angleOffset = 90.f; std::filesystem::path dir; };   // dir empty = the main pack
     void parseVoxelDef(const std::string& text);
 
     render::Renderer* renderer_ = nullptr;
