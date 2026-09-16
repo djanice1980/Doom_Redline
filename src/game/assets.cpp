@@ -18,7 +18,8 @@ namespace rl::game {
 namespace fs = std::filesystem;
 
 namespace {
-const char* kTierNames[kEnemyTiers] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON", "CYBERDEMON", "SPIDER MASTERMIND"};
+const char* kTierNames[kEnemyKinds] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON", "CYBERDEMON", "SPIDER MASTERMIND",
+                                       "CHAINGUNNER", "HELL KNIGHT", "REVENANT", "MANCUBUS", "ARACHNOTRON"};
 }
 
 namespace {
@@ -175,9 +176,11 @@ void Assets::loadProcedural(audio::Audio& audio) {
     // One procedural monster, scaled and tinted per tier.
     const glm::vec4 tints[kEnemyTiers] = {{0.7f, 0.7f, 0.8f, 1.f}, {1.f, 1.f, 1.f, 1.f}, {1.f, 0.6f, 0.6f, 1.f}, {1.f, 0.4f, 0.4f, 1.f}, {0.5f, 1.f, 0.5f, 1.f}, {0.6f, 0.6f, 0.6f, 1.f}, {0.9f, 0.9f, 0.5f, 1.f}};
     const float sizes[kEnemyTiers] = {0.026f, 0.031f, 0.034f, 0.045f, 0.055f, 0.07f, 0.075f};
+    for (int t = 0; t < kEnemyKinds; ++t) { enemies[t] = EnemyArt{}; enemies[t].name = kTierNames[t]; }
     for (int t = 0; t < kEnemyTiers; ++t) {
         EnemyArt& e = enemies[t];
         e.name = kTierNames[t];
+        e.available = true;
         e.tint = tints[t];
         e.metresPerPixel = sizes[t];
         anim(e.walk, "enemy_idle", 2, 3.f, [](int i) { return proc::enemyFrame(i == 0 ? 0 : 2, 64); });
@@ -322,10 +325,26 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addFlat("floor", {"FLOOR4_8", "FLAT5_4", "FLOOR0_1"}, proc::floorTexture(64), floorLump);
     addFlat("ceiling", {"CEIL3_5", "FLAT20", "CEIL5_1"}, proc::wallTexture(64), ceilingLump);
 
+    // A companion WAD supplies what the chosen one lacks: doom2.wad next to doom.wad brings
+    // the Doom 2 monsters (and their sounds) into the roster.
+    std::optional<wad::Wad> wad2;
+    {
+        std::vector<fs::path> candidates;
+        const std::string primary = [&] { std::string n = path.filename().string(); std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); }); return n; }();
+        const char* other = primary == "doom2.wad" ? "doom.wad" : "doom2.wad";
+        for (const char* name : {other, primary == "doom2.wad" ? "DOOM.WAD" : "DOOM2.WAD"}) candidates.push_back(path.parent_path() / name);
+        std::error_code ec;
+        for (const fs::path& c : candidates) {
+            if (!fs::is_regular_file(c, ec)) continue;
+            wad2 = wad::Wad::load(c);
+            if (wad2) { std::fprintf(stderr, "[assets] companion %s: %s\n", c.filename().string().c_str(), wad::describe(*wad2).c_str()); break; }
+        }
+    }
     auto addSprite = [&](SpriteAnim& a, const char* sprite, const char* frameLetters, float fps) {
         a = {};
         a.fps = fps;
         auto set = wad::SpriteSet::load(*wad, *pal, sprite);
+        if (!set && wad2) set = wad::SpriteSet::load(*wad2, *pal, sprite);
         if (!set) return false;
         for (const char* f = frameLetters; *f; ++f) {
             auto view = set->get(*f, 1);
@@ -340,7 +359,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     bool ok = true;
     // Monster classes by red-region size. Frame letters follow the Doom state tables.
     struct Def { const char* sprite; const char* walk; const char* attack; const char* pain; const char* death; float px; const char* xdeath; };
-    const Def defs[kEnemyTiers] = {
+    const Def defs[kEnemyKinds] = {
         {"POSS", "ABCD", "EF", "G", "HIJKL", 0.031f, "NOPQRSTU"},      // zombieman: hitscan
         {"TROO", "ABCD", "EFG", "H", "IJKL", 0.031f, "NOPQRSTU"},      // imp: fireball
         {"SARG", "ABCD", "EFG", "H", "IJKLMN", 0.031f, ""},    // demon: melee
@@ -348,19 +367,29 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         {"BOSS", "ABCD", "EFG", "H", "IJKLMNO", 0.033f, ""},   // baron: green fireball, tanky
         {"CYBR", "ABCD", "EF", "G", "HIJKLMNOP", 0.030f, ""},  // cyberdemon: rockets
         {"SPID", "ABCDEF", "GH", "I", "JKLMNOPQRS", 0.030f, ""}, // spider mastermind: chaingun
+        {"CPOS", "ABCD", "EF", "G", "HIJKLM", 0.031f, "NOPQRST"},   // chaingunner (Doom 2): hitscan bursts
+        {"BOS2", "ABCD", "EFG", "H", "IJKLMNO", 0.033f, ""},        // hell knight: a lesser baron
+        {"SKEL", "ABCDEF", "JK", "L", "LMNOPQ", 0.032f, ""},        // revenant: homing missiles
+        {"FATT", "ABCDEF", "GHI", "J", "KLMNOPQRST", 0.036f, ""},   // mancubus: fireball volleys
+        {"BSPI", "ABCDEF", "GH", "I", "JKLMNOP", 0.034f, ""},       // arachnotron: plasma stream
     };
-    const char* sightSnd[kEnemyTiers] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT", "DSCYBSIT", "DSSPISIT"};
-    const char* painSnd[kEnemyTiers] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN"};
-    const char* deathSnd[kEnemyTiers] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH", "DSCYBDTH", "DSSPIDTH"};
-    const char* attackSnd[kEnemyTiers] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT", "DSRLAUNC", "DSPISTOL"};
-    for (int t = 0; t < kEnemyTiers; ++t) {
+    const char* sightSnd[kEnemyKinds] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT", "DSCYBSIT", "DSSPISIT", "DSPOSIT2", "DSKNTSIT", "DSSKESIT", "DSMANSIT", "DSBSPSIT"};
+    const char* painSnd[kEnemyKinds] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSPOPAIN", "DSDMPAIN", "DSPOPAIN", "DSMNPAIN", "DSDMPAIN"};
+    const char* deathSnd[kEnemyKinds] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH", "DSCYBDTH", "DSSPIDTH", "DSPODTH2", "DSKNTDTH", "DSSKEDTH", "DSMANDTH", "DSBSPDTH"};
+    const char* attackSnd[kEnemyKinds] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT", "DSRLAUNC", "DSPISTOL", "DSSHOTGN", "DSFIRSHT", "DSSKEATK", "DSMANATK", "DSPLASMA"};
+    for (int t = 0; t < kEnemyKinds; ++t) {
         EnemyArt& e = enemies[t];
+        e = EnemyArt{};
         e.name = kTierNames[t];
         e.metresPerPixel = defs[t].px;
-        ok &= addSprite(e.walk, defs[t].sprite, defs[t].walk, 5.f);
-        ok &= addSprite(e.attack, defs[t].sprite, defs[t].attack, 6.f);
-        ok &= addSprite(e.pain, defs[t].sprite, defs[t].pain, 6.f);
-        ok &= addSprite(e.death, defs[t].sprite, defs[t].death, 9.f);
+        bool got = true;
+        got &= addSprite(e.walk, defs[t].sprite, defs[t].walk, 5.f);
+        got &= addSprite(e.attack, defs[t].sprite, defs[t].attack, 6.f);
+        got &= addSprite(e.pain, defs[t].sprite, defs[t].pain, 6.f);
+        got &= addSprite(e.death, defs[t].sprite, defs[t].death, 9.f);
+        e.available = got;
+        if (t < kEnemyTiers) ok &= got;
+        else if (!got) { std::fprintf(stderr, "[assets] %s: no %s sprites in the WADs, variant disabled\n", kTierNames[t], defs[t].sprite); continue; }   // never spawns
         e.xdeath = SpriteAnim{};
         if (*defs[t].xdeath) addSprite(e.xdeath, defs[t].sprite, defs[t].xdeath, 10.f);
         e.sightSound = std::string("sight") + std::to_string(t);
@@ -409,12 +438,15 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSprite(candelabra, "CBRA", "A", 1.f);
     addSprite(lamp, "COLU", "A", 1.f);
     addSprite(barrel, "BAR1", "AB", 4.f);
-    const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7", "MISL", "PLSS"};
-    const char* flight[kProjectileTypes] = {"AB", "AB", "AB", "A", "AB"};
-    for (int p = 0; p < kProjectileTypes; ++p) ok &= addSprite(projectile[p], balls[p], flight[p], 8.f);
+    const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7", "MISL", "PLSS", "FATB", "MANF", "APLS"};
+    const char* flight[kProjectileTypes] = {"AB", "AB", "AB", "A", "AB", "AB", "AB", "AB"};
+    for (int p = 0; p < kProjectileTypes; ++p) { bool got = addSprite(projectile[p], balls[p], flight[p], 8.f); if (p < 5) ok &= got; }
     for (int p = 0; p < 3; ++p) ok &= addSprite(projectileHit[p], balls[p], "CDE", 14.f);
     ok &= addSprite(projectileHit[3], "MISL", "BCD", 12.f);
     ok &= addSprite(projectileHit[4], "PLSE", "ABCDE", 16.f);
+    addSprite(projectileHit[5], "FBXP", "ABC", 14.f);      // revenant missile burst (Doom 2)
+    addSprite(projectileHit[6], "MISL", "BCD", 12.f);      // mancubus fireball
+    addSprite(projectileHit[7], "APBX", "ABCDE", 16.f);    // arachnotron plasma
     if (!ok) {
         std::fprintf(stderr, "[assets] WAD is missing expected sprites; falling back to procedural art\n");
         atlas_ = {};
@@ -505,7 +537,9 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     // Sounds: prefer the WAD, fall back to procedural for anything missing.
     auto addSound = [&](const std::string& name, std::initializer_list<const char*> lumps, proc::Sound fallback) {
         for (const char* l : lumps) {
-            if (auto s = wad::loadSound(*wad, l)) {
+            auto s = wad::loadSound(*wad, l);
+            if (!s && wad2) s = wad::loadSound(*wad2, l);
+            if (s) {
                 audio.addSound(name, s->sampleRate, std::move(s->samples));
                 return;
             }
@@ -535,7 +569,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSound("pickup_weapon", {"DSWPNUP"}, proc::sndLevelUp());
     addSound("bfg", {"DSBFG", "DSRXPLOD"}, proc::sndExplode());
     addSound("gib", {"DSSLOP"}, proc::sndHit());
-    for (int t = 0; t < kEnemyTiers; ++t) {
+    for (int t = 0; t < kEnemyKinds; ++t) {
         addSound(enemies[t].sightSound, {sightSnd[t]}, proc::sndRedLine());
         addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());
         addSound(enemies[t].deathSound, {deathSnd[t]}, proc::sndEnemyDie());

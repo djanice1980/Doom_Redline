@@ -96,6 +96,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     }
     assets_.brutalPackDir = Assets::findBrutalPack(baseDir_);
     if (!assets_.load(wad, audio_, extrasHint())) throw std::runtime_error("asset build failed");
+    for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
     if (wad && assets_.usingWad()) wadPath_ = wad->string();
     renderer_->setAtlas(assets_.atlas().image());
     renderer_->setMsaa(msaa_);
@@ -200,6 +201,7 @@ bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extr
 
 void App::applyAssets(Assets&& fresh) {
     assets_ = std::move(fresh);
+    for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
     renderer_->setAtlas(assets_.atlas().image());
     loadMaterials();
     buildEnvironment();
@@ -344,7 +346,10 @@ void App::newGame() {
     uint32_t seed = opts_.seed ? opts_.seed : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xFFFFFFFFu);
     game_ = std::make_unique<core::Game>(seed);
     fps_ = FpsMode();
+    fps_.setBrutal(brutal_);
+    for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
     ambient_.reset(seed, 1);
+    brawlDecals_.clear();
     redLinesSurvived_ = 0;
     diedInFps_ = false;
     fightStats_ = {};
@@ -1413,7 +1418,7 @@ void App::handleGameEvents() {
 
 void App::handleFpsEvents() {
     for (const FpsEvent& ev : fps_.drainEvents()) {
-        const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
+        const EnemyArt& art = assets_.enemies[std::clamp(ev.kind, 0, kEnemyKinds - 1)];
         switch (ev.type) {
         case FpsEvent::Type::Shoot:
             if (brutal_ && assets_.brWeaponSounds) play(std::string("br_") + assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
@@ -1464,7 +1469,7 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f, 80); break;
         case FpsEvent::Type::EnemyHit:
             play(art.painSound, 0.8f, 1.f, 120);
-            if (brutal_ && !assets_.brSpray[bloodColorForTier(ev.tier)].empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray[bloodColorForTier(ev.tier)]});
+            if (brutal_ && !assets_.brSpray[bloodColorForKind(ev.kind)].empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray[bloodColorForKind(ev.kind)]});
             break;
         case FpsEvent::Type::BulletHole:
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos, 0.f, 0.6f, 0.006f, &assets_.brSmoke});
@@ -1485,7 +1490,7 @@ void App::handleFpsEvents() {
             shakeT_ = std::max(shakeT_, 0.08f);
             break;
         case FpsEvent::Type::EnemyAttack:
-            if (brutal_ && ev.tier == 1 && assets_.brImpSounds) play("impclaw" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brImpSounds)), 0.7f);
+            if (brutal_ && ev.kind == 1 && assets_.brImpSounds) play("impclaw" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brImpSounds)), 0.7f);
             else play(art.attackSound, 0.7f);
             break;
         case FpsEvent::Type::Explosion:
@@ -1508,10 +1513,10 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
         case FpsEvent::Type::EnemySight: {
             // Announce the biggest monster in the room and log the roster.
-            if (brutal_ && ev.tier == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.9f);
+            if (brutal_ && ev.kind == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.9f);
             else play(art.sightSound, 0.9f);
             std::string roster;
-            for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.tier, 0, kEnemyTiers - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
+            for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.kind, 0, kEnemyKinds - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
             std::fprintf(stderr, "[fps] level %d roster: %s\n", fps_.level(), roster.c_str());
             if (fps_.startedInvulnerable()) { announce("INVULNERABLE", glm::vec4(1.f, 0.95f, 0.5f, 1.f), 1.8f); play("levelup", 1.f, 0.7f); trophy("invuln"); }
             else if (lastInvulnChance_ > 0.f) announce("INVULNERABILITY ROLL FAILED (" + std::to_string(static_cast<int>(lastInvulnChance_ * 100.f)) + "%)", glm::vec4(1.f, 0.6f, 0.4f, 1.f), 1.0f);
@@ -1580,7 +1585,28 @@ void App::update(float dt) {
 
     if (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::GameOver && !diedInFps_)) {
         ambient_.update(dt);
-        ambient_.drainEvents();   // silent scenery: the brawl makes no sound over the Tetris game
+        // Silent scenery (no sound over the Tetris game), but in Brutal mode the brawl leaves blood.
+        for (const BrawlEvent& be : ambient_.drainEvents()) {
+            if (!brutal_) continue;
+            const int c = bloodColorForTier(be.tier);
+            if (be.type == BrawlEvent::Type::Pain && !assets_.brSpray[c].empty()) bursts_.push_back({be.pos + glm::vec3(0.f, 0.9f, 0.f), 0.f, 0.4f, 0.006f, &assets_.brSpray[c]});
+            if (be.type == BrawlEvent::Type::Death) {
+                if (!assets_.brSpray[c].empty()) bursts_.push_back({be.pos + glm::vec3(0.f, 0.8f, 0.f), 0.f, 0.45f, 0.008f, &assets_.brSpray[c]});
+                std::uniform_real_distribution<float> u(0.f, 6.2831853f);
+                Decal d;
+                d.pos = glm::vec3(be.pos.x, 0.f, be.pos.z);
+                d.size = 0.5f + 0.12f * static_cast<float>(be.tier);
+                d.yaw = u(rng_);
+                d.color = c;
+                if (brawlDecals_.size() >= 60) brawlDecals_.erase(brawlDecals_.begin());
+                brawlDecals_.push_back(d);
+            }
+        }
+        for (size_t i = 0; i < brawlDecals_.size();) {
+            brawlDecals_[i].age += dt;
+            if (brawlDecals_[i].age > 60.f) brawlDecals_.erase(brawlDecals_.begin() + static_cast<std::ptrdiff_t>(i));
+            else ++i;
+        }
     }
     switch (mode_) {
     case Mode::Title:
@@ -1951,7 +1977,7 @@ void App::addHealthBars(float W, float H, float s, float lh) {
     float y = 24.f;
     for (size_t i = 0; i < top.size(); ++i) {
         const Enemy& e = *top[i];
-        const EnemyArt& art = assets_.enemies[std::clamp(e.tier, 0, kEnemyTiers - 1)];
+        const EnemyArt& art = assets_.enemies[std::clamp(e.kind, 0, kEnemyKinds - 1)];
         float frac = std::clamp(e.hp / std::max(1.f, e.maxHp), 0.f, 1.f);
         glm::vec4 col = frac > 0.5f ? glm::vec4(0.35f, 0.9f, 0.35f, 1.f) : frac > 0.25f ? glm::vec4(1.f, 0.8f, 0.2f, 1.f) : glm::vec4(1.f, 0.25f, 0.2f, 1.f);
         float bw = 150.f * s * 0.5f, bh = 6.f * s * 0.5f;
@@ -2108,7 +2134,7 @@ const std::string& App::animFrame(const SpriteAnim& a, float t, bool loop, bool*
 
 void App::addFpsActors() {
     for (const Enemy& e : fps_.enemies()) {
-        const EnemyArt& art = assets_.enemies[std::clamp(e.tier, 0, kEnemyTiers - 1)];
+        const EnemyArt& art = assets_.enemies[std::clamp(e.kind, 0, kEnemyKinds - 1)];
         const SpriteAnim* anim = &art.walk;
         bool loop = true;
         float t = e.animT;
@@ -2235,7 +2261,7 @@ void App::addLights() {
             cands.push_back({-100.f, {ex.pos, big ? 6.f + ex.radius * 2.f : 3.f, {1.f, 0.6f, 0.2f}, (big ? 6.f : 1.5f) * t}});
         }
         for (const Projectile& p : fps_.projectiles()) {
-            glm::vec3 col = p.type == kProjBaron ? glm::vec3(0.3f, 1.f, 0.3f) : p.type == kProjPlasma ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 0.5f, 0.1f);
+            glm::vec3 col = p.type == kProjBaron ? glm::vec3(0.3f, 1.f, 0.3f) : (p.type == kProjPlasma || p.type == kProjArach) ? glm::vec3(0.4f, 0.6f, 1.f) : p.type == kProjRevenant ? glm::vec3(1.f, 0.75f, 0.4f) : glm::vec3(1.f, 0.5f, 0.1f);
             cands.push_back({-50.f, {p.pos, p.type == kProjRocket ? 4.f : 3.f, col, 1.2f}});
         }
         for (const Pickup& p : fps_.pickups())
@@ -2325,6 +2351,12 @@ void App::addGore() {
             }
         }
     }
+    // Decals: oldest first so newer blood lands on top; a tiny lift per decal avoids z-fighting between them.
+    size_t i = 0;
+    for (const Decal& d : fps_.decals()) drawDecal(d, i++);
+}
+
+void App::addBursts() {
     // One-shot sprite bursts: blood clouds at hits, smoke at bullet holes and blasts.
     for (const Burst& b : bursts_) {
         const float k = b.t / b.ttl;
@@ -2333,11 +2365,13 @@ void App::addGore() {
         const float fade = k > 0.7f ? (1.f - k) / 0.3f : 1.f;
         billboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(1.3f * fade, 1.3f * fade, 1.3f * fade, fade), false, false);
     }
-    // Decals: oldest first so newer blood lands on top; a tiny lift per decal avoids z-fighting between them.
-    size_t i = 0;
-    for (const Decal& d : fps_.decals()) {
+}
+
+void App::drawDecal(const Decal& d, size_t i) {
+    const bool pack = assets_.brutalPack;
+    {
         const float alpha = d.age > 52.f ? std::max(0.f, 1.f - (d.age - 52.f) / 8.f) : 1.f;
-        glm::vec3 pos = d.pos + d.normal * (0.006f + 0.0015f * static_cast<float>(i++ % 12));
+        glm::vec3 pos = d.pos + d.normal * (0.006f + 0.0015f * static_cast<float>(i % 12));
         const int c = std::clamp(d.color, 0, 2);
         static const glm::vec4 kFallbackPool[3] = {{0.65f, 0.55f, 0.55f, 1.f}, {0.3f, 0.7f, 0.25f, 1.f}, {0.3f, 0.35f, 0.9f, 1.f}};
         static const glm::vec4 kFallbackSplat[3] = {{0.75f, 0.2f, 0.2f, 1.f}, {0.2f, 0.75f, 0.2f, 1.f}, {0.2f, 0.3f, 0.9f, 1.f}};
@@ -2892,7 +2926,11 @@ void App::buildScene() {
 
     addBoard();
     addDecor();
-    if (!ambient_.empty() && (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::Paused && pausedFrom_ == Mode::Blocks) || (mode_ == Mode::GameOver && !diedInFps_))) addAmbient();
+    if (!ambient_.empty() && (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::Paused && pausedFrom_ == Mode::Blocks) || (mode_ == Mode::GameOver && !diedInFps_))) {
+        addAmbient();
+        if (brutal_) { size_t i = 0; for (const Decal& d : brawlDecals_) drawDecal(d, i++); }
+    }
+    addBursts();
     bool actors = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_) || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)));
     if (actors) addFpsActors();
     addLights();

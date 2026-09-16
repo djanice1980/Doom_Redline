@@ -24,6 +24,12 @@ const EnemyStats kStats[] = {
     {"BARON",     1000.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron,  1.2f, false, 2.8f, 28.f, 10.f, 1200, 2.5f, 1, 0.f},
     {"CYBERDEMON",2200.f, 0.90f, 3.3f, AttackKind::Projectile, kProjRocket, 1.6f, false, 3.0f, 40.f, 14.f, 2500, 2.0f, 1, 2.0f},
     {"SPIDER",    2600.f, 1.20f, 3.0f, AttackKind::Hitscan,    -1,          1.4f, false, 0.9f, 8.f,  0.f,  3000, 1.5f, 1, 0.f},
+    // Doom 2 variants (kinds 7-11): stand in for a tier with their own behaviour.
+    {"CHAINGUNNER",  70.f, 0.40f, 1.7f, AttackKind::Hitscan,    -1,           0.f,  false, 1.1f, 6.f,  0.f,  250,  7.5f, 0, 0.f},
+    {"HELL KNIGHT", 500.f, 0.70f, 2.3f, AttackKind::Projectile, kProjBaron,   1.3f, false, 2.6f, 22.f, 10.f, 800,  3.0f, 1, 0.f},
+    {"REVENANT",    300.f, 0.50f, 2.2f, AttackKind::Projectile, kProjRevenant,1.6f, false, 2.8f, 18.f, 7.f,  700,  4.0f, 0, 0.f, 1, true},
+    {"MANCUBUS",    600.f, 0.85f, 2.0f, AttackKind::Projectile, kProjMancubus,0.9f, false, 3.0f, 16.f, 10.f, 900,  3.0f, 1, 0.f, 3, false},
+    {"ARACHNOTRON", 500.f, 0.90f, 1.6f, AttackKind::Projectile, kProjArach,   1.1f, false, 0.35f, 8.f, 14.f, 900,  4.0f, 1, 0.f},
 };
 
 float absorbPeriodForLevel(float base, int level) { return std::max(8.f, base - 1.f * static_cast<float>(level - 1)); }
@@ -106,7 +112,21 @@ int maxRegionSizeForTier(int tier) {
     return sizes[std::clamp(tier, 0, kMaxTier)];
 }
 
-const EnemyStats& enemyStats(int tier) { return kStats[std::clamp(tier, 0, kMaxTier)]; }
+const EnemyStats& enemyStats(int kind) { return kStats[std::clamp(kind, 0, kMonsterKinds - 1)]; }
+
+// A tier's stand-in: a Doom 2 variant when its art is there and the dice say so.
+int FpsMode::pickKind(int tier) {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    const int* variants = nullptr;
+    int n = 0;
+    static const int forImp[] = {7}, forCaco[] = {8, 9}, forBaron[] = {10, 11};
+    if (tier == 1) { variants = forImp; n = 1; }
+    else if (tier == 3) { variants = forCaco; n = 2; }
+    else if (tier == 4) { variants = forBaron; n = 2; }
+    if (!variants || u(rng_) > 0.5f) return tier;
+    const int pick = variants[static_cast<int>(u(rng_) * static_cast<float>(n)) % n];
+    return kindAvailable_[pick] ? pick : tier;
+}
 const WeaponDef& weaponDef(int id) { return kWeapons[std::clamp(id, 0, kWeaponCount - 1)]; }
 
 FpsMode::FpsMode() : rng_(12345) {}
@@ -184,7 +204,8 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
             if (tier >= kBossTier)
                 for (const Enemy& other : enemies_) if (other.tier >= kBossTier) { tier = kBossTier - 1; break; }
             e.tier = tier;
-            const EnemyStats& st = enemyStats(tier);
+            e.kind = pickKind(tier);
+            const EnemyStats& st = enemyStats(e.kind);
             e.cells = cells;
             auto [ac, ar] = anchorOf(cells);
             e.pos = flatCellFloor(ac, ar);
@@ -220,7 +241,7 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
             break;
         }
     }
-    push(FpsEvent::Type::EnemySight, playerPos_, enemies_.empty() ? 0 : enemies_.front().tier, static_cast<int>(enemies_.size()));
+    push(FpsEvent::Type::EnemySight, playerPos_, enemies_.empty() ? 0 : enemies_.front().tier, static_cast<int>(enemies_.size()), enemies_.empty() ? 0 : enemies_.front().kind);
 }
 
 int FpsMode::enemiesLeft() const {
@@ -321,7 +342,7 @@ void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, i
 
 void FpsMode::spawnGibs(const Enemy& e) {
     const glm::vec3 chest = e.pos + glm::vec3(0.f, 0.55f * e.height, 0.f);
-    const int color = bloodColorForTier(e.tier);
+    const int color = bloodColorForKind(e.kind);
     spawnBlood(chest, glm::vec3(0.f, 0.6f, 0.f), 12 + 5 * e.tier, 5.f, 1, color);
     spawnBlood(chest, glm::vec3(0.f, 0.4f, 0.f), 30 + 8 * e.tier, 5.5f, 0, color);
     addDecal(glm::vec3(e.pos.x, 0.f, e.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.9f + 0.25f * static_cast<float>(e.tier), 0, color);
@@ -416,8 +437,8 @@ void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
 void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir, int weapon, bool head) {
     if (!e.alive()) return;
     e.hp -= dmg;
-    push(FpsEvent::Type::EnemyHit, hitPos, e.tier);
-    if (brutal_) spawnBlood(hitPos, dir, 6 + static_cast<int>(dmg * 0.15f), 4.5f, 0, bloodColorForTier(e.tier));
+    push(FpsEvent::Type::EnemyHit, hitPos, e.tier, 0, e.kind);
+    if (brutal_) spawnBlood(hitPos, dir, 6 + static_cast<int>(dmg * 0.15f), 4.5f, 0, bloodColorForKind(e.kind));
     else spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
     if (e.hp <= 0.f) {
         health_ = std::max(health_, std::min(100.f, health_ + 5.f));   // small heal per kill keeps long fights winnable
@@ -428,7 +449,7 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir, 
         // or plain luck blows the monster apart. The two bosses only explode.
         std::uniform_real_distribution<float> lucky(0.f, 1.f);
         e.gibbed = brutal_ && e.tier <= 4 && (dmg >= 60.f || -e.hp >= 0.4f * e.maxHp || lucky(rng_) < 0.3f);
-        if (e.gibbed) { spawnGibs(e); push(FpsEvent::Type::EnemyGibbed, e.pos, e.tier); }
+        if (e.gibbed) { spawnGibs(e); push(FpsEvent::Type::EnemyGibbed, e.pos, e.tier, 0, e.kind); }
         // Otherwise the death animation follows the weapon: a close shotgun blast throws the
         // body back, the chaingun shreds, plasma carbonises, rockets that fail to gib still blast,
         // and a high hitscan hit takes the head.
@@ -444,7 +465,7 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir, 
             else if (roll < 0.35f) e.deathKind = kDeathAlt;
         }
         if (brutal_ && std::getenv("REDLINE_LOG_DEATHS")) std::fprintf(stderr, "[brutal] tier %d killed by weapon %d%s: %s kind %d\n", e.tier, weapon, head ? " (head)" : "", e.gibbed ? "gibbed" : "death", e.deathKind);
-        push(FpsEvent::Type::EnemyDied, e.pos, e.tier, e.gibbed ? 1 : 0);
+        push(FpsEvent::Type::EnemyDied, e.pos, e.tier, e.gibbed ? 1 : 0, e.kind);
         dropLoot(e);
     } else if (e.state != Enemy::State::Emerging) {
         e.state = Enemy::State::Pain;
@@ -643,10 +664,10 @@ void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
     if (dist < blast) hurtPlayer((10.f + 6.f * static_cast<float>(e.tier)) * (1.f - dist / blast), e.pos);
     push(FpsEvent::Type::Explosion, ex.pos, e.tier, destroyed);
     // Harder monsters pay more, scaled by level, plus a bounty per block they took with them.
-    const EnemyStats& st = enemyStats(e.tier);
+    const EnemyStats& st = enemyStats(e.kind);
     int points = static_cast<int>(static_cast<float>(st.scoreValue) * (1.f + 0.1f * static_cast<float>(level_ - 1))) + 25 * destroyed;
     game.addScore(points);
-    push(FpsEvent::Type::Score, e.pos + glm::vec3(0.f, 1.5f, 0.f), e.tier, points);
+    push(FpsEvent::Type::Score, e.pos + glm::vec3(0.f, 1.5f, 0.f), e.tier, points, e.kind);
     if (e.grown) push(FpsEvent::Type::KilledGrown, e.pos, e.tier, 0);
 }
 
@@ -715,7 +736,7 @@ void FpsMode::breakCell(int c, int r, core::Game& game) {
 }
 
 void FpsMode::breakBlock(Enemy& e, core::Game& game) {
-    const EnemyStats& st = enemyStats(e.tier);
+    const EnemyStats& st = enemyStats(e.kind);
     std::uniform_real_distribution<float> u(0.f, 1.f);
     glm::vec3 from = e.pos + glm::vec3(0.f, 1.2f, 0.f);
     glm::vec3 to = playerPos_ + glm::vec3(0.f, 0.6f, 0.f);
@@ -788,7 +809,8 @@ void FpsMode::tryAbsorb(Enemy& e, core::Game& game) {
         }
     }
     ++e.tier;
-    const EnemyStats& st = enemyStats(e.tier);
+    e.kind = pickKind(e.tier);
+    const EnemyStats& st = enemyStats(e.kind);
     float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(level_ - 1), 0.45f, 2.5f);
     e.maxHp = e.hp = st.hp * hpScale * (food.empty() ? 0.8f : std::min(1.2f, 1.f + 0.04f * static_cast<float>(food.size())));
     e.radius = st.radius;
@@ -866,7 +888,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     float cadence = std::max(0.5f, 1.f - 0.06f * static_cast<float>(level_ - 1));
     glm::vec3 playerCentre = playerPos_ + glm::vec3(0.f, 0.6f, 0.f);
     for (Enemy& e : enemies_) {
-        const EnemyStats& st = enemyStats(e.tier);
+        const EnemyStats& st = enemyStats(e.kind);
         e.stateT += dt;
         e.animT += dt;
         e.flashT = std::max(0.f, e.flashT - dt * 6.f);
@@ -931,7 +953,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
             if (e.stateT >= 0.35f && !e.attacked) {
                 e.attacked = true;
                 e.attackTimer = st.attackInterval * (0.7f + 0.6f * u(rng_)) * crowd * cadence;
-                push(FpsEvent::Type::EnemyAttack, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier);
+                push(FpsEvent::Type::EnemyAttack, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, 0, e.kind);
                 switch (st.attack) {
                 case AttackKind::Hitscan: {
                     e.flashT = 1.f;
@@ -939,13 +961,22 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                     break;
                 }
                 case AttackKind::Projectile: {
-                    Projectile p;
-                    p.pos = e.pos + glm::vec3(0.f, st.flies ? 0.9f : 1.0f, 0.f) + dir * 0.4f;
-                    p.vel = glm::normalize(playerCentre - p.pos) * st.projSpeed;
-                    p.type = st.projectile;
-                    p.damage = st.damage;
-                    p.blast = st.projBlast;
-                    projectiles_.push_back(p);
+                    // Volleys (the mancubus) fan out around the aim; homing ones (the revenant) steer later.
+                    for (int v = 0; v < std::max(1, st.volley); ++v) {
+                        Projectile p;
+                        p.pos = e.pos + glm::vec3(0.f, st.flies ? 0.9f : 1.0f, 0.f) + dir * 0.4f;
+                        glm::vec3 aim = glm::normalize(playerCentre - p.pos);
+                        if (st.volley > 1) {
+                            const float spread = (static_cast<float>(v) - 0.5f * static_cast<float>(st.volley - 1)) * 0.28f;
+                            aim = glm::normalize(glm::vec3(aim.x * std::cos(spread) - aim.z * std::sin(spread), aim.y, aim.x * std::sin(spread) + aim.z * std::cos(spread)));
+                        }
+                        p.vel = aim * st.projSpeed;
+                        p.type = st.projectile;
+                        p.damage = st.damage;
+                        p.blast = st.projBlast;
+                        p.homing = st.homing;
+                        projectiles_.push_back(p);
+                    }
                     break;
                 }
                 case AttackKind::Melee:
@@ -972,6 +1003,11 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     for (size_t i = 0; i < projectiles_.size();) {
         Projectile& p = projectiles_[i];
         glm::vec3 prev = p.pos;
+        if (p.homing && !p.fromPlayer && health_ > 0.f) {   // revenant missiles bend towards the player, slowly enough to dodge
+            const glm::vec3 to = glm::normalize((playerPos_ + glm::vec3(0.f, 1.0f, 0.f)) - p.pos);
+            const float speed = glm::length(p.vel);
+            p.vel = glm::normalize(glm::mix(glm::normalize(p.vel), to, std::min(1.f, 1.6f * dt))) * speed;
+        }
         p.pos += p.vel * dt;
         p.ttl -= dt;
         p.animT += dt;

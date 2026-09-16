@@ -45,16 +45,22 @@ struct EnemyStats {
     float breakInterval;   // seconds between block-destroying acts (cover erodes faster for big monsters)
     int breakRadius;       // 0 = one block, 1 = the block and its neighbours
     float projBlast;       // splash radius of its projectile (enemy rockets), 0 = none
+    int volley = 1;        // projectiles per attack (mancubus 3)
+    bool homing = false;   // its projectiles steer towards the player (revenant)
 };
 constexpr int kMaxTier = 6;   // zombie, imp, demon, cacodemon, baron, cyberdemon, spider mastermind
-const EnemyStats& enemyStats(int tier);
+// Monster kinds: 0-6 are the tiers themselves; 7-11 are Doom 2 variants that stand in for a
+// tier (chaingunner for imps, hell knight and revenant for cacodemons, mancubus and
+// arachnotron for barons) when their art is available.
+constexpr int kMonsterKinds = 12;
+const EnemyStats& enemyStats(int kind);
 // Biggest class the level allows to spawn (absorbing may go one higher).
 int maxTierForLevel(int level);
 // Largest red region a class is drawn from; bigger regions split into several monsters.
 int maxRegionSizeForTier(int tier);
 
 // Projectile types index Assets::projectile / projectileHit.
-enum ProjectileType { kProjImp = 0, kProjCaco = 1, kProjBaron = 2, kProjRocket = 3, kProjPlasma = 4, kProjTypeCount = 5 };
+enum ProjectileType { kProjImp = 0, kProjCaco = 1, kProjBaron = 2, kProjRocket = 3, kProjPlasma = 4, kProjRevenant = 5, kProjMancubus = 6, kProjArach = 7, kProjTypeCount = 8 };
 
 // ---------------------------------------------------------------------------
 enum WeaponId { kShotgun = 0, kChaingun = 1, kRocketLauncher = 2, kPlasmaRifle = 3, kWeaponCount = 4 };
@@ -93,6 +99,7 @@ struct Pickup {
 struct Enemy {
     enum class State { Emerging, Idle, Attack, Pain, Dying, Dead };
     int tier = 1;
+    int kind = 1;            // art and stats (== tier for the stock monsters, 7+ for Doom 2 variants)
     std::vector<std::pair<int, int>> cells;   // the red region it came from
     glm::vec3 pos{0.f};      // feet
     float hp = 60.f, maxHp = 60.f;
@@ -122,6 +129,7 @@ struct Projectile {
     float damage = 10.f;
     float blast = 0.f;       // splash radius (player rockets)
     bool fromPlayer = false;
+    bool homing = false;
     float ttl = 5.f;
     float animT = 0.f;
 };
@@ -163,6 +171,7 @@ enum DeathKind { kDeathShotgun = 0, kDeathChaingun = 1, kDeathPlasma = 2, kDeath
 
 // Doom's monsters bleed red except cacodemons (blue) and the baron family (green).
 inline int bloodColorForTier(int tier) { return tier == 3 ? 2 : tier == 4 ? 1 : 0; }
+inline int bloodColorForKind(int kind) { return kind == 3 ? 2 : (kind == 4 || kind == 8) ? 1 : 0; }
 
 struct Debris {
     glm::vec3 pos, vel;
@@ -191,6 +200,7 @@ struct FpsEvent {
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
+    int kind = 0;   // monster kind for art and sounds (== tier unless a Doom 2 variant)
 };
 
 class FpsMode {
@@ -243,6 +253,8 @@ public:
     const std::vector<Decal>& decals() const { return decals_; }
     // Brutal mode: blood sprays, gib deaths, casings, bullet holes and lasting blood decals.
     void setBrutal(bool on) { brutal_ = on; }
+    // Which monster kinds have art (the Doom 2 variants need doom2.wad); unavailable kinds never spawn.
+    void setKindAvailable(int kind, bool on) { if (kind >= 0 && kind < kMonsterKinds) kindAvailable_[kind] = on; }
     bool brutal() const { return brutal_; }
     const std::vector<Pickup>& pickups() const { return pickups_; }
     std::vector<FpsEvent> drainEvents();
@@ -275,7 +287,9 @@ private:
     void moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, const core::Game& game) const;
     bool lineOfSight(glm::vec3 a, glm::vec3 b, const core::Game& game) const;
     void hurtPlayer(float dmg, glm::vec3 from);
-    void push(FpsEvent::Type t, glm::vec3 p = {}, int tier = 0, int a = 0) { events_.push_back({t, p, tier, a}); }
+    void push(FpsEvent::Type t, glm::vec3 p = {}, int tier = 0, int a = 0, int kind = -1) { events_.push_back({t, p, tier, a, kind < 0 ? tier : kind}); }
+    int pickKind(int tier);
+    bool kindAvailable_[kMonsterKinds] = {true, true, true, true, true, true, true, false, false, false, false, false};
 
     std::mt19937 rng_;
     std::vector<Enemy> enemies_;

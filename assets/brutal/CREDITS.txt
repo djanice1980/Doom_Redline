@@ -54,6 +54,8 @@ voxels/  (from the Brutal Voxel Cyber Horror Monster Mix, MIT)
     https://github.com/RENEGADE-ANDROiD/Brutal_Voxel_Cyber_Horror_Monster_Mix
     GIB0A-GIB9B  voxel gib chunks (NashGore NEXT voxels)
     bluda-c      voxel blood drops
+    cpos*, bos2*, skel*, fatt*, bspi*  voxel chaingunner, hell knight, revenant, mancubus and
+                 arachnotron (Cheello's Voxel Doom models as shipped in the mix)
     Copyright (c) 2026 RENEGADE ANDROiD, MIT License; the pack's credits.txt
     names the further contributors (Nash Muhandes' NashGore, Cheello's Voxel
     Doom and others).

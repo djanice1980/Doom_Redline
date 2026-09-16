@@ -133,6 +133,8 @@ private:
     void setDoomArt(bool on);                   // OPTIONS > DOOM ART: placeholder art without touching the WAD choice
     void decal(const std::string& key, glm::vec3 pos, glm::vec3 normal, float size, float yaw, glm::vec4 color);
     void addGore();                             // brutal: blood, chunks, casings and decals from the fight
+    void addBursts();                           // one-shot sprite effects (blood clouds, smoke, sparks)
+    void drawDecal(const Decal& d, size_t index);
     void loadMaterials();                       // normal/roughness maps for the arena textures (WAD art only)
     int materialSlot(const std::string& lump) const;
     void browseForWad(bool extras = false);
@@ -181,6 +183,7 @@ private:
     struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
     std::vector<ScreenBlood> screenBlood_;
     struct Burst { glm::vec3 pos; float t, ttl, px; const SpriteAnim* anim; };   // one-shot sprite effects (blood clouds, smoke)
+    std::vector<Decal> brawlDecals_;   // blood the brawlers beside the board leave behind (brutal)
     std::vector<Burst> bursts_;
     std::mt19937 rng_{1234u};
     HighScores highScores_;

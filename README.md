@@ -210,7 +210,22 @@ player's own WAD (BLUD, POL5, PUFF, the XDEATH frames and DSSLOP), and the
 placeholder art has procedural stand-ins. Blood stays for about a minute.
 It is a native take on the Brutal Doom feel, not the mod itself: Brutal
 Doom is a GZDoom mod (DECORATE and ZScript) and REDLINE's engine cannot run
-it, so only its art and sounds are used.
+it, so only its art and sounds are used. With the pack, monsters also die by
+the weapon that killed them (shotgun fly-back, chaingun shredding, plasma
+carbonising, head shots), bleed green or blue where Doom says so, Brutal
+Doom's heavier weapon sounds and weapon art take over, sparks and ricochets
+fly off the walls, torches carry soft flares, and the brawlers beside the
+board bleed on the floor too.
+
+## Doom 2 monsters
+
+With doom2.wad next to the chosen WAD (the Steam re-release keeps both in
+one folder) the roster grows: chaingunners stand in for imps, hell knights
+and revenants for cacodemons, mancubi and arachnotrons for barons, each
+about half the time, with their own behaviour (bursts, homing missiles,
+fireball volleys, plasma streams) and voxel models from the bundled pack.
+Without doom2.wad the original seven classes play as before. If doom2.wad
+is the chosen WAD everything is in it already.
 
 ## Post-processing: HDR, bloom, anti-aliasing
 

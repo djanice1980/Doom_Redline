@@ -25,6 +25,7 @@ struct SpriteAnim {
 // One monster class per red-region size tier (zombie, imp, demon, cacodemon, baron).
 struct EnemyArt {
     std::string name;
+    bool available = false;   // art loaded (the Doom 2 variants need doom2.wad)
     SpriteAnim walk, attack, pain, death;
     SpriteAnim xdeath;        // gib death frames (zombies and imps have them); empty otherwise
     SpriteAnim brDeath[6];    // community pack: per-weapon deaths, indexed by DeathKind (empty when absent)
@@ -33,8 +34,9 @@ struct EnemyArt {
     std::string sightSound, painSound, deathSound, attackSound;   // logical sound names
 };
 
-constexpr int kEnemyTiers = 7;
-constexpr int kProjectileTypes = 5;   // imp / cacodemon / baron fireballs, rocket, plasma
+constexpr int kEnemyTiers = 7;        // the difficulty ladder: zombie, imp, demon, cacodemon, baron, cyberdemon, spider
+constexpr int kEnemyKinds = 12;       // + Doom 2 variants: chaingunner, hell knight, revenant, mancubus, arachnotron
+constexpr int kProjectileTypes = 8;   // imp / cacodemon / baron fireballs, rocket, plasma, revenant missile, mancubus fireball, arachnotron plasma
 constexpr int kWeaponArt = 4;         // shotgun, chaingun, rocket launcher, plasma rifle
 constexpr int kPickupArt = 8;         // stim, medikit, bullets, rockets, cells, chaingun, launcher, plasma gun
 
@@ -95,7 +97,7 @@ public:
     std::string wallLump, floorLump, ceilingLump;
     std::string crosshair = "crosshair";
     std::string white = "__white";
-    EnemyArt enemies[kEnemyTiers];
+    EnemyArt enemies[kEnemyKinds];
     SpriteAnim projectile[kProjectileTypes], projectileHit[kProjectileTypes];
     WeaponArt weapons[kWeaponArt];
     SpriteAnim pickups[kPickupArt];
