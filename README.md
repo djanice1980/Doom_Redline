@@ -237,6 +237,10 @@ sensitivity, inverted look and rumble live under OPTIONS.
 
 ## Controls
 
+Every menu and screen works with the mouse as well: hovering highlights an
+item, a left click activates it, option rows step forward on left click and
+back on right click, and each screen has a clickable BACK or CANCEL.
+
 Block mode:
 
 | Key | Action |

@@ -47,6 +47,8 @@ struct Options {
     std::string keys;                  // letters to hold from frame keysFrame (testing), e.g. "BFG"
     int keysFrame = 30;
     int keysHoldFrames = 150;          // released this many frames later
+    struct Click { int x, y, frame; };
+    std::vector<Click> clicks;         // testing: left-clicks at window coordinates on given frames
     int stackRows = 0;                 // pre-fill this many holey rows of normal blocks (blocks scenario)
     bool noMusic = false;
     float musicVolume = 0.45f;
@@ -96,6 +98,13 @@ private:
     void addHud();
     void addLights();
     void text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align = 0);
+    // Mouse: every menu item, option row and BACK/CANCEL label registers a hotspot as it is drawn.
+    enum { kHotMenu = 0, kHotScreenItem, kHotOptionRow, kHotBack };
+    struct Hotspot { float x, y, w, h; int kind; int index; };
+    std::vector<Hotspot> hotspots_;
+    void hotText(float x, float y, const std::string& s, float scale, glm::vec4 color, int align, int kind, int index);
+    void hotRect(float x, float y, float w, float h, int kind, int index) { hotspots_.push_back({x, y, w, h, kind, index}); }
+    const Hotspot* hotspotAt(float wx, float wy) const;   // window coordinates -> hotspot or null
     void screenSprite(const std::string& key, float x, float y, float scale, glm::vec4 color, float anchorX, float anchorY, bool flip = false);
     void billboard(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip);
     // A sprite frame as either its voxel model (when the pack is on and has one) or a billboard.

@@ -300,6 +300,18 @@ Anything missing falls back to `procedural.cpp`. Block tiles are always ours.
 Top 10 in SDL's pref path as whitespace-separated lines; `add()` returns the
 1-based rank (0 = not placed) and saves.
 
+## Mouse in menus (`App::hotText`, `hotspotAt`)
+
+Menus are drawn, not laid out, so clickability is recorded at draw time:
+`hotText` draws a label and pushes a `Hotspot` (rect, kind, index); option
+rows push one rect spanning label and value. `addHud` clears the list each
+frame and the mouse handlers look up the previous frame's list, converting
+window coordinates to swapchain pixels. Kinds: menu item (sets `menu_.index`
+and calls `menuSelect`), screen item (sets `screenIndex_` and sends Return
+through `screenKey`), option row (Left/Right adjust), back (sends Escape).
+Hover moves the highlight. `--click x,y@frame` injects a motion + click for
+tests and logs what it hit.
+
 ## Identity and play statistics (`src/game/playerstats.cpp`)
 
 `PlayerStats` owns three files per profile: `identity.txt` (`player_id`, a

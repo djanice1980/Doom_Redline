@@ -1050,6 +1050,12 @@ int App::run() {
                 SDL_PushEvent(&ev);
             }
         }
+        for (const Options::Click& c : opts_.clicks) {
+            if (c.frame != frameCount_) continue;
+            SDL_Event mv{}; mv.type = SDL_EVENT_MOUSE_MOTION; mv.motion.x = static_cast<float>(c.x); mv.motion.y = static_cast<float>(c.y); SDL_PushEvent(&mv);
+            SDL_Event dn{}; dn.type = SDL_EVENT_MOUSE_BUTTON_DOWN; dn.button.button = SDL_BUTTON_LEFT; dn.button.x = static_cast<float>(c.x); dn.button.y = static_cast<float>(c.y); SDL_PushEvent(&dn);
+            SDL_Event up = dn; up.type = SDL_EVENT_MOUSE_BUTTON_UP; SDL_PushEvent(&up);
+        }
         handleEvents();
         update(dt);
         if (stats_.loaded()) {
@@ -1111,6 +1117,11 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_MOUSE_MOTION:
             if ((mode_ == Mode::Fps || mode_ == Mode::Countdown) && screen_ == kScreenNone) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
+            else if (const Hotspot* h = hotspotAt(e.motion.x, e.motion.y)) {
+                // Hovering highlights the item the way the arrow keys would.
+                if (h->kind == kHotMenu && menu_.index != h->index) { menu_.index = h->index; play("menu", 0.4f); }
+                else if ((h->kind == kHotScreenItem || h->kind == kHotOptionRow) && screenIndex_ != h->index) { screenIndex_ = h->index; play("menu", 0.4f); }
+            }
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
             openGamepad(e.gdevice.which);
@@ -1142,9 +1153,16 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             stats_.addInput(InputDevice::Mouse);
-            if (e.button.button == SDL_BUTTON_LEFT) {
-                if (mode_ == Mode::Fps) fpsIn_.fire = true;
-                else if (!menu_.items.empty()) { play("menu_select", 0.7f); menuSelect(); }
+            if (mode_ == Mode::Fps && screen_ == kScreenNone) { if (e.button.button == SDL_BUTTON_LEFT) fpsIn_.fire = true; break; }
+            if (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT) {
+                const Hotspot* h = hotspotAt(e.button.x, e.button.y);
+                bool left = e.button.button == SDL_BUTTON_LEFT;
+                if (!opts_.clicks.empty()) std::fprintf(stderr, "[ui] click %.0f,%.0f -> %s (hotspots %zu)\n", e.button.x, e.button.y, h ? (std::to_string(h->kind) + "/" + std::to_string(h->index)).c_str() : "none", hotspots_.size());
+                if (h && h->kind == kHotMenu && left) { menu_.index = h->index; play("menu_select", 0.7f); menuSelect(); }
+                else if (h && h->kind == kHotScreenItem && left) { screenIndex_ = h->index; screenKey(SDLK_RETURN, false); }
+                else if (h && h->kind == kHotOptionRow) { screenIndex_ = h->index; adjustOption(left ? 1 : -1); }   // right-click steps back
+                else if (h && h->kind == kHotBack && left) { play("menu", 0.6f); screenKey(SDLK_ESCAPE, false); }
+                else if (!h && left && mode_ == Mode::GameOver && gameOverT_ > 1.2f && screen_ == kScreenNone) { menu_.index = 0; play("menu_select", 0.7f); menuSelect(); }   // "press any key"
             }
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -2079,6 +2097,25 @@ void App::panel(float x, float y, float w, float h, glm::vec4 color) {
     screenQuads_.push_back(q);
 }
 
+void App::hotText(float x, float y, const std::string& s, float scale, glm::vec4 color, int align, int kind, int index) {
+    float w = static_cast<float>(assets_.textWidth(s, scale));
+    float left = align == 1 ? x - w * 0.5f : align == 2 ? x - w : x;
+    float h = static_cast<float>(assets_.fontHeight) * scale;
+    hotspots_.push_back({left - 6.f, y - 4.f, w + 12.f, h + 8.f, kind, index});
+    text(x, y, s, scale, color, align);
+}
+
+const App::Hotspot* App::hotspotAt(float wx, float wy) const {
+    int ww = 1, wh = 1;
+    SDL_GetWindowSize(window_, &ww, &wh);
+    VkExtent2D ext = renderer_->extent();
+    float px = wx * static_cast<float>(ext.width) / static_cast<float>(std::max(1, ww));
+    float py = wy * static_cast<float>(ext.height) / static_cast<float>(std::max(1, wh));
+    for (const Hotspot& h : hotspots_)
+        if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) return &h;
+    return nullptr;
+}
+
 void App::text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align) {
     int w = assets_.textWidth(s, scale);
     if (align == 1) x -= w * 0.5f;
@@ -2096,6 +2133,7 @@ void App::text(float x, float y, const std::string& s, float scale, glm::vec4 co
 }
 
 void App::addHud() {
+    hotspots_.clear();
     VkExtent2D ext = renderer_->extent();
     float W = static_cast<float>(ext.width), H = static_cast<float>(ext.height);
     float s = std::max(1.f, std::round(H / 300.f));   // font scale
@@ -2304,7 +2342,7 @@ void App::addHud() {
             bool sel = static_cast<int>(i) == menu_.index;
             float f = sel ? (0.7f + 0.3f * std::sin(time_ * 6.f)) : 1.f;
             std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
-            text(W * 0.5f, y0 + static_cast<float>(i) * lh * 1.5f, label, s * 1.2f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1);
+            hotText(W * 0.5f, y0 + static_cast<float>(i) * lh * 1.5f, label, s * 1.2f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1, kHotMenu, static_cast<int>(i));
         }
     };
     if (mode_ == Mode::Title && screen_ == kScreenNone) {   // overlay screens replace the title page entirely
@@ -2319,7 +2357,7 @@ void App::addHud() {
             bool sel = static_cast<int>(i) == menu_.index;
             float f = sel ? (0.7f + 0.3f * std::sin(time_ * 6.f)) : 1.f;
             std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
-            text(W * 0.5f, ty + static_cast<float>(i) * lh * 1.25f, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1);
+            hotText(W * 0.5f, ty + static_cast<float>(i) * lh * 1.25f, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1, kHotMenu, static_cast<int>(i));
         }
         if (!allProfileScores_.empty()) {
             // Right-hand column, top right under the key hints: the best runs of every player on this machine.
@@ -2345,10 +2383,13 @@ void App::addHud() {
     // Overlay screens ---------------------------------------------------------
     if (screen_ != kScreenNone) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.88f));
+        int rowIndex = 0;
         auto row = [&](float y, const std::string& label, const std::string& value, bool sel) {
             glm::vec4 c = sel ? yellow : dim;
             text(W * 0.5f - 20.f, y, (sel ? "> " : "") + label, s, c, 2);
             text(W * 0.5f + 20.f, y, value, s, sel ? white : dim, 0);
+            float lw = static_cast<float>(assets_.textWidth(label, s)), vw = static_cast<float>(assets_.textWidth(value, s));
+            hotRect(W * 0.5f - 20.f - lw - 30.f, y - 4.f, lw + 40.f + vw + 30.f, static_cast<float>(assets_.fontHeight) * s + 8.f, kHotOptionRow, rowIndex++);
         };
         if (screen_ == kScreenOptions) {
             text(W * 0.5f, H * 0.07f, "OPTIONS", s * 1.8f, white, 1);
@@ -2370,7 +2411,7 @@ void App::addHud() {
             row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER: FIND EXTRAS.WAD)", screenIndex_ == 10); y += lh * 1.25f;
             row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.25f;
             row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.6f;
-            text(W * 0.5f, y, screenIndex_ == 13 ? "> BACK <" : "BACK", s, screenIndex_ == 13 ? yellow : dim, 1);
+            hotText(W * 0.5f, y, screenIndex_ == 13 ? "> BACK <" : "BACK", s, screenIndex_ == 13 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
@@ -2384,17 +2425,18 @@ void App::addHud() {
                 text(x, y, std::string(got ? "* " : "- ") + all[i].name, s * 0.9f, got ? yellow : glm::vec4(0.5f, 0.5f, 0.5f, 1.f));
                 text(x + 20.f * s, y + lh * 0.75f, got ? std::string(all[i].description) + "  " + trophies_.unlockDate(all[i].id) : all[i].description, s * 0.6f, got ? dim : glm::vec4(0.4f, 0.4f, 0.4f, 1.f));
             }
-            text(W * 0.5f, H - lh * 1.5f, "ESC OR B BACK", s * 0.7f, dim, 1);
+            hotText(W * 0.5f, H - lh * 1.5f, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
         } else if (screen_ == kScreenProfiles) {
             text(W * 0.5f, H * 0.16f, "PLAYERS", s * 2.f, white, 1);
             float y = H * 0.30f;
             for (size_t i = 0; i < profileList_.size(); ++i) {
                 bool sel = static_cast<int>(i) == screenIndex_;
-                text(W * 0.5f, y, (sel ? "> " : "") + profileList_[i] + (profileList_[i] == profileName_ ? "  (CURRENT)" : "") + (sel ? " <" : ""), s, sel ? yellow : dim, 1);
+                hotText(W * 0.5f, y, (sel ? "> " : "") + profileList_[i] + (profileList_[i] == profileName_ ? "  (CURRENT)" : "") + (sel ? " <" : ""), s, sel ? yellow : dim, 1, kHotScreenItem, static_cast<int>(i));
                 y += lh * 1.4f;
             }
             bool selNew = screenIndex_ == static_cast<int>(profileList_.size());
-            text(W * 0.5f, y, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1);
+            hotText(W * 0.5f, y, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1, kHotScreenItem, static_cast<int>(profileList_.size()));
+            hotText(W * 0.5f, y + lh * 1.6f, "BACK", s, dim, 1, kHotBack, 0);
             text(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES AND SETTINGS", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenCredits) {
             text(W * 0.5f, H * 0.12f, "REDLINE", s * 2.6f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
@@ -2408,7 +2450,7 @@ void App::addHud() {
             line("DOOM ART, SOUNDS AND MUSIC: ID SOFTWARE", 0.7f, dim, 0.85f);
             line("MODERN SOUNDTRACK: ANDREW HULSHULT   SC-55 RECORDINGS: THE DOOM RERELEASE", 0.7f, dim, 0.85f);
             line("LIBVORBIS, FLUIDSYNTH, GLM", 0.7f, dim, 1.4f);
-            line("ESC OR B BACK", 0.7f, dim, 1.f);
+            hotText(W * 0.5f, y, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
         } else if (screen_ == kScreenWadSetup) {
             text(W * 0.5f, H * 0.12f, "REDLINE NEEDS DOOM", s * 2.f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
             float y = H * 0.12f + lh * 3.f;
@@ -2420,10 +2462,11 @@ void App::addHud() {
             const char* items[4] = {"BROWSE FOR THE WAD FILE", "TYPE THE PATH", "PLAY WITH PLACEHOLDER ART FOR NOW", "QUIT"};
             for (int i = 0; i < 4; ++i) {
                 bool sel = screenIndex_ == i;
-                text(W * 0.5f, y, sel ? std::string("> ") + items[i] + " <" : items[i], s * 1.05f, sel ? yellow : dim, 1);
+                hotText(W * 0.5f, y, sel ? std::string("> ") + items[i] + " <" : items[i], s * 1.05f, sel ? yellow : dim, 1, kHotScreenItem, i);
                 y += lh * 1.35f;
             }
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 0.5f, wadStatus_, s * 0.8f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
+            if (!wadMissing_) hotText(W * 0.5f, y + lh * 0.4f, "BACK", s * 1.05f, dim, 1, kHotBack, 0);
             text(W * 0.5f, H - lh * 2.f, "YOU CAN CHANGE THIS LATER UNDER OPTIONS > DOOM WAD", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenEmailEntry) {
             text(W * 0.5f, H * 0.20f, "YOUR EMAIL ADDRESS (OPTIONAL)", s * 1.4f, white, 1);
@@ -2435,7 +2478,10 @@ void App::addHud() {
             line("TROPHIES AND PLAY TIME FOLLOW YOU BETWEEN MACHINES ONCE THE ADDRESS IS VERIFIED.", 0.7f, dim);
             line("IT IS KEPT ON THIS MACHINE ONLY UNTIL THEN, AND IT IS NEVER SHOWN TO OTHER PLAYERS.", 0.7f, dim);
             y += lh * 0.6f;
-            line("ENTER SAVE   LEAVE EMPTY AND PRESS ENTER TO SKIP   ESC BACK", 0.8f, dim);
+            hotText(W * 0.5f - 40.f, y, "SAVE", 0.95f * s, yellow, 2, kHotScreenItem, 0);
+            hotText(W * 0.5f + 40.f, y, "CANCEL", 0.95f * s, dim, 0, kHotBack, 0);
+            y += lh * 1.1f;
+            line("ENTER SAVES   LEAVE EMPTY TO SKIP   ESC CANCELS", 0.7f, dim);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 0.5f, wadStatus_, s * 0.9f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
         } else if (screen_ == kScreenWadPath) {
             text(W * 0.5f, H * 0.22f, "TYPE THE FULL PATH TO DOOM.WAD", s * 1.4f, white, 1);
@@ -2444,7 +2490,8 @@ void App::addHud() {
             if (shown.size() > 70) shown = "..." + shown.substr(shown.size() - 67);
             text(W * 0.5f, H * 0.36f, shown + (f > 0.5f ? "_" : " "), s * 0.9f, yellow, 1);
             text(W * 0.5f, H * 0.36f + lh * 1.6f, "(SHOWN IN CAPITALS; THE PATH IS KEPT EXACTLY AS TYPED)", s * 0.65f, dim, 1);
-            text(W * 0.5f, H * 0.50f, "ENTER LOAD   ESC BACK", s * 0.8f, dim, 1);
+            hotText(W * 0.5f - 40.f, H * 0.50f, "LOAD", s * 0.95f, yellow, 2, kHotScreenItem, 0);
+            hotText(W * 0.5f + 40.f, H * 0.50f, "BACK", s * 0.95f, dim, 0, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, H * 0.58f, wadStatus_, s * 0.9f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
         } else if (screen_ == kScreenNameEntry) {
             static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
@@ -2456,7 +2503,7 @@ void App::addHud() {
                 text(W * 0.5f, H * 0.50f, "GAMEPAD: UP/DOWN PICK A LETTER  [" + pick + "]  A ADD  B DELETE  START DONE", s * 0.75f, dim, 1);
             }
             text(W * 0.5f, H * 0.58f, "TYPE YOUR NAME AND PRESS ENTER", s * 0.8f, dim, 1);
-            if (!nameRequired_ || !profileName_.empty()) text(W * 0.5f, H * 0.64f, "ESC CANCEL", s * 0.7f, dim, 1);
+            if (!nameRequired_ || !profileName_.empty()) hotText(W * 0.5f, H * 0.64f, "CANCEL   (ESC)", s * 0.85f, dim, 1, kHotBack, 0);
         }
     }
     if (mode_ == Mode::Paused && screen_ == kScreenNone) {   // trophies/options opened from here draw on top instead

@@ -29,6 +29,7 @@ void usage() {
         "  --god                Player takes no damage (testing)\n"
         "  --arsenal N          Start a fight holding weapon N with every weapon owned (testing)\n"
         "  --keys <letters>@<frame>[x<hold>]  Hold letters from a frame for <hold> frames (default 150), e.g. --keys BFG@30x150\n"
+        "  --click <x>,<y>@<frame>  Testing: move the mouse there and left-click on that frame (repeatable)\n"
         "  --stack <rows>       Pre-fill that many holey rows (testing)\n"
         "  --mute               No sound at all\n"
         "  --no-music           Sound effects only\n"
@@ -62,6 +63,7 @@ int main(int argc, char** argv) {
         else if (a == "--absorb") o.absorbPeriod = static_cast<float>(std::atof(next()));
         else if (a == "--god") o.god = true;
         else if (a == "--arsenal") o.arsenal = std::atoi(next());
+        else if (a == "--click") { int x = 0, y = 0, f = 0; if (std::sscanf(next(), "%d,%d@%d", &x, &y, &f) == 3) o.clicks.push_back({x, y, f}); }
         else if (a == "--keys") {
             std::string v = next();
             size_t at = v.find('@');
