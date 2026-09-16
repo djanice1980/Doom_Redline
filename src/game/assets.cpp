@@ -726,7 +726,9 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
                 }
         return out;
     };
-    auto pngAnim = [&](SpriteAnim& a, const char* prefix, const char* frames, float fps, int shrink = 0) {
+    // glow = true: the sprite was drawn for additive blending (flares), so its darkness becomes
+    // transparency: alpha = brightness. Drawn with normal blending that reads the same as adding.
+    auto pngAnim = [&](SpriteAnim& a, const char* prefix, const char* frames, float fps, int shrink = 0, bool glow = false) {
         a = SpriteAnim{};
         a.fps = fps;
         for (const char* f = frames; *f; ++f) {
@@ -745,6 +747,11 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
 #endif
                 if (!img) { if (!err.empty()) std::fprintf(stderr, "[brutal] %s.png: %s\n", name.c_str(), err.c_str()); continue; }
                 for (int i = 0; i < shrink; ++i) *img = halve(*img);
+                if (glow)
+                    for (size_t px = 0; px + 3 < img->rgba.size(); px += 4) {
+                        const uint8_t bright = std::max(img->rgba[px], std::max(img->rgba[px + 1], img->rgba[px + 2]));
+                        img->rgba[px + 3] = static_cast<uint8_t>(bright * img->rgba[px + 3] / 255);
+                    }
                 atlas_.add(key, *img);
                 ++sprites;
             }
@@ -817,8 +824,8 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
     pngAnim(brSparks, "SPKN", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 40.f, 1); // sparks at half size
     pngAnim(brPlasmaHit, "PLX6", "ABCDEFGHIJKLMNOPQRSTUVWXY", 50.f);  // blue plasma burst (128px)
     const char* flareSets[5] = {"LENR", "LENY", "LENB", "LENG", "LENW"};
-    for (int c = 0; c < 5; ++c) pngAnim(brFlare[c], flareSets[c], "A", 1.f, 2);   // 256 -> 64px soft discs
-    pngAnim(brMuzzleFlare, "FLAR", "B", 1.f);
+    for (int c = 0; c < 5; ++c) pngAnim(brFlare[c], flareSets[c], "A", 1.f, 2, true);   // 256 -> 64px soft discs
+    pngAnim(brMuzzleFlare, "FLAR", "B", 1.f, 0, true);
     pngAnim(brSmoke, "PUF2", "ABCDEFGHIJKL", 18.f);      // smoke puff
     pngAnim(brCasingBullet, "C4S1", "ABCDEFGHIJKLM", 20.f);   // A-H tumbling, I-M lying
     pngAnim(brCasingShell, "C4S2", "ABCDEFGHIJKLMN", 20.f);
