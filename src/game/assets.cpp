@@ -655,6 +655,8 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
     for (SpriteAnim* a : {&brSmoke, &brCasingBullet, &brCasingShell, &brBlast, &brSparks, &brPlasmaHit, &brMuzzleFlare}) *a = SpriteAnim{};
     for (SpriteAnim& a : brFlare) a = SpriteAnim{};
     brGibSounds = brShellSounds = brCasingSounds = brDripSounds = brSparkSounds = brRicochetSounds = brDirtSounds = 0;
+    brWeaponSounds = brPlayerPain = false;
+    brExplodeSounds = brBoneSounds = brImpSounds = brZombieSight = 0;
     if (!brutalPackDir) return;
     const fs::path dir = *brutalPackDir;
     int sprites = 0, sounds = 0;
@@ -749,6 +751,13 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
         for (int i = 0; i < 3; ++i) if (sound("ricochet" + std::to_string(i + 1), rico[i])) brRicochetSounds = i + 1;
     }
     for (int i = 1; i <= 3; ++i) if (sound("bhit" + std::to_string(i), "BHITDIR" + std::to_string(i) + ".ogg")) brDirtSounds = i;
+    // Brutal Doom's heavier weapon and impact sounds, used while Brutal mode is on.
+    brWeaponSounds = sound("br_shoot", "SGFIRE.ogg") && sound("br_fire_chain", "CHGNSHOT.ogg") && sound("br_fire_rocket", "DSRFIRE.ogg") && sound("br_fire_plasma", "DSPLASMA.wav");
+    for (int i = 1; i <= 2; ++i) if (sound("br_explode" + std::to_string(i), "Explode" + std::to_string(i) + ".ogg")) brExplodeSounds = i;
+    brPlayerPain = sound("br_pain", "PAIN1.lmp");
+    for (int i = 1; i <= 2; ++i) if (sound("bonecr" + std::to_string(i), "BONECR" + std::to_string(i) + ".ogg")) brBoneSounds = i;
+    for (int i = 1; i <= 2; ++i) if (sound("impclaw" + std::to_string(i), "IMPCLAW" + std::to_string(i) + ".ogg")) brImpSounds = i;
+    for (int i = 1; i <= 3; ++i) if (sound("zcsit" + std::to_string(i), "ZCSIT" + std::to_string(i) + ".ogg")) brZombieSight = i;
     brutalPack = sprites > 0;
     std::fprintf(stderr, "[brutal] %s: %d sprites, %d sounds\n", dir.string().c_str(), sprites, sounds);
 }

@@ -40,6 +40,11 @@ sounds/  (from the Brutal Doom Community Expansion, GPLv3, same source)
     SPARKS1-4   sparks                             (SOUNDS/WORLD)
     RICOCHE2/3/5  ricochets                        (SOUNDS/COMBAT)
     BHITDIR1-3  bullets hitting the floor          (SOUNDS/COMBAT)
+    SGFIRE, CHGNSHOT, DSRFIRE, DSPLASMA  shotgun, chaingun, rocket and plasma fire (SOUNDS/COMBAT/WEAPONS)
+    Explode1-2  rocket blasts                      (SOUNDS/COMBAT/EXPLOSIONS)
+    PAIN1       the player's pain                  (SOUNDS/DOOMGUY)
+    HEDBON1-3, BONECR1-2  head shots and bone crunches (SOUNDS/GORE)
+    IMPCLAW1-2, ZCSIT1-3, PINKIDL1-2, CYBPAIN, SPIPAIN1-2  monster voices (SOUNDS/MONSTERS)
 
 voxels/  (from the Brutal Voxel Cyber Horror Monster Mix, MIT)
     https://github.com/RENEGADE-ANDROiD/Brutal_Voxel_Cyber_Horror_Monster_Mix

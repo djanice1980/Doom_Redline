@@ -1416,7 +1416,9 @@ void App::handleFpsEvents() {
         const EnemyArt& art = assets_.enemies[std::clamp(ev.tier, 0, kEnemyTiers - 1)];
         switch (ev.type) {
         case FpsEvent::Type::Shoot:
-            play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f); muzzleLight_ = 1.f;
+            if (brutal_ && assets_.brWeaponSounds) play(std::string("br_") + assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
+            else play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
+            muzzleLight_ = 1.f;
             shakeT_ = ev.a == kRocketLauncher ? 0.2f : (ev.a == kShotgun ? 0.12f : 0.04f);
             rumble(ev.a == kChaingun ? 0.15f : 0.3f, ev.a == kRocketLauncher ? 0.8f : 0.5f, ev.a == kChaingun ? 40 : 90);
             break;
@@ -1431,7 +1433,9 @@ void App::handleFpsEvents() {
         }
         case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
         case FpsEvent::Type::RocketBlast:
-            play("rocket_hit", 1.f); shakeT_ = 0.35f; rumble(0.8f, 0.6f, 300);
+            if (brutal_ && assets_.brExplodeSounds) play("br_explode" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brExplodeSounds)), 1.f);
+            else play("rocket_hit", 1.f);
+            shakeT_ = 0.35f; rumble(0.8f, 0.6f, 300);
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
@@ -1477,9 +1481,13 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::EnemyGibbed:
             if (assets_.brGibSounds) play("gibdeath" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brGibSounds)), 1.f);
             else play("gib", 1.f);
+            if (assets_.brBoneSounds) play("bonecr" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brBoneSounds)), 0.6f, 1.f, 100);
             shakeT_ = std::max(shakeT_, 0.08f);
             break;
-        case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
+        case FpsEvent::Type::EnemyAttack:
+            if (brutal_ && ev.tier == 1 && assets_.brImpSounds) play("impclaw" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brImpSounds)), 0.7f);
+            else play(art.attackSound, 0.7f);
+            break;
         case FpsEvent::Type::Explosion:
             play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke});
@@ -1487,7 +1495,7 @@ void App::handleFpsEvents() {
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
         case FpsEvent::Type::PlayerHit:
-            play("pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200);
+            play(brutal_ && assets_.brPlayerPain ? "br_pain" : "pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200);
             if (brutal_ && !assets_.blood.empty()) {   // blood on the screen
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 VkExtent2D ext = renderer_->extent();
@@ -1500,7 +1508,8 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
         case FpsEvent::Type::EnemySight: {
             // Announce the biggest monster in the room and log the roster.
-            play(art.sightSound, 0.9f);
+            if (brutal_ && ev.tier == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.9f);
+            else play(art.sightSound, 0.9f);
             std::string roster;
             for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.tier, 0, kEnemyTiers - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
             std::fprintf(stderr, "[fps] level %d roster: %s\n", fps_.level(), roster.c_str());
@@ -2228,11 +2237,11 @@ void App::addLights() {
         if (muzzleLight_ > 0.f && mode_ == Mode::Fps) {
             glm::vec3 mc = fps_.currentWeapon() == kPlasmaRifle ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 0.8f, 0.4f);
             cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, mc, 3.f * muzzleLight_}});
-            // Flare at the muzzle (community pack): blue for plasma, fire for the rest.
-            const SpriteAnim& fl = fps_.currentWeapon() == kPlasmaRifle ? assets_.brFlare[2] : assets_.brMuzzleFlare;
-            if (!fl.empty()) {
+            // A small blue disc at the plasma rifle's muzzle (the Doom flash sprites cover the rest).
+            const SpriteAnim& fl = assets_.brFlare[2];
+            if (fps_.currentWeapon() == kPlasmaRifle && !fl.empty()) {
                 glm::vec3 right(-std::cos(fps_.yaw()), 0.f, std::sin(fps_.yaw()));
-                billboard(fl.frames[0], fps_.eye() + fps_.forward() * 1.0f + right * 0.18f - glm::vec3(0.f, 0.22f, 0.f), 0.0022f * muzzleLight_ + 0.0012f, glm::vec4(1.4f, 1.4f, 1.4f, 0.6f * muzzleLight_), false, false);
+                billboard(fl.frames[0], fps_.eye() + fps_.forward() * 1.0f + right * 0.18f - glm::vec3(0.f, 0.22f, 0.f), 0.004f * muzzleLight_ + 0.002f, glm::vec4(1.4f, 1.4f, 1.4f, 0.5f * muzzleLight_), false, false);
             }
         }
     }

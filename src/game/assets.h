@@ -86,6 +86,8 @@ public:
     SpriteAnim brMuzzleFlare;
     int brGibSounds = 0, brShellSounds = 0, brCasingSounds = 0, brDripSounds = 0;   // "gibdeathN", "shellN", "casingN", "dripN" (1-based)
     int brSparkSounds = 0, brRicochetSounds = 0, brDirtSounds = 0;                   // "sparksN", "ricochetN", "bhitN"
+    bool brWeaponSounds = false, brPlayerPain = false;   // "br_shoot" etc. and "br_pain"
+    int brExplodeSounds = 0, brBoneSounds = 0, brImpSounds = 0, brZombieSight = 0;   // "br_explodeN", "bonecrN", "impclawN", "zcsitN"
     static std::optional<std::filesystem::path> findBrutalPack(const std::string& baseDir);
     // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
     std::string wallLump, floorLump, ceilingLump;
