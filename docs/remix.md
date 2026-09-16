@@ -102,7 +102,7 @@ renderer as the fallback. In order of payoff per day of work:
    constant, and `cube_frag_body.glsl` perturbs the normal and modulates the
    roughness (the pack's roughness maps sit at 0.92-1.0 everywhere, so they
    modulate the instance roughness by their variation rather than replace it).
-3. **Ray-traced ambient occlusion** (+1-2 days). Contact shadows where blocks
+3. **Ray-traced ambient occlusion** (+1-2 days). *Done 2026-09-16* as three hemisphere rays per fragment in mode 3 (no temporal filter; a position hash rotates the pattern). Contact shadows where blocks
    meet the floor and between a monster's voxels. Cheap with a few rays and
    a small temporal blend; a full one-bounce GI needs a denoiser (NVIDIA's
    NRD is free to use and has a Vulkan path) and is the step that makes the

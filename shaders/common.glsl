@@ -24,6 +24,7 @@ layout(set = 0, binding = 0, std140) uniform FrameUBO {
     mat4 lightViewProj; // sun shadow map projection
     vec4 shadow;        // x = texel size, y = bias, z = strength (0 = off), w = normal offset
     vec4 misc;          // xy = atlas size in texels, z = colour grade amount
+    mat4 invViewProj;   // clip -> world, for the volumetric pass
 } u;
 
 layout(set = 0, binding = 1) uniform sampler2D atlas;

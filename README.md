@@ -234,9 +234,19 @@ plasma bolts, explosions and the glowing red rows carry light past white.
 A three-level bloom picks that up and a soft-knee tone curve rolls the
 highlights off instead of clipping them; everything below the knee keeps
 the same look as before, and the HUD is drawn afterwards at full precision.
-OPTIONS > BLOOM turns the bloom off; OPTIONS > ANTI-ALIASING switches 4x
-MSAA on the world pass (2x on GPUs without 4x). Both are machine settings
-in `display.txt`, overridable per run with `--bloom 0|1` and `--msaa 0|1`.
+OPTIONS > BLOOM & HAZE turns the bloom and the volumetric light off
+together; OPTIONS > ANTI-ALIASING switches 4x MSAA on the world pass (2x
+on GPUs without 4x). Both are machine settings in `display.txt`,
+overridable per run with `--bloom 0|1` and `--msaa 0|1`.
+
+The volumetric light is a half-resolution ray march from the camera to the
+scene depth: sunlight where the shadow map says the sky reaches, and a warm
+haze around every torch and lamp. The composite then ends with a warm
+colour grade. Doom's textures are sampled through a mipmapped atlas with
+the bilinear transition squeezed to one screen pixel, so they keep their
+chunky look up close without shimmering in the distance, and every flame
+sheds embers. Line clears flash and send a shockwave along the row, pieces
+puff dust when they land, and the falling piece carries its own light.
 
 ## Ray tracing: shadows and reflections
 
@@ -250,8 +260,10 @@ floor becomes a glossy surface that mirrors the stack, the walls and the
 voxel monsters (one bounce per pixel, shaded with a sun shadow ray; sprite
 monsters are not in the ray-traced scene, so they cast neither shadows nor
 reflections). The scene's cubes and voxel models are kept in a top-level
-acceleration structure rebuilt every frame. The mode is a machine setting in
-`display.txt` (default: everything on); `--rt 0|1|2|3` forces it for one run
+acceleration structure rebuilt every frame. The full mode also traces three short ambient-occlusion rays per
+pixel for contact shadows where blocks meet the floor. The mode is a
+machine setting in `display.txt` (default: everything on); `--rt 0|1|2|3`
+forces it for one run
 and `REDLINE_NO_RT=1` hides the capability entirely. Other GPUs keep the
 shadow map and never see the row. On a Radeon 8060S at 1600x900 the
 reflections cost about 4 ms a frame on top of the all-lights mode.

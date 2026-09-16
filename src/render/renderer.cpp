@@ -22,6 +22,7 @@
 #include "shaders/bright_frag.h"
 #include "shaders/blur_frag.h"
 #include "shaders/composite_frag.h"
+#include "shaders/volume_frag.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -43,6 +44,7 @@ struct Renderer::Ubo {
     glm::mat4 lightViewProj;
     glm::vec4 shadow;
     glm::vec4 misc;   // x, y = atlas size in texels; z = colour grade amount
+    glm::mat4 invViewProj;
 };
 
 namespace {
@@ -124,18 +126,18 @@ void Renderer::setMsaa(bool on) {
 
 void Renderer::createPostDescriptors() {
     VkDevice d = ctx_.device();
-    VkDescriptorSetLayoutBinding b[4]{};
-    for (uint32_t i = 0; i < 4; ++i) {
+    VkDescriptorSetLayoutBinding b[5]{};
+    for (uint32_t i = 0; i < 5; ++i) {
         b[i].binding = i;
         b[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    lci.bindingCount = 4;
+    lci.bindingCount = 5;
     lci.pBindings = b;
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &postLayout_), "vkCreateDescriptorSetLayout(post)");
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 * kSetCount};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * kSetCount};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kSetCount;
     pci.poolSizeCount = 1;
@@ -163,6 +165,8 @@ void Renderer::createTargets() {
     tg_.extent = ext;
     const VkFormat hdrFmt = VK_FORMAT_R16G16B16A16_SFLOAT;
     tg_.hdr = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    tg_.depth = ctx_.createTexture2D(ext.width, ext.height, ctx_.depthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    tg_.fog = ctx_.createTexture2D(std::max(1u, ext.width / 2), std::max(1u, ext.height / 2), hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     if (msaaSamples_ != VK_SAMPLE_COUNT_1_BIT) {
         tg_.msaaColor = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1, msaaSamples_);
         tg_.msaaDepth = ctx_.createTexture2D(ext.width, ext.height, ctx_.depthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1, msaaSamples_);
@@ -181,16 +185,18 @@ void Renderer::destroyTargets() {
     ctx_.destroyTexture(tg_.msaaColor);
     ctx_.destroyTexture(tg_.msaaDepth);
     for (Texture& t : tg_.bloom) ctx_.destroyTexture(t);
+    ctx_.destroyTexture(tg_.depth);
+    ctx_.destroyTexture(tg_.fog);
     tg_ = Targets{};
 }
 
 void Renderer::writePostDescriptors() {
     // One set per input: the HDR image, each bloom buffer, and the composite's four.
     auto write = [&](VkDescriptorSet set, const Texture* const* tex) {
-        VkDescriptorImageInfo ii[4];
-        VkWriteDescriptorSet w[4]{};
-        for (uint32_t i = 0; i < 4; ++i) {
-            ii[i] = {postSampler_, tex[i]->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo ii[5];
+        VkWriteDescriptorSet w[5]{};
+        for (uint32_t i = 0; i < 5; ++i) {
+            ii[i] = {postSampler_, (i < 4 ? tex[i] : &tg_.fog)->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             w[i].dstSet = set;
             w[i].dstBinding = i;
@@ -198,7 +204,7 @@ void Renderer::writePostDescriptors() {
             w[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             w[i].pImageInfo = &ii[i];
         }
-        vkUpdateDescriptorSets(ctx_.device(), 4, w, 0, nullptr);
+        vkUpdateDescriptorSets(ctx_.device(), 5, w, 0, nullptr);
     };
     const Texture* h4[4] = {&tg_.hdr, &tg_.hdr, &tg_.hdr, &tg_.hdr};
     write(postSets_[kSetHdr], h4);
@@ -310,17 +316,23 @@ void Renderer::createDescriptors() {
         ssbo[i].descriptorCount = 1;
         ssbo[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
+    VkDescriptorSetLayoutBinding depthBinding{};   // resolved scene depth for the volumetric pass
+    depthBinding.binding = 8;
+    depthBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    depthBinding.descriptorCount = 1;
+    depthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     std::vector<VkDescriptorSetLayoutBinding> all = {bindings[0], bindings[1], bindings[2]};
     if (rt_) all.push_back(tlasBinding);
     all.push_back(matBindings[0]);
     all.push_back(matBindings[1]);
     if (rt_) { all.push_back(ssbo[0]); all.push_back(ssbo[1]); }
+    all.push_back(depthBinding);
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     lci.bindingCount = static_cast<uint32_t>(all.size());
     lci.pBindings = all.data();
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (2 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
+    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (3 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight;
     pci.poolSizeCount = rt_ ? 4 : 2;
@@ -353,7 +365,32 @@ void Renderer::setAtlas(const Image& img) {
     // neighbouring atlas regions do not bleed into each other much. Transparent texels are
     // excluded from the average so sprite edges keep their colour.
     std::vector<std::vector<uint8_t>> levels;
-    levels.push_back(img.rgba);
+    // Bleed sprite edge colours into the transparent texels around them (two texels out), so
+    // bilinear filtering across an alpha edge never mixes in the padding colour and haloes.
+    {
+        std::vector<uint8_t> base = img.rgba;
+        const int W = img.width, H = img.height;
+        for (int pass = 0; pass < 2; ++pass) {
+            std::vector<uint8_t> next = base;
+            for (int y = 0; y < H; ++y)
+                for (int x = 0; x < W; ++x) {
+                    uint8_t* p = &next[(static_cast<size_t>(y) * W + x) * 4];
+                    if (base[(static_cast<size_t>(y) * W + x) * 4 + 3] != 0) continue;
+                    int sum[3] = {0, 0, 0}, n = 0;
+                    for (int dy = -1; dy <= 1; ++dy)
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            const int sx = x + dx, sy = y + dy;
+                            if (sx < 0 || sy < 0 || sx >= W || sy >= H) continue;
+                            const uint8_t* q = &base[(static_cast<size_t>(sy) * W + sx) * 4];
+                            if (q[3] == 0) continue;
+                            sum[0] += q[0]; sum[1] += q[1]; sum[2] += q[2]; ++n;
+                        }
+                    if (n) { p[0] = static_cast<uint8_t>(sum[0] / n); p[1] = static_cast<uint8_t>(sum[1] / n); p[2] = static_cast<uint8_t>(sum[2] / n); p[3] = 0; }
+                }
+            base.swap(next);
+        }
+        levels.push_back(std::move(base));
+    }
     int w = img.width, h = img.height;
     for (int lvl = 1; lvl < 3 && w > 1 && h > 1; ++lvl) {
         const std::vector<uint8_t>& src = levels.back();
@@ -456,7 +493,7 @@ void Renderer::writeDescriptors() {
 
 void Renderer::destroyPipelines() {
     VkDevice d = ctx_.device();
-    for (VkPipeline* p : {&cubePipe_, &quadPipe_, &shadowCubePipe_, &shadowQuadPipe_, &meshPipe_, &meshBlendPipe_, &shadowMeshPipe_, &quadLdrPipe_, &brightPipe_, &blurPipe_, &compositePipe_}) {
+    for (VkPipeline* p : {&cubePipe_, &quadPipe_, &shadowCubePipe_, &shadowQuadPipe_, &meshPipe_, &meshBlendPipe_, &shadowMeshPipe_, &quadLdrPipe_, &brightPipe_, &blurPipe_, &compositePipe_, &volumePipe_}) {
         if (*p) vkDestroyPipeline(d, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }
@@ -636,7 +673,8 @@ void Renderer::createPipelines() {
         VkShaderModule brightFS = ctx_.createShader(shaders::bright_frag, shaders::bright_frag_size);
         VkShaderModule blurFS = ctx_.createShader(shaders::blur_frag, shaders::blur_frag_size);
         VkShaderModule compFS = ctx_.createShader(shaders::composite_frag, shaders::composite_frag_size);
-        auto makePost = [&](VkShaderModule fs, VkFormat fmt) {
+        VkShaderModule volFS = ctx_.createShader(shaders::volume_frag, shaders::volume_frag_size);
+        auto makePost = [&](VkShaderModule fs, VkFormat fmt, VkPipelineLayout layout = VK_NULL_HANDLE) {
             VkPipelineShaderStageCreateInfo stages[2]{};
             stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -677,7 +715,7 @@ void Renderer::createPipelines() {
             ci.pMultisampleState = &pms;
             ci.pColorBlendState = &cb;
             ci.pDynamicState = &pds;
-            ci.layout = postPipeLayout_;
+            ci.layout = layout ? layout : postPipeLayout_;
             VkPipeline p;
             vkCheck(vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &p), "vkCreateGraphicsPipelines(post)");
             return p;
@@ -685,6 +723,8 @@ void Renderer::createPipelines() {
         brightPipe_ = makePost(brightFS, hdrFmt);
         blurPipe_ = makePost(blurFS, hdrFmt);
         compositePipe_ = makePost(compFS, swapFmt);
+        volumePipe_ = makePost(volFS, hdrFmt, pipeLayout_);
+        vkDestroyShaderModule(d, volFS, nullptr);
         vkDestroyShaderModule(d, postVS, nullptr);
         vkDestroyShaderModule(d, brightFS, nullptr);
         vkDestroyShaderModule(d, blurFS, nullptr);
@@ -943,6 +983,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     }
     u.counts = glm::ivec4(nl, rt_ ? params.rtShadows : 0, 0, 0);
     u.misc = glm::vec4(static_cast<float>(atlas_.width), static_cast<float>(atlas_.height), params.grade, 0.f);
+    u.invViewProj = glm::inverse(u.viewProj);
     {
         glm::vec3 dir = glm::normalize(params.sunDir);
         glm::vec3 up = std::fabs(dir.y) > 0.95f ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
@@ -1001,6 +1042,16 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         w[2].dstBinding = 7;
         w[2].pBufferInfo = &mb;
         vkUpdateDescriptorSets(ctx_.device(), 3, w, 0, nullptr);
+    }
+    {   // the resolved scene depth of this frame, for the volumetric pass
+        VkDescriptorImageInfo di{postSampler_, tg_.depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.dstSet = sets_[fi];
+        w.dstBinding = 8;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &di;
+        vkUpdateDescriptorSets(ctx_.device(), 1, &w, 0, nullptr);
     }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
     struct MeshPush { glm::mat4 model; glm::vec4 color; glm::vec4 emissive; };
@@ -1104,6 +1155,8 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     const VkPipelineStageFlags2 kColorOut = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
     const VkPipelineStageFlags2 kFrag = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag | kColorOut, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    const VkPipelineStageFlags2 kDepthTests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    imageBarrier(tg_.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, kFrag | kDepthTests, 0, kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
     if (msaa) {
         imageBarrier(tg_.msaaColor.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
         imageBarrier(tg_.msaaDepth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -1122,11 +1175,16 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
     VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    depth.imageView = msaa ? tg_.msaaDepth.view : frame.depthView;
+    depth.imageView = msaa ? tg_.msaaDepth.view : tg_.depth.view;
     depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.storeOp = msaa ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE;
     depth.clearValue.depthStencil = {1.f, 0};
+    if (msaa) {   // one sample of the multisampled depth is enough for the fog march
+        depth.resolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT;
+        depth.resolveImageView = tg_.depth.view;
+        depth.resolveImageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    }
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, ext};
     ri.layerCount = 1;
@@ -1189,6 +1247,35 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     }
     vkCmdEndRendering(cmd);
     imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+    imageBarrier(tg_.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+
+    // --- Volumetric light at half res (main set: lights, shadow map, depth) -----------
+    {
+        Texture& t = tg_.fog;
+        imageBarrier(t.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        att.imageView = t.view;
+        att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo vri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        vri.renderArea = {{0, 0}, {t.width, t.height}};
+        vri.layerCount = 1;
+        vri.colorAttachmentCount = 1;
+        vri.pColorAttachments = &att;
+        vkCmdBeginRendering(cmd, &vri);
+        VkViewport vvp{0.f, 0.f, static_cast<float>(t.width), static_cast<float>(t.height), 0.f, 1.f};
+        VkRect2D vsc{{0, 0}, {t.width, t.height}};
+        vkCmdSetViewport(cmd, 0, 1, &vvp);
+        vkCmdSetScissor(cmd, 0, 1, &vsc);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, volumePipe_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
+        const glm::vec4 vpc(params.volumetric * 0.0025f, params.volumetric * 0.02f, 14.f, 0.f);
+        vkCmdPushConstants(cmd, pipeLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::vec4), &vpc);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRendering(cmd);
+        imageBarrier(t.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+    }
 
     // --- Post: bloom chain, then composite + HUD into the swapchain image -------------
     auto fullscreen = [&](VkImageView view, VkExtent2D size, VkPipeline pipe, VkDescriptorSet set, glm::vec4 pc) {

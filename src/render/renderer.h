@@ -84,6 +84,7 @@ struct FrameParams {
     float exposure = 1.f;
     float bloom = 0.4f;
     float grade = 0.5f;   // colour grading amount (warm Doom palette), 0 = off
+    float volumetric = 1.f;   // volumetric light strength (sun shafts and torch haze), 0 = off
 };
 
 class Renderer {
@@ -153,13 +154,14 @@ private:
     VkPipeline brightPipe_ = VK_NULL_HANDLE;
     VkPipeline blurPipe_ = VK_NULL_HANDLE;
     VkPipeline compositePipe_ = VK_NULL_HANDLE;
+    VkPipeline volumePipe_ = VK_NULL_HANDLE;      // ray-marched light, uses the main set (lights, shadow map, depth)
     VkDescriptorSetLayout postLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool postPool_ = VK_NULL_HANDLE;
     VkPipelineLayout postPipeLayout_ = VK_NULL_HANDLE;
     VkSampler postSampler_ = VK_NULL_HANDLE;
     enum PostSet { kSetHdr, kSetB0, kSetB1, kSetB2, kSetB3, kSetB4, kSetB5, kSetComposite, kSetCount };
     VkDescriptorSet postSets_[kSetCount]{};
-    struct Targets { VkExtent2D extent{}; Texture hdr, msaaColor, msaaDepth; Texture bloom[6]; } tg_;   // bloom: 0/1 half, 2/3 quarter, 4/5 eighth
+    struct Targets { VkExtent2D extent{}; Texture hdr, msaaColor, msaaDepth, depth, fog; Texture bloom[6]; } tg_;   // depth: resolved scene depth (sampled by the fog pass); fog: half res
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     std::vector<QuadInstance> quadScratch_;
     // Ray tracing: one bottom-level structure per mesh (and one for the unit cube), a

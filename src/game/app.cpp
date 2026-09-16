@@ -2843,7 +2843,7 @@ void App::addHud() {
             row(y, "BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 13, assets_.usingWad(), true); y += lh * 1.08f;
             row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 14); y += lh * 1.08f;
             row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 15); y += lh * 1.08f;
-            row(y, "BLOOM", bloom_ ? "ON" : "OFF", screenIndex_ == 16); y += lh * 1.3f;
+            row(y, "BLOOM & HAZE", bloom_ ? "ON" : "OFF", screenIndex_ == 16); y += lh * 1.3f;
             hotText(W * 0.5f, y, screenIndex_ == 17 ? "> BACK <" : "BACK", s, screenIndex_ == 17 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
@@ -3014,6 +3014,7 @@ void App::buildScene() {
     frame_.shadowStrength = 0.85f;
     frame_.rtShadows = renderer_->rayTracingAvailable() ? rtShadows_ : 0;
     frame_.bloom = bloom_ ? 0.4f : 0.f;
+    frame_.volumetric = bloom_ ? 1.f : 0.f;   // the BLOOM row also covers the light haze
     frame_.exposure = 1.f;
     float tilt = boardTilt();
     frame_.sunIntensity = glm::mix(0.9f, 0.55f, tilt);

@@ -18,9 +18,9 @@ Effort is a rough estimate. Tick items off here as they land, with the commit.
       with the red-line motif, above the open arena.
 - [ ] **Emissive wall strips** (half a day). Lit panels from the WAD (LITE3,
       TLITE flats) as a trim row along the walls, emissive plus point lights.
-- [ ] **Volumetric light** (1-2 days). Sun shafts through the open roof and haze
+- [x] **Volumetric light** (done 2026-09-16: half-res ray march, sun through the shadow map plus torch haze, under BLOOM & HAZE). Sun shafts through the open roof and haze
       around torches, ray-marched against the shadow map.
-- [ ] **Ray-traced ambient occlusion** (1-2 days). Contact shadows where blocks
+- [x] **Ray-traced ambient occlusion** (done 2026-09-16: three rays per pixel in the full ray-tracing mode). Contact shadows where blocks
       meet the floor and between a monster's voxels; needs a temporal blend.
 - [x] **Baked voxel AO** (done 2026-09-16, in the KVX mesher). Per-vertex darkening in crevices when a
       voxel mesh is built.
