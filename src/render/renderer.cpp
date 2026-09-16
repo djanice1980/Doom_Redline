@@ -424,7 +424,7 @@ void Renderer::writeDescriptors() {
 
 void Renderer::destroyPipelines() {
     VkDevice d = ctx_.device();
-    for (VkPipeline* p : {&cubePipe_, &quadPipe_, &shadowCubePipe_, &shadowQuadPipe_, &meshPipe_, &shadowMeshPipe_, &quadLdrPipe_, &brightPipe_, &blurPipe_, &compositePipe_}) {
+    for (VkPipeline* p : {&cubePipe_, &quadPipe_, &shadowCubePipe_, &shadowQuadPipe_, &meshPipe_, &meshBlendPipe_, &shadowMeshPipe_, &quadLdrPipe_, &brightPipe_, &blurPipe_, &compositePipe_}) {
         if (*p) vkDestroyPipeline(d, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }
@@ -587,6 +587,7 @@ void Renderer::createPipelines() {
         vi.vertexAttributeDescriptionCount = 2;
         vi.pVertexAttributeDescriptions = a;
         meshPipe_ = makePipeline(meshVS, meshFS, vi, true, false);
+        meshBlendPipe_ = makePipeline(meshVS, meshFS, vi, true, true);
         shadowMeshPipe_ = makePipeline(shVS, VK_NULL_HANDLE, vi, false, false, true);
         vkDestroyShaderModule(d, meshVS, nullptr);
         vkDestroyShaderModule(d, meshFS, nullptr);
@@ -780,7 +781,7 @@ void Renderer::buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeI
     }
     uint32_t j = 0;
     for (const MeshInstance& mi : meshes)
-        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive) put(mi.model, meshes_[mi.mesh].blas.addr, 0x800000u | j++);
+        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive && mi.color.a >= 0.999f) put(mi.model, meshes_[mi.mesh].blas.addr, 0x800000u | j++);
     const uint32_t n = static_cast<uint32_t>(inst.size());
 
     if (n > t.instCap) {
@@ -939,7 +940,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
             auto* dst = static_cast<MeshInfoGpu*>(meshInfo_[fi].mapped);
             size_t j = 0;
             for (const MeshInstance& mi : meshes) {
-                if (mi.mesh >= meshes_.size() || !meshes_[mi.mesh].alive) continue;
+                if (mi.mesh >= meshes_.size() || !meshes_[mi.mesh].alive || mi.color.a < 0.999f) continue;
                 const MeshRes& m = meshes_[mi.mesh];
                 dst[j++] = {ctx_.bufferAddress(m.vb), ctx_.bufferAddress(m.ib), mi.color, mi.emissive};
             }
@@ -970,11 +971,13 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
     struct MeshPush { glm::mat4 model; glm::vec4 color; glm::vec4 emissive; };
-    auto drawMeshes = [&](VkPipeline pipe) {
+    // translucent: draw only instances with colour alpha < 1 (else only the opaque ones).
+    auto drawMeshes = [&](VkPipeline pipe, bool translucent = false) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
         uint32_t bound = UINT32_MAX;
         for (const MeshInstance& mi : meshes) {
             if (mi.mesh >= meshes_.size() || !meshes_[mi.mesh].alive) continue;
+            if ((mi.color.a < 0.999f) != translucent) continue;
             const MeshRes& m = meshes_[mi.mesh];
             if (bound != mi.mesh) {
                 VkDeviceSize off = 0;
@@ -1137,11 +1140,19 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
             vkCmdSetDepthWriteEnable(cmd, VK_TRUE);
             vkCmdDraw(cmd, 6, static_cast<uint32_t>(worldQuads.size()), 0, 0);
         }
-        if (hdrQuads > 0) {
-            vkCmdSetDepthTestEnable(cmd, VK_FALSE);
-            vkCmdSetDepthWriteEnable(cmd, VK_FALSE);
-            vkCmdDraw(cmd, 6, static_cast<uint32_t>(hdrQuads), 0, static_cast<uint32_t>(worldQuads.size()));
-        }
+    }
+    if (!meshes.empty()) {   // translucent voxel models (explosions) over the opaque world and sprites
+        vkCmdSetDepthTestEnable(cmd, VK_TRUE);
+        vkCmdSetDepthWriteEnable(cmd, VK_FALSE);
+        drawMeshes(meshBlendPipe_, true);
+    }
+    if (hdrQuads > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, quadPipe_);
+        VkDeviceSize off = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &quadInst_[fi].buffer, &off);
+        vkCmdSetDepthTestEnable(cmd, VK_FALSE);
+        vkCmdSetDepthWriteEnable(cmd, VK_FALSE);
+        vkCmdDraw(cmd, 6, static_cast<uint32_t>(hdrQuads), 0, static_cast<uint32_t>(worldQuads.size()));
     }
     vkCmdEndRendering(cmd);
     imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);

@@ -2115,7 +2115,10 @@ void App::addFpsActors() {
         if (n == 0) continue;
         int i = std::clamp(static_cast<int>(t * n), 0, n - 1);
         float scale = ex.hitType < 0 ? 0.031f * (1.6f + 0.4f * ex.radius) : 0.031f * 1.2f;
-        actor(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, ex.hitType < 0 ? 0.9f : 0.2f, 0.f), scale, glm::vec4(1.7f, 1.7f, 1.7f, 1.f), false, anim.mirrored[static_cast<size_t>(i)], 0.f, glm::vec3(1.f, 0.7f, 0.4f), 0.6f);
+        // Blasts: deeper orange-red, translucent, fading out over the burst; impact puffs stay as drawn.
+        const glm::vec4 tint = ex.hitType < 0 ? glm::vec4(2.0f, 0.6f, 0.25f, 0.9f - 0.45f * t) : glm::vec4(1.6f, 1.6f, 1.6f, 1.f);
+        const glm::vec3 glow = ex.hitType < 0 ? glm::vec3(1.f, 0.32f, 0.1f) : glm::vec3(1.f, 0.7f, 0.4f);
+        actor(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, ex.hitType < 0 ? 0.9f : 0.2f, 0.f), scale, tint, false, anim.mirrored[static_cast<size_t>(i)], 0.f, glow, ex.hitType < 0 ? 1.6f : 0.6f);
     }
     for (const Debris& d : fps_.debris()) {
         float fade = std::min(1.f, d.ttl / 0.4f);

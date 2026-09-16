@@ -143,6 +143,7 @@ private:
     VkPipeline shadowCubePipe_ = VK_NULL_HANDLE;
     VkPipeline shadowQuadPipe_ = VK_NULL_HANDLE;
     VkPipeline meshPipe_ = VK_NULL_HANDLE;
+    VkPipeline meshBlendPipe_ = VK_NULL_HANDLE;   // translucent meshes (colour alpha < 1): drawn after the opaque world, no depth write, no shadows
     VkPipeline shadowMeshPipe_ = VK_NULL_HANDLE;
     // Post-processing: the world is drawn into a 16-bit HDR target (multisampled and
     // resolved when MSAA is on), bloom is built from it, and the composite pass tone maps
