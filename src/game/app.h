@@ -166,6 +166,7 @@ private:
     void loadDisplaySettings();
     void saveDisplaySettings() const;
     void applyDisplay();
+    float pixelDensity() const;                 // physical pixels per window point (desktop scaling)
     void buildResolutionList();
     const char* displayModeName() const;
     void play(const std::string& name, float gain = 1.f, float pitch = 1.f, int minIntervalMs = 45) { play(name.c_str(), gain, pitch, minIntervalMs); }

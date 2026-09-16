@@ -227,6 +227,14 @@ fireball volleys, plasma streams) and voxel models from the bundled pack.
 Without doom2.wad the original seven classes play as before. If doom2.wad
 is the chosen WAD everything is in it already.
 
+## Display scaling
+
+OPTIONS > RESOLUTION means physical pixels. On a scaled desktop (KDE or
+GNOME on Wayland at 150%, macOS Retina) the window is sized in points so
+that its pixel size is exactly the chosen resolution, and the game renders
+at that size rather than being stretched by the compositor. The log line
+`[display] ...` at start-up shows points, pixels and the scale in use.
+
 ## Post-processing: HDR, bloom, anti-aliasing
 
 The world is rendered to a 16-bit HDR target, so torches, muzzle flashes,

@@ -41,12 +41,28 @@ float smoothstep(float t) { t = std::clamp(t, 0.f, 1.f); return t * t * (3.f - 2
 // ---------------------------------------------------------------------------
 App::App(Options opts) : opts_(std::move(opts)) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
-    Uint32 flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE;
+    // High pixel density: on a scaled desktop (Wayland/KDE at 150%, macOS Retina) the swapchain gets
+    // the physical pixels, so the RESOLUTION setting means pixels; window sizes are converted to points.
+    Uint32 flags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     loadDisplaySettings();
     if (opts_.fullscreen) displayMode_ = 1;
     if (opts_.width != 1600 || opts_.height != 900) { resW_ = opts_.width; resH_ = opts_.height; }
     window_ = SDL_CreateWindow("REDLINE", resW_, resH_, flags);
     if (!window_) throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
+    auto logWindow = [&](const char* when) {
+        int pw = 0, ph = 0, lw = 0, lh = 0;
+        SDL_GetWindowSizeInPixels(window_, &pw, &ph);
+        SDL_GetWindowSize(window_, &lw, &lh);
+        const SDL_DisplayID disp = SDL_GetDisplayForWindow(window_);
+        std::fprintf(stderr, "[display] %s: %dx%d points, %dx%d pixels, pixel density %.3f, display scale %.3f, content scale %.3f (display %u)\n", when, lw, lh, pw, ph,
+                     SDL_GetWindowPixelDensity(window_), SDL_GetWindowDisplayScale(window_), disp ? SDL_GetDisplayContentScale(disp) : 0.f, disp);
+    };
+    logWindow("created");
+    if (pixelDensity() != 1.f) {   // the window was requested in points; make it resW_ x resH_ physical pixels
+        SDL_SetWindowSize(window_, static_cast<int>(std::lround(resW_ / pixelDensity())), static_cast<int>(std::lround(resH_ / pixelDensity())));
+        SDL_SyncWindow(window_);
+        logWindow("resized to pixels");
+    }
     buildResolutionList();
     if (displayMode_ != 0) applyDisplay();
     if (opts_.rtShadows >= 0) rtShadows_ = opts_.rtShadows;
@@ -988,7 +1004,8 @@ void App::applyDisplay() {
     if (!display) display = SDL_GetPrimaryDisplay();
     if (displayMode_ == 0) {
         SDL_SetWindowFullscreen(window_, false);
-        SDL_SetWindowSize(window_, resW_, resH_);
+        const float dens = pixelDensity();
+        SDL_SetWindowSize(window_, static_cast<int>(std::lround(resW_ / dens)), static_cast<int>(std::lround(resH_ / dens)));
         SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     } else if (displayMode_ == 1) {
         SDL_SetWindowFullscreenMode(window_, nullptr);   // borderless at the desktop resolution
@@ -1011,8 +1028,17 @@ void App::applyDisplay() {
     }
     SDL_SyncWindow(window_);
     if (ctx_) ctx_->requestResize();   // at startup the context is created after this and sizes itself from the window
-    std::fprintf(stderr, "[display] %s %dx%d\n", displayModeName(), resW_, resH_);
+    int pw = 0, ph = 0, lw = 0, lh2 = 0;
+    SDL_GetWindowSizeInPixels(window_, &pw, &ph);
+    SDL_GetWindowSize(window_, &lw, &lh2);
+    std::fprintf(stderr, "[display] %s %dx%d: window %dx%d points, %dx%d pixels (desktop scale %.2f)\n", displayModeName(), resW_, resH_, lw, lh2, pw, ph, pixelDensity());
     saveDisplaySettings();
+}
+
+float App::pixelDensity() const {
+    if (!window_) return 1.f;
+    const float d = SDL_GetWindowPixelDensity(window_);
+    return d > 0.f ? d : 1.f;
 }
 
 void App::saveSettings() const {
@@ -1140,8 +1166,9 @@ int App::run() {
         }
         for (const Options::Click& c : opts_.clicks) {
             if (c.frame != frameCount_) continue;
-            SDL_Event mv{}; mv.type = SDL_EVENT_MOUSE_MOTION; mv.motion.x = static_cast<float>(c.x); mv.motion.y = static_cast<float>(c.y); SDL_PushEvent(&mv);
-            SDL_Event dn{}; dn.type = SDL_EVENT_MOUSE_BUTTON_DOWN; dn.button.button = SDL_BUTTON_LEFT; dn.button.x = static_cast<float>(c.x); dn.button.y = static_cast<float>(c.y); SDL_PushEvent(&dn);
+            const float px = static_cast<float>(c.x) / pixelDensity(), py = static_cast<float>(c.y) / pixelDensity();   // --click is in pixels, events are in points
+            SDL_Event mv{}; mv.type = SDL_EVENT_MOUSE_MOTION; mv.motion.x = px; mv.motion.y = py; SDL_PushEvent(&mv);
+            SDL_Event dn{}; dn.type = SDL_EVENT_MOUSE_BUTTON_DOWN; dn.button.button = SDL_BUTTON_LEFT; dn.button.x = px; dn.button.y = py; SDL_PushEvent(&dn);
             SDL_Event up = dn; up.type = SDL_EVENT_MOUSE_BUTTON_UP; SDL_PushEvent(&up);
         }
         handleEvents();
@@ -1204,11 +1231,17 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_WINDOW_RESIZED:
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            if (std::getenv("REDLINE_LOG_DISPLAY")) {
+                int pw = 0, ph = 0, lw = 0, lh = 0;
+                SDL_GetWindowSizeInPixels(window_, &pw, &ph);
+                SDL_GetWindowSize(window_, &lw, &lh);
+                std::fprintf(stderr, "[display] size event %s: %dx%d points, %dx%d pixels, density %.3f\n", e.type == SDL_EVENT_WINDOW_RESIZED ? "resized" : "pixel size", lw, lh, pw, ph, SDL_GetWindowPixelDensity(window_));
+            }
             ctx_->requestResize();
             break;
         case SDL_EVENT_MOUSE_MOTION:
             if ((mode_ == Mode::Fps || mode_ == Mode::Countdown) && screen_ == kScreenNone) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
-            else if (const Hotspot* h = hotspotAt(e.motion.x, e.motion.y)) {
+            else if (const Hotspot* h = hotspotAt(e.motion.x * pixelDensity(), e.motion.y * pixelDensity())) {
                 // Hovering highlights the item the way the arrow keys would.
                 if (h->kind == kHotMenu && menu_.index != h->index) { menu_.index = h->index; play("menu", 0.4f); }
                 else if ((h->kind == kHotScreenItem || h->kind == kHotOptionRow) && screenIndex_ != h->index) { screenIndex_ = h->index; play("menu", 0.4f); }
@@ -1246,7 +1279,7 @@ void App::handleEvents() {
             stats_.addInput(InputDevice::Mouse);
             if (mode_ == Mode::Fps && screen_ == kScreenNone) { if (e.button.button == SDL_BUTTON_LEFT) fpsIn_.fire = true; break; }
             if (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT) {
-                const Hotspot* h = hotspotAt(e.button.x, e.button.y);
+                const Hotspot* h = hotspotAt(e.button.x * pixelDensity(), e.button.y * pixelDensity());
                 bool left = e.button.button == SDL_BUTTON_LEFT;
                 if (!opts_.clicks.empty()) {
                     std::fprintf(stderr, "[ui] click %.0f,%.0f -> %s (hotspots %zu)\n", e.button.x, e.button.y, h ? (std::to_string(h->kind) + "/" + std::to_string(h->index)).c_str() : "none", hotspots_.size());
