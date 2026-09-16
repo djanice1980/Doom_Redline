@@ -120,7 +120,7 @@ and 3 above:
   hand-made `_n` / `_e` / `_orm` / `_h` sets for lights and doors. All three
   textures REDLINE uses (STARTAN3, FLOOR4_8, CEIL3_5) have both maps.
   KTX2 with no supercompression is trivial to read (48-byte header, level
-  index at offset 80) and BC5/RGBA8 upload straight into Vulkan.
+  index at offset 80) and BC7/RGBA8 upload straight into Vulkan.
 - `rt/data/textures.json` (JSON with `//` comments): 342 per-texture
   overrides: `emissiveMult` for lights, lava, nukage and fire textures,
   `isMirror` / `isMirrorIfSmooth` for water, blood and slime,
