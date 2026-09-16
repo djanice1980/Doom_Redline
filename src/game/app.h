@@ -57,7 +57,7 @@ struct Options {
     std::string reloadWad;             // testing: swap to this WAD after 30 frames
     std::optional<std::filesystem::path> voxelDir;   // KVX pack directory (default: auto-detect)
     int voxels = -1;                   // -1 saved preference, 0 sprites, 1 voxel models
-    int rtShadows = -1;                // -1 saved preference, 0 shadow map, 1 ray-traced sun, 2 ray-traced all lights
+    int rtShadows = -1;                // -1 saved preference, 0 shadow map, 1 ray-traced sun, 2 all lights, 3 + reflections
 };
 
 class App {
@@ -127,6 +127,8 @@ private:
     bool reloadAssets(const std::filesystem::path& wad, const std::string& extras = "");
     void applyAssets(Assets&& fresh);           // swap the loaded set in (atlas, environment, props, music)
     void setDoomArt(bool on);                   // OPTIONS > DOOM ART: placeholder art without touching the WAD choice
+    void loadMaterials();                       // normal/roughness maps for the arena textures (WAD art only)
+    int materialSlot(const std::string& lump) const;
     void browseForWad(bool extras = false);
     void saveWadChoice(const std::string& path) const;
     void saveExtrasChoice(const std::string& path) const;
@@ -210,7 +212,7 @@ private:
     void buildProps();
     // Display: 0 windowed, 1 borderless fullscreen, 2 exclusive fullscreen.
     int displayMode_ = 0;
-    int rtShadows_ = 2;                // machine setting (display.txt): 0 map, 1 sun, 2 all lights; used when the GPU can
+    int rtShadows_ = 3;                // machine setting (display.txt): 0 map, 1 sun, 2 all lights, 3 + reflections; used when the GPU can
     int resW_ = 1600, resH_ = 900;
     std::vector<std::pair<int, int>> resolutions_;
     // Level-up card and per-game stats for trophies.
@@ -242,6 +244,9 @@ private:
 
     // Per-frame draw lists
     std::vector<render::CubeInstance> envCubes_;
+    std::vector<render::CubeRange> envRanges_;     // env cubes grouped by material slot
+    std::vector<render::CubeRange> cubeRanges_;
+    std::vector<std::string> materialLumps_;       // slot i+1 = maps for this Doom lump
     std::vector<render::CubeInstance> cubes_;
     std::vector<render::QuadInstance> worldQuads_;
     std::vector<render::QuadInstance> screenQuads_;

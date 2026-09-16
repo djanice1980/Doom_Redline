@@ -194,19 +194,29 @@ Surviving a fight brings up a level-up card: the new level, demons slain,
 blocks destroyed, fight time and damage taken. The collapse plays behind it
 and the next piece waits until the card is gone.
 
-## Ray-traced shadows
+## Ray tracing: shadows and reflections
 
 On a GPU with Vulkan ray-query support (GeForce RTX, Radeon RX 6000 and
-newer including the RDNA3 laptop chips, Intel Arc) OPTIONS > SHADOWS offers
-SHADOW MAP, RAY TRACED: SUN, and RAY TRACED: SUN + ALL LIGHTS. In the last
-mode every torch, lamp, muzzle flash, fireball and glowing red block casts
-a shadow: the stack throws torchlight shadows on the floor and monsters
-shadow each other. The scene's cubes and voxel models are kept in a
-top-level acceleration structure rebuilt every frame; sprites do not cast
-ray-traced shadows (voxel models, the default, do). The choice is a machine
-setting in `display.txt`; `--rt 0|1|2` forces it for one run and
-`REDLINE_NO_RT=1` hides the capability entirely. Other GPUs keep the shadow
-map and never see the row.
+newer including the RDNA3 laptop chips, Intel Arc) OPTIONS > RAY TRACING
+offers OFF (shadow map), SUN SHADOWS, SUN + ALL LIGHTS, and SUN + ALL LIGHTS
++ REFLECTIONS. With all lights on, every torch, lamp, muzzle flash, fireball
+and glowing red block casts a shadow: the stack throws torchlight shadows on
+the floor and monsters shadow each other. With reflections on, the arena
+floor becomes a glossy surface that mirrors the stack, the walls and the
+voxel monsters (one bounce per pixel, shaded with a sun shadow ray; sprite
+monsters are not in the ray-traced scene, so they cast neither shadows nor
+reflections). The scene's cubes and voxel models are kept in a top-level
+acceleration structure rebuilt every frame. The mode is a machine setting in
+`display.txt` (default: everything on); `--rt 0|1|2|3` forces it for one run
+and `REDLINE_NO_RT=1` hides the capability entirely. Other GPUs keep the
+shadow map and never see the row. On a Radeon 8060S at 1600x900 the
+reflections cost about 4 ms a frame on top of the all-lights mode.
+
+With Doom art loaded, the wall and floor textures also get the normal and
+roughness maps from `assets/materials` (see the Bundled third-party data
+section): grooves and plate edges catch the torchlight, and the roughness
+map breaks up the floor reflections. The maps are skipped on the placeholder
+art and can be disabled for a run with `REDLINE_NO_MATERIALS=1`.
 
 ## Bundled third-party data
 

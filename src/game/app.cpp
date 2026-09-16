@@ -92,6 +92,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (!assets_.load(wad, audio_, extrasHint())) throw std::runtime_error("asset build failed");
     if (wad && assets_.usingWad()) wadPath_ = wad->string();
     renderer_->setAtlas(assets_.atlas().image());
+    loadMaterials();
     buildEnvironment();
     buildProps();
     {
@@ -188,10 +189,68 @@ bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extr
 void App::applyAssets(Assets&& fresh) {
     assets_ = std::move(fresh);
     renderer_->setAtlas(assets_.atlas().image());
+    loadMaterials();
     buildEnvironment();
     buildProps();
     initMusic();
     music_.stop(0.f);   // updateMusic() restarts the right track from the new set
+}
+
+// The material maps (assets/materials, see CREDITS.txt there) are normal and
+// roughness maps for three Doom textures. They only make sense on top of the real
+// art, so they are loaded when a WAD is in use and dropped with the placeholder set.
+void App::loadMaterials() {
+    namespace fs = std::filesystem;
+    materialLumps_.clear();
+    std::vector<render::MaterialMaps> maps;
+    if (assets_.usingWad() && !std::getenv("REDLINE_NO_MATERIALS")) {   // the env switch is for A/B screenshots
+        std::vector<fs::path> candidates;
+        if (!baseDir_.empty()) {
+            fs::path base(baseDir_);
+            candidates.push_back(base / "materials");                                    // Windows zip / installer
+            candidates.push_back(base / ".." / "share" / "redline" / "materials");   // Linux: bin/../share
+            candidates.push_back(base / "assets" / "materials");
+            candidates.push_back(base / ".." / "assets" / "materials");              // build/ next to the checkout
+        }
+        candidates.emplace_back("assets/materials");
+        candidates.emplace_back("/usr/share/redline/materials");
+        candidates.emplace_back("/usr/local/share/redline/materials");
+        std::error_code ec;
+        fs::path dir;
+        for (const fs::path& c : candidates) if (fs::is_directory(c, ec)) { dir = c; break; }
+        auto readFile = [&](const fs::path& p, render::Ktx2Image& out) {
+            std::vector<uint8_t> bytes;
+            if (FILE* f = std::fopen(p.string().c_str(), "rb")) {
+                uint8_t buf[65536];
+                size_t n;
+                while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+                std::fclose(f);
+            }
+            if (bytes.empty()) return false;
+            std::string err;
+            if (!render::loadKtx2(bytes, out, &err)) { std::fprintf(stderr, "[materials] %s: %s\n", p.string().c_str(), err.c_str()); return false; }
+            return true;
+        };
+        if (!dir.empty()) {
+            for (const std::string& lump : {assets_.wallLump, assets_.floorLump, assets_.ceilingLump}) {
+                if (lump.empty()) continue;
+                render::MaterialMaps m;
+                bool n = readFile(dir / (lump + "_remix_normal.ktx2"), m.normal);
+                bool r = readFile(dir / (lump + "_remix_roughness.ktx2"), m.roughness);
+                if (!n && !r) continue;
+                materialLumps_.push_back(lump);
+                maps.push_back(std::move(m));
+            }
+        }
+        if (maps.empty()) std::fprintf(stderr, "[materials] no material maps found for %s/%s (looked for a materials folder next to the game)\n", assets_.wallLump.c_str(), assets_.floorLump.c_str());
+        else std::fprintf(stderr, "[materials] %zu material map sets from %s\n", maps.size(), dir.string().c_str());
+    }
+    renderer_->setMaterialMaps(maps);
+}
+
+int App::materialSlot(const std::string& lump) const {
+    for (size_t i = 0; i < materialLumps_.size(); ++i) if (materialLumps_[i] == lump) return static_cast<int>(i) + 1;
+    return 0;
 }
 
 // The "just because" switch: OFF swaps in the procedural placeholder set while the
@@ -694,7 +753,7 @@ void App::adjustOption(int dir) {
     case 10: if (dir > 0) browseForWad(true); break;
     case 11: if (dir > 0) openScreen(kScreenEmailEntry); break;
     case 12: setDoomArt(doomArtOff_); break;   // toggles
-    case 13: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 3 + dir) % 3; saveDisplaySettings(); } break;
+    case 13: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -841,7 +900,7 @@ void App::loadDisplaySettings() {
             std::string k = key, v = val;
             if (k == "mode") displayMode_ = std::clamp(std::atoi(v.c_str()), 0, 2);
             else if (k == "width") resW_ = std::max(640, std::atoi(v.c_str()));
-            else if (k == "rt_shadows") rtShadows_ = std::clamp(std::atoi(v.c_str()), 0, 2);
+            else if (k == "rt_shadows") rtShadows_ = std::clamp(std::atoi(v.c_str()), 0, 3);
             else if (k == "height") resH_ = std::max(360, std::atoi(v.c_str()));
         }
         std::fclose(f);
@@ -1070,7 +1129,10 @@ int App::run() {
         }
         audio_.update();
         buildScene();
-        renderer_->render(frame_, cubes_, worldQuads_, screenQuads_, meshes_);
+        cubeRanges_ = envRanges_;
+        if (cubes_.size() > envCubes_.size())
+            cubeRanges_.push_back({static_cast<uint32_t>(envCubes_.size()), static_cast<uint32_t>(cubes_.size() - envCubes_.size()), 0});
+        renderer_->render(frame_, cubes_, worldQuads_, screenQuads_, meshes_, cubeRanges_);
         ++frameCount_;
 
         if (opts_.frames > 0 && frameCount_ >= opts_.frames) {
@@ -1653,6 +1715,9 @@ void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& t
 
 void App::buildEnvironment() {
     envCubes_.clear();
+    envRanges_.clear();
+    // Floor cubes first, then walls: each group is one draw range with its own material slot.
+    std::vector<render::CubeInstance> floorCubes, wallCubes;
     auto push = [&](glm::vec3 pos, const std::string& tex, glm::vec4 color) {
         const render::AtlasRegion& r = assets_.region(tex);
         render::CubeInstance c;
@@ -1660,9 +1725,12 @@ void App::buildEnvironment() {
         c.color = color;
         c.emissive = glm::vec4(0.f);
         c.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
-        c.params = glm::vec4(0.9f, 0.f, 0.f, 0.f);
+        const bool floor = tex == assets_.floor;
+        // The floor is the glossy, reflective surface (flag bit 2): polished enough for the
+        // ray-traced reflections to read, the roughness map still breaks them up.
+        c.params = glm::vec4(floor ? 0.22f : 0.9f, 0.f, 0.f, floor ? 2.f : 0.f);
         c.rot = glm::vec4(0.f);
-        envCubes_.push_back(c);
+        (floor ? floorCubes : wallCubes).push_back(c);
     };
     const int halfW = 15;
     const int depth = 23;
@@ -1684,6 +1752,10 @@ void App::buildEnvironment() {
             push({halfW + 0.5f, y + 0.5f, z + 0.5f}, assets_.wall, glm::vec4(0.75f, 0.75f, 0.75f, 1.f));
         }
     }
+    envRanges_.push_back({0, static_cast<uint32_t>(floorCubes.size()), materialSlot(assets_.floorLump)});
+    envRanges_.push_back({static_cast<uint32_t>(floorCubes.size()), static_cast<uint32_t>(wallCubes.size()), materialSlot(assets_.wallLump)});
+    envCubes_ = std::move(floorCubes);
+    envCubes_.insert(envCubes_.end(), wallCubes.begin(), wallCubes.end());
 }
 
 // Torches, lamps and barrels around the arena, each with its own flickering light.
@@ -2028,7 +2100,7 @@ void App::addLights() {
         if (p.lightRadius <= 0.f) continue;
         float f = 0.82f + 0.12f * std::sin(time_ * 9.f + p.phase) + 0.06f * std::sin(time_ * 23.f + p.phase * 3.f);
         // With ray-traced shadows the torches can burn brighter: nothing bleeds through walls any more.
-        float boost = (renderer_->rayTracingAvailable() && rtShadows_ == 2) ? 1.5f : 1.f;
+        float boost = (renderer_->rayTracingAvailable() && rtShadows_ >= 2) ? 1.5f : 1.f;
         cands.push_back({glm::length(p.pos - cam) - 2.f, {p.pos + glm::vec3(0.f, p.lightHeight, 0.f), p.lightRadius * 1.3f, p.lightColor, 2.4f * f * boost}});
     }
     // Every red (or turning) cell glows.
@@ -2416,7 +2488,7 @@ void App::addHud() {
             row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)", screenIndex_ == 10); y += lh * 1.25f;
             row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.25f;
             row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.25f;
-            row(y, "SHADOWS", !renderer_->rayTracingAvailable() ? "SHADOW MAP  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "SHADOW MAP" : rtShadows_ == 1 ? "RAY TRACED: SUN" : "RAY TRACED: SUN + ALL LIGHTS", screenIndex_ == 13); y += lh * 1.6f;
+            row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 13); y += lh * 1.6f;
             hotText(W * 0.5f, y, screenIndex_ == 14 ? "> BACK <" : "BACK", s, screenIndex_ == 14 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);

@@ -27,6 +27,7 @@ struct Texture {
     VkImageView view = VK_NULL_HANDLE;
     VkFormat format = VK_FORMAT_UNDEFINED;
     uint32_t width = 0, height = 0;
+    uint32_t mipLevels = 1;
 };
 
 constexpr uint32_t kFramesInFlight = 2;
@@ -78,7 +79,10 @@ public:
     Buffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, bool map, bool deviceAddress = false);
     VkDeviceAddress bufferAddress(const Buffer& b) const;
     void destroyBuffer(Buffer& b);
-    Texture createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Texture createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, uint32_t mipLevels = 1);
+    // Uploads every mip level (level 0 first, extents halving) of a texture created with that many levels.
+    void uploadTextureLevels(Texture& t, const std::vector<std::vector<uint8_t>>& levels);
+    bool bcTexturesSupported() const { return bc_; }
     void destroyTexture(Texture& t);
     void uploadTexture(Texture& t, const void* rgba, size_t bytes);   // -> SHADER_READ_ONLY_OPTIMAL
     void uploadBuffer(Buffer& dst, const void* data, size_t bytes);   // via staging
@@ -108,6 +112,7 @@ private:
     uint32_t queueFamily_ = 0;
     std::string gpuName_;
     bool rayQuery_ = false;
+    bool bc_ = false;                 // textureCompressionBC (BC5/BC7 material maps)
     RtFuncs rt_;
     VkDeviceSize scratchAlignment_ = 256;
 

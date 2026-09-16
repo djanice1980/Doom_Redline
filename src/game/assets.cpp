@@ -277,23 +277,25 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     atlas_.add("crosshair", proc::crosshair(15));
 
     auto textures = wad::TextureSet::load(*wad, *pal);
-    auto addTexture = [&](const std::string& key, std::initializer_list<const char*> names, Image fallback) {
+    auto addTexture = [&](const std::string& key, std::initializer_list<const char*> names, Image fallback, std::string& lump) {
+        lump.clear();
         if (textures)
             for (const char* n : names)
-                if (auto img = textures->get(n)) { atlas_.add(key, *img); return; }
+                if (auto img = textures->get(n)) { atlas_.add(key, *img); lump = n; return; }
         atlas_.add(key, fallback);
     };
-    auto addFlat = [&](const std::string& key, std::initializer_list<const char*> names, Image fallback) {
+    auto addFlat = [&](const std::string& key, std::initializer_list<const char*> names, Image fallback, std::string& lump) {
+        lump.clear();
         for (const char* n : names) {
             auto bytes = wad->data(n);
             if (bytes.empty()) continue;
-            if (auto img = wad::decodeFlat(bytes, *pal)) { atlas_.add(key, *img); return; }
+            if (auto img = wad::decodeFlat(bytes, *pal)) { atlas_.add(key, *img); lump = n; return; }
         }
         atlas_.add(key, fallback);
     };
-    addTexture("wall", {"STARTAN3", "STARG3", "BROWN1", "STONE2"}, proc::wallTexture(64));
-    addFlat("floor", {"FLOOR4_8", "FLAT5_4", "FLOOR0_1"}, proc::floorTexture(64));
-    addFlat("ceiling", {"CEIL3_5", "FLAT20", "CEIL5_1"}, proc::wallTexture(64));
+    addTexture("wall", {"STARTAN3", "STARG3", "BROWN1", "STONE2"}, proc::wallTexture(64), wallLump);
+    addFlat("floor", {"FLOOR4_8", "FLAT5_4", "FLOOR0_1"}, proc::floorTexture(64), floorLump);
+    addFlat("ceiling", {"CEIL3_5", "FLAT20", "CEIL5_1"}, proc::wallTexture(64), ceilingLump);
 
     auto addSprite = [&](SpriteAnim& a, const char* sprite, const char* frameLetters, float fps) {
         a = {};

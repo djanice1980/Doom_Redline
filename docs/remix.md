@@ -88,7 +88,20 @@ renderer as the fallback. In order of payoff per day of work:
 2. **Ray-traced floor reflections** (+1 day on top of 1). The hex floor is
    the largest surface on screen; a single glossy bounce from it reflects the
    red blocks, torches and voxel monsters. Roughness comes from the existing
-   material params.
+   material params. *Done 2026-09-16:* mode 3 of the RAY TRACING option.
+   Floor cubes carry a reflective flag; `cube_rt.frag` fires one ray per
+   floor pixel, resolves the hit through the TLAS custom index (cube
+   instance buffer at binding 6, mesh vertex/index buffers by device address
+   through a table at binding 7), and shades it with ambient, a sun shadow
+   ray and unshadowed point lights. The reflection weight is
+   `(1 - roughness)^2` times a Fresnel term. Torches are billboards and so
+   are not in the reflection; their light on the reflected surfaces is.
+   Cost on the Radeon 8060S at 1600x900: about 4 ms a frame. The material
+   maps from the section below are wired in at the same time: cube vertices
+   carry a tangent, cubes are drawn in ranges with a material slot push
+   constant, and `cube_frag_body.glsl` perturbs the normal and modulates the
+   roughness (the pack's roughness maps sit at 0.92-1.0 everywhere, so they
+   modulate the instance roughness by their variation rather than replace it).
 3. **Ray-traced ambient occlusion** (+1-2 days). Contact shadows where blocks
    meet the floor and between a monster's voxels. Cheap with a few rays and
    a small temporal blend; a full one-bounce GI needs a denoiser (NVIDIA's

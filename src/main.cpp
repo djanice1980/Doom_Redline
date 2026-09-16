@@ -39,7 +39,7 @@ void usage() {
         "  --reload-wad <file>  Testing: start with placeholder art, then switch to this WAD after 30 frames\n"
         "  --voxels-dir <dir>   Folder of Voxel Doom .kvx files (default: $REDLINE_VOXELS, ./voxels, ~/Downloads/doom-voxel-models/...)\n"
         "  --voxels | --sprites Force voxel models on or off for this run (default: saved option)\n"
-        "  --rt 0|1|2           Shadows: 0 shadow map, 1 ray-traced sun, 2 ray-traced sun and all lights (ray-tracing GPUs)\n"
+        "  --rt 0|1|2|3         Ray tracing: 0 off (shadow map), 1 sun shadows, 2 sun and all lights, 3 plus floor reflections\n"
         "  --music <set>        classic (OPL) | sc55 (original score recordings) | modern (Andrew Hulshult); remembered\n"
         "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1, REDLINE_SOUNDFONT=<file.sf2>\n");
 }
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
         else if (a == "--voxels-dir") o.voxelDir = next();
         else if (a == "--voxels") o.voxels = 1;
         else if (a == "--sprites") o.voxels = 0;
-        else if (a == "--rt") o.rtShadows = std::clamp(std::atoi(next()), 0, 2);
+        else if (a == "--rt") o.rtShadows = std::clamp(std::atoi(next()), 0, 3);
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }

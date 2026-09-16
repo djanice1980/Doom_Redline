@@ -83,6 +83,7 @@ if(REDLINE_BUILD_GAME)
       src/render/vk_context.cpp
       src/render/renderer.cpp
       src/render/atlas.cpp
+      src/render/ktx2.cpp
       src/game/assets.cpp
       src/game/procedural.cpp
       src/game/app.cpp
@@ -206,6 +207,10 @@ if(REDLINE_BUILD_GAME)
     target_include_directories(kvx_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(kvx_test PRIVATE glm::glm)
     add_test(NAME kvx_test COMMAND kvx_test)
+    add_executable(ktx2_test tests/ktx2_test.cpp src/render/ktx2.cpp)
+    target_include_directories(ktx2_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(ktx2_test PRIVATE REDLINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    add_test(NAME ktx2_test COMMAND ktx2_test)
   endif()
   add_executable(musrender tools/musrender.cpp src/audio/opl3.cpp src/audio/opl_driver.cpp src/audio/genmidi.cpp src/audio/mus.cpp)
   target_include_directories(musrender PRIVATE ${CMAKE_SOURCE_DIR}/src)

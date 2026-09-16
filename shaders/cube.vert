@@ -5,6 +5,7 @@
 layout(location = 0) in vec3 inPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUV;
+layout(location = 9) in vec3 inTangent;
 // Per-instance (binding 1)
 layout(location = 3) in vec4 iPosScale;   // xyz centre, w uniform scale
 layout(location = 4) in vec4 iColor;      // rgba tint
@@ -19,6 +20,8 @@ layout(location = 2) out vec2 vUV;
 layout(location = 3) out vec4 vColor;
 layout(location = 4) out vec4 vEmissive;
 layout(location = 5) out vec4 vParams;
+layout(location = 6) out vec3 vTangent;
+layout(location = 7) out vec2 vFaceUV;   // 0..1 across the face: material maps tile once per cube
 
 void main() {
     float s = iPosScale.w;
@@ -34,6 +37,8 @@ void main() {
     vec3 world = iPosScale.xyz + R * (inPos * (s * (1.0 + pulse)));
     vWorldPos = world;
     vNormal = R * inNormal;
+    vTangent = R * inTangent;
+    vFaceUV = inUV;
     vUV = mix(iUVRect.xy, iUVRect.zw, inUV);
     vColor = iColor;
     vEmissive = iEmissive;

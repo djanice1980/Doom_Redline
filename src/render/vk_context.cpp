@@ -130,6 +130,11 @@ void VkContext::pickDevice(bool preferIntegrated) {
     }
     if (!physical_) throw std::runtime_error("no suitable Vulkan 1.3 device with present support");
     vkGetPhysicalDeviceMemoryProperties(physical_, &memProps_);
+    {
+        VkPhysicalDeviceFeatures f{};
+        vkGetPhysicalDeviceFeatures(physical_, &f);
+        bc_ = f.textureCompressionBC == VK_TRUE;
+    }
 
     uint32_t en = 0;
     vkEnumerateDeviceExtensionProperties(physical_, nullptr, &en, nullptr);
@@ -175,6 +180,7 @@ void VkContext::createDevice() {
     VkPhysicalDeviceFeatures2 f2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
     f2.pNext = rayQuery_ ? static_cast<void*>(&asf) : static_cast<void*>(&f12);
     f2.features.samplerAnisotropy = VK_FALSE;
+    f2.features.textureCompressionBC = bc_ ? VK_TRUE : VK_FALSE;
 
     std::vector<const char*> exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     if (rayQuery_) {
@@ -459,16 +465,17 @@ void VkContext::destroyBuffer(Buffer& b) {
     b = {};
 }
 
-Texture VkContext::createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props) {
+Texture VkContext::createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props, uint32_t mipLevels) {
     Texture t;
     t.width = w;
     t.height = h;
     t.format = fmt;
+    t.mipLevels = mipLevels;
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = VK_IMAGE_TYPE_2D;
     ci.format = fmt;
     ci.extent = {w, h, 1};
-    ci.mipLevels = 1;
+    ci.mipLevels = mipLevels;
     ci.arrayLayers = 1;
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -486,9 +493,49 @@ Texture VkContext::createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImage
     vci.image = t.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = fmt;
-    vci.subresourceRange = {aspect, 0, 1, 0, 1};
+    vci.subresourceRange = {aspect, 0, mipLevels, 0, 1};
     vkCheck(vkCreateImageView(device_, &vci, nullptr, &t.view), "vkCreateImageView");
     return t;
+}
+
+void VkContext::uploadTextureLevels(Texture& t, const std::vector<std::vector<uint8_t>>& levels) {
+    size_t total = 0;
+    for (const auto& l : levels) total += l.size();
+    Buffer staging = createBuffer(total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
+    std::vector<VkBufferImageCopy> regions;
+    size_t off = 0;
+    for (uint32_t i = 0; i < levels.size() && i < t.mipLevels; ++i) {
+        std::memcpy(static_cast<uint8_t*>(staging.mapped) + off, levels[i].data(), levels[i].size());
+        VkBufferImageCopy r{};
+        r.bufferOffset = off;
+        r.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+        r.imageExtent = {std::max(1u, t.width >> i), std::max(1u, t.height >> i), 1};
+        regions.push_back(r);
+        off += levels[i].size();
+    }
+    oneTimeSubmit([&](VkCommandBuffer cmd) {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.image = t.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, t.mipLevels, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        vkCmdCopyBufferToImage(cmd, staging.buffer, t.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<uint32_t>(regions.size()), regions.data());
+        b.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+        b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    destroyBuffer(staging);
 }
 
 void VkContext::destroyTexture(Texture& t) {

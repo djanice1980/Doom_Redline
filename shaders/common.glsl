@@ -2,6 +2,9 @@
 #extension GL_GOOGLE_include_directive : enable
 #ifdef RT_SHADOWS
 #extension GL_EXT_ray_query : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 #endif
 
 #define MAX_LIGHTS 32
@@ -17,7 +20,7 @@ layout(set = 0, binding = 0, std140) uniform FrameUBO {
     vec4 screen;        // width, height, 1/width, 1/height
     vec4 lightPos[MAX_LIGHTS];    // xyz, w = radius
     vec4 lightColor[MAX_LIGHTS];  // rgb, w = intensity
-    ivec4 counts;       // x = light count
+    ivec4 counts;       // x = light count, y = ray-tracing mode (0 off, 1 sun, 2 all lights, 3 + reflections)
     mat4 lightViewProj; // sun shadow map projection
     vec4 shadow;        // x = texel size, y = bias, z = strength (0 = off), w = normal offset
 } u;

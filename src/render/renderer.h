@@ -12,12 +12,14 @@
 #include <glm/glm.hpp>
 
 #include "core/image.h"
+#include "render/ktx2.h"
 #include "render/mesh_types.h"
 #include "render/vk_context.h"
 
 namespace rl::render {
 
 constexpr int kMaxLights = 32;
+constexpr int kMaxMaterials = 8;   // material slot 0 = none; slots 1.. carry normal/roughness maps
 constexpr uint32_t kShadowMapSize = 2048;
 
 struct CubeInstance {
@@ -35,6 +37,20 @@ struct QuadInstance {
     glm::vec4 uvRect;
     glm::vec4 color;
     glm::vec4 params;     // mode (0 world / 1 screen), lit, flipX, flags
+};
+
+// Optional PBR maps for a material slot. Either image may be empty (no levels) to
+// keep the flat default (normal straight up, roughness 1).
+struct MaterialMaps {
+    Ktx2Image normal;
+    Ktx2Image roughness;
+};
+
+// Cube instances are drawn in ranges so a range can carry a material slot
+// (push constant) without per-instance dynamic indexing in the shader.
+struct CubeRange {
+    uint32_t first = 0, count = 0;
+    int material = 0;
 };
 
 struct PointLight {
@@ -60,8 +76,9 @@ struct FrameParams {
     glm::vec3 shadowCenter{0.f, 8.f, 10.f};
     float shadowRadius = 26.f;
     float shadowStrength = 0.85f;   // 0 = no shadows
-    // Ray-traced shadows (needs Renderer::rayTracingAvailable()): 0 = shadow map,
-    // 1 = ray-traced sun, 2 = ray-traced sun and every point light.
+    // Ray tracing (needs Renderer::rayTracingAvailable()): 0 = shadow map,
+    // 1 = ray-traced sun, 2 = ray-traced sun and every point light,
+    // 3 = 2 plus ray-traced reflections on cubes flagged reflective (params.w bit 1).
     int rtShadows = 0;
 };
 
@@ -73,6 +90,8 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     void setAtlas(const Image& atlas);
+    // Material slots 1..maps.size() (at most kMaxMaterials - 1); an empty span clears them all.
+    void setMaterialMaps(std::span<const MaterialMaps> maps);
 
     // Static meshes (voxel models): uploaded once, drawn by id with a model matrix.
     uint32_t createMesh(std::span<const MeshVertex> verts, std::span<const uint32_t> indices);
@@ -83,7 +102,8 @@ public:
                 std::span<const CubeInstance> cubes,
                 std::span<const QuadInstance> worldQuads,
                 std::span<const QuadInstance> screenQuads,
-                std::span<const MeshInstance> meshes = {});
+                std::span<const MeshInstance> meshes = {},
+                std::span<const CubeRange> cubeRanges = {});   // empty = one range, material 0
 
     // Writes the most recently presented frame to a PNG (blocks the GPU briefly).
     bool screenshot(const std::string& path);
@@ -95,7 +115,10 @@ private:
     void createDescriptors();
     void createPipelines();
     void createGeometry();
+    void writeDescriptors();
+    Texture createFlatTexture(uint8_t r, uint8_t g, uint8_t b);
     void ensureInstanceCapacity(uint32_t frame, size_t cubes, size_t quads);
+    void ensureMeshInfoCapacity(uint32_t frame, size_t meshes);
 
     VkContext& ctx_;
     VkDescriptorSetLayout setLayout_ = VK_NULL_HANDLE;
@@ -117,13 +140,21 @@ private:
     Blas cubeBlas_;
     struct Tlas { VkAccelerationStructureKHR as = VK_NULL_HANDLE; Buffer buf; VkDeviceSize bufSize = 0; Buffer instances; size_t instCap = 0; Buffer scratch; VkDeviceSize scratchSize = 0; bool built = false; };
     Tlas tlas_[kFramesInFlight];
+    // What a reflection ray hit: mesh instances are resolved through this table
+    // (vertex/index buffer addresses, tint, emissive), cubes through the instance buffer.
+    struct MeshInfoGpu { uint64_t vb, ib; glm::vec4 color, emissive; };
+    Buffer meshInfo_[kFramesInFlight];
+    size_t meshInfoCap_[kFramesInFlight]{};
     Blas buildBlas(VkDeviceAddress vtxAddr, uint32_t vtxCount, VkDeviceSize stride, VkDeviceAddress idxAddr, uint32_t triCount);
     void destroyBlas(Blas& b);
     void destroyTlas(Tlas& t);
     void buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeInstance> cubes, std::span<const MeshInstance> meshes);
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkSampler shadowSampler_ = VK_NULL_HANDLE;
+    VkSampler matSampler_ = VK_NULL_HANDLE;   // trilinear, repeat: the material maps are mipmapped
     Texture atlas_;
+    Texture defNormal_, defRough_;            // 1x1 fallbacks for empty slots
+    Texture matNormal_[kMaxMaterials], matRough_[kMaxMaterials];
     Texture shadowMap_;
     Buffer ubo_[kFramesInFlight];
     Buffer cubeInst_[kFramesInFlight];

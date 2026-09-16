@@ -1,6 +1,7 @@
 #include "render/renderer.h"
 
 #include <array>
+#include <cstdio>
 #include <cstring>
 
 #include "core/png.h"
@@ -44,6 +45,7 @@ struct CubeVertex {
     glm::vec3 pos;
     glm::vec3 normal;
     glm::vec2 uv;
+    glm::vec3 tangent;   // face u axis; bitangent = -cross(n, t) (v grows downwards)
 };
 constexpr size_t kInitialCubes = 8192;
 constexpr size_t kInitialQuads = 4096;
@@ -57,6 +59,14 @@ Renderer::Renderer(VkContext& ctx) : ctx_(ctx), rt_(ctx.rayQuerySupported()) {
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.maxLod = 0.f;
     vkCheck(vkCreateSampler(ctx_.device(), &sci, nullptr, &sampler_), "vkCreateSampler");
+    {
+        VkSamplerCreateInfo mi{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        mi.magFilter = mi.minFilter = VK_FILTER_LINEAR;
+        mi.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        mi.addressModeU = mi.addressModeV = mi.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        mi.maxLod = VK_LOD_CLAMP_NONE;
+        vkCheck(vkCreateSampler(ctx_.device(), &mi, nullptr, &matSampler_), "vkCreateSampler(material)");
+    }
     // Shadow map: comparison sampler, white outside the light frustum (= lit).
     VkSamplerCreateInfo ssi{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     ssi.magFilter = ssi.minFilter = VK_FILTER_LINEAR;
@@ -82,6 +92,15 @@ Renderer::Renderer(VkContext& ctx) : ctx_(ctx), rt_(ctx.rayQuerySupported()) {
     createDescriptors();
     createPipelines();
     createGeometry();
+    defNormal_ = createFlatTexture(128, 128, 255);
+    defRough_ = createFlatTexture(255, 255, 255);
+}
+
+Texture Renderer::createFlatTexture(uint8_t r, uint8_t g, uint8_t b) {
+    Texture t = ctx_.createTexture2D(1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    const uint8_t px[4] = {r, g, b, 255};
+    ctx_.uploadTexture(t, px, sizeof(px));
+    return t;
 }
 
 Renderer::~Renderer() {
@@ -93,11 +112,16 @@ Renderer::~Renderer() {
         ctx_.destroyBuffer(ubo_[i]);
         ctx_.destroyBuffer(cubeInst_[i]);
         ctx_.destroyBuffer(quadInst_[i]);
+        ctx_.destroyBuffer(meshInfo_[i]);
     }
     for (MeshRes& m : meshes_) if (m.alive) { ctx_.destroyBuffer(m.vb); ctx_.destroyBuffer(m.ib); if (rt_) { ctx_.destroyBuffer(m.posf); destroyBlas(m.blas); } }
     if (rt_) { destroyBlas(cubeBlas_); for (Tlas& t : tlas_) destroyTlas(t); }
     ctx_.destroyTexture(atlas_);
     ctx_.destroyTexture(shadowMap_);
+    ctx_.destroyTexture(defNormal_);
+    ctx_.destroyTexture(defRough_);
+    for (int i = 0; i < kMaxMaterials; ++i) { ctx_.destroyTexture(matNormal_[i]); ctx_.destroyTexture(matRough_[i]); }
+    if (matSampler_) vkDestroySampler(d, matSampler_, nullptr);
     if (cubePipe_) vkDestroyPipeline(d, cubePipe_, nullptr);
     if (quadPipe_) vkDestroyPipeline(d, quadPipe_, nullptr);
     if (shadowCubePipe_) vkDestroyPipeline(d, shadowCubePipe_, nullptr);
@@ -116,7 +140,7 @@ void Renderer::ensureInstanceCapacity(uint32_t frame, size_t cubes, size_t quads
     if (cubes > cubeCap_[frame]) {
         size_t cap = std::max(cubes, cubeCap_[frame] * 2);
         if (cubeInst_[frame].buffer) { ctx_.waitIdle(); ctx_.destroyBuffer(cubeInst_[frame]); }
-        cubeInst_[frame] = ctx_.createBuffer(cap * sizeof(CubeInstance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, flags, true);
+        cubeInst_[frame] = ctx_.createBuffer(cap * sizeof(CubeInstance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, flags, true);
         cubeCap_[frame] = cap;
     }
     if (quads > quadCap_[frame]) {
@@ -125,6 +149,15 @@ void Renderer::ensureInstanceCapacity(uint32_t frame, size_t cubes, size_t quads
         quadInst_[frame] = ctx_.createBuffer(cap * sizeof(QuadInstance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, flags, true);
         quadCap_[frame] = cap;
     }
+}
+
+void Renderer::ensureMeshInfoCapacity(uint32_t frame, size_t meshes) {
+    const size_t need = std::max<size_t>(meshes, 1);
+    if (need <= meshInfoCap_[frame]) return;
+    if (meshInfo_[frame].buffer) { ctx_.waitIdle(); ctx_.destroyBuffer(meshInfo_[frame]); }
+    meshInfoCap_[frame] = std::max(need, meshInfoCap_[frame] * 2);
+    meshInfo_[frame] = ctx_.createBuffer(meshInfoCap_[frame] * sizeof(MeshInfoGpu), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
 }
 
 void Renderer::createDescriptors() {
@@ -147,16 +180,36 @@ void Renderer::createDescriptors() {
     tlasBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     tlasBinding.descriptorCount = 1;
     tlasBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
-    VkDescriptorSetLayoutBinding all[4] = {bindings[0], bindings[1], bindings[2], tlasBinding};
+    // Material maps: normal (4) and roughness (5), one array element per material slot.
+    VkDescriptorSetLayoutBinding matBindings[2]{};
+    for (int i = 0; i < 2; ++i) {
+        matBindings[i].binding = 4 + static_cast<uint32_t>(i);
+        matBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        matBindings[i].descriptorCount = kMaxMaterials;
+        matBindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    // Reflection hit lookup: cube instances (6) and mesh instance info (7), ray-tracing GPUs only.
+    VkDescriptorSetLayoutBinding ssbo[2]{};
+    for (int i = 0; i < 2; ++i) {
+        ssbo[i].binding = 6 + static_cast<uint32_t>(i);
+        ssbo[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        ssbo[i].descriptorCount = 1;
+        ssbo[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    std::vector<VkDescriptorSetLayoutBinding> all = {bindings[0], bindings[1], bindings[2]};
+    if (rt_) all.push_back(tlasBinding);
+    all.push_back(matBindings[0]);
+    all.push_back(matBindings[1]);
+    if (rt_) { all.push_back(ssbo[0]); all.push_back(ssbo[1]); }
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    lci.bindingCount = rt_ ? 4 : 3;
-    lci.pBindings = all;
+    lci.bindingCount = static_cast<uint32_t>(all.size());
+    lci.pBindings = all.data();
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * 2}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}};
+    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (2 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight;
-    pci.poolSizeCount = rt_ ? 3 : 2;
+    pci.poolSizeCount = rt_ ? 4 : 2;
     pci.pPoolSizes = sizes;
     vkCheck(vkCreateDescriptorPool(d, &pci, nullptr, &pool_), "vkCreateDescriptorPool");
 
@@ -168,7 +221,8 @@ void Renderer::createDescriptors() {
     ai.pSetLayouts = layouts;
     vkCheck(vkAllocateDescriptorSets(d, &ai, sets_), "vkAllocateDescriptorSets");
 
-    // Push constants carry a mesh instance's model matrix, tint and emissive (96 bytes).
+    // Push constants carry a mesh instance's model matrix, tint and emissive (96 bytes);
+    // cube draws reuse the first int as the material slot of the range being drawn.
     VkPushConstantRange pcr{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + 2 * sizeof(glm::vec4)};
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.setLayoutCount = 1;
@@ -184,11 +238,57 @@ void Renderer::setAtlas(const Image& img) {
     atlas_ = ctx_.createTexture2D(static_cast<uint32_t>(img.width), static_cast<uint32_t>(img.height), VK_FORMAT_R8G8B8A8_UNORM,
                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     ctx_.uploadTexture(atlas_, img.rgba.data(), img.rgba.size());
+    writeDescriptors();
+}
+
+void Renderer::setMaterialMaps(std::span<const MaterialMaps> maps) {
+    ctx_.waitIdle();
+    for (int i = 0; i < kMaxMaterials; ++i) { ctx_.destroyTexture(matNormal_[i]); ctx_.destroyTexture(matRough_[i]); }
+    auto upload = [&](const Ktx2Image& img, Texture& out, const char* what) {
+        if (img.levels.empty()) return;
+        VkFormat fmt = VK_FORMAT_UNDEFINED;
+        switch (img.vkFormat) {
+            case 37: fmt = VK_FORMAT_R8G8B8A8_UNORM; break;
+            case 43: fmt = VK_FORMAT_R8G8B8A8_SRGB; break;
+            case 141: fmt = VK_FORMAT_BC5_UNORM_BLOCK; break;
+            case 145: fmt = VK_FORMAT_BC7_UNORM_BLOCK; break;
+            default: break;
+        }
+        if (fmt == VK_FORMAT_UNDEFINED || (img.blockCompressed() && !ctx_.bcTexturesSupported())) {
+            std::fprintf(stderr, "[materials] %s: unsupported KTX2 format %u, using the flat default\n", what, img.vkFormat);
+            return;
+        }
+        out = ctx_.createTexture2D(img.width, img.height, fmt, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, static_cast<uint32_t>(img.levels.size()));
+        ctx_.uploadTextureLevels(out, img.levels);
+    };
+    for (size_t i = 0; i < maps.size() && i + 1 < static_cast<size_t>(kMaxMaterials); ++i) {
+        upload(maps[i].normal, matNormal_[i + 1], "normal");
+        upload(maps[i].roughness, matRough_[i + 1], "roughness");
+    }
+    if (atlas_.view) writeDescriptors();
+}
+
+void Renderer::writeDescriptors() {
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
         VkDescriptorBufferInfo bi{ubo_[i].buffer, 0, sizeof(Ubo)};
         VkDescriptorImageInfo ii{sampler_, atlas_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkDescriptorImageInfo si{shadowSampler_, shadowMap_.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet w[3]{};
+        VkDescriptorImageInfo ni[kMaxMaterials], ri[kMaxMaterials];
+        for (int m = 0; m < kMaxMaterials; ++m) {
+            ni[m] = {matSampler_, matNormal_[m].view ? matNormal_[m].view : defNormal_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            ri[m] = {matSampler_, matRough_[m].view ? matRough_[m].view : defRough_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        }
+        VkWriteDescriptorSet w[5]{};
+        w[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[3].dstSet = sets_[i];
+        w[3].dstBinding = 4;
+        w[3].descriptorCount = kMaxMaterials;
+        w[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[3].pImageInfo = ni;
+        w[4] = w[3];
+        w[4].dstBinding = 5;
+        w[4].pImageInfo = ri;
         w[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[2].dstSet = sets_[i];
         w[2].dstBinding = 2;
@@ -207,7 +307,7 @@ void Renderer::setAtlas(const Image& img) {
         w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w[1].pImageInfo = &ii;
-        vkUpdateDescriptorSets(ctx_.device(), 3, w, 0, nullptr);
+        vkUpdateDescriptorSets(ctx_.device(), 5, w, 0, nullptr);
     }
 }
 
@@ -301,10 +401,11 @@ void Renderer::createPipelines() {
         VkVertexInputBindingDescription b[2] = {
             {0, sizeof(CubeVertex), VK_VERTEX_INPUT_RATE_VERTEX},
             {1, sizeof(CubeInstance), VK_VERTEX_INPUT_RATE_INSTANCE}};
-        VkVertexInputAttributeDescription a[9] = {
+        VkVertexInputAttributeDescription a[10] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, pos)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, normal)},
             {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(CubeVertex, uv)},
+            {9, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(CubeVertex, tangent)},
             {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, posScale)},
             {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, color)},
             {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(CubeInstance, emissive)},
@@ -314,7 +415,7 @@ void Renderer::createPipelines() {
         VkPipelineVertexInputStateCreateInfo vi{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         vi.vertexBindingDescriptionCount = 2;
         vi.pVertexBindingDescriptions = b;
-        vi.vertexAttributeDescriptionCount = 9;
+        vi.vertexAttributeDescriptionCount = 10;
         vi.pVertexAttributeDescriptions = a;
         cubePipe_ = makePipeline(cubeVS, cubeFS, vi, true, false);
         VkShaderModule shVS = ctx_.createShader(shaders::shadow_cube_vert, shaders::shadow_cube_vert_size);
@@ -371,8 +472,10 @@ void Renderer::createPipelines() {
 uint32_t Renderer::createMesh(std::span<const MeshVertex> verts, std::span<const uint32_t> indices) {
     MeshRes m;
     const VkBufferUsageFlags asIn = rt_ ? static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) : 0u;
-    m.vb = ctx_.createBuffer(verts.size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
-    m.ib = ctx_.createBuffer(indices.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | asIn, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rt_);
+    // With ray tracing the fragment shader reads vertices/indices of reflected meshes by device address.
+    const VkBufferUsageFlags refl = rt_ ? static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) : 0u;
+    m.vb = ctx_.createBuffer(verts.size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | refl, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rt_);
+    m.ib = ctx_.createBuffer(indices.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | asIn | refl, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rt_);
     ctx_.uploadBuffer(m.vb, verts.data(), verts.size_bytes());
     ctx_.uploadBuffer(m.ib, indices.data(), indices.size_bytes());
     m.indexCount = static_cast<uint32_t>(indices.size());
@@ -464,26 +567,30 @@ void Renderer::buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeI
     Tlas& t = tlas_[fi];
     std::vector<VkAccelerationStructureInstanceKHR> inst;
     inst.reserve(cubes.size() + meshes.size());
-    auto put = [&](const glm::mat4& M, VkDeviceAddress blas) {
+    // Custom index tells a reflection ray what it hit: cube i, or mesh entry j | 0x800000
+    // (j indexes the mesh info table filled in render(), same alive filter and order).
+    auto put = [&](const glm::mat4& M, VkDeviceAddress blas, uint32_t custom) {
         VkAccelerationStructureInstanceKHR in{};
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 4; ++c) in.transform.matrix[r][c] = M[c][r];
-        in.instanceCustomIndex = 0;
+        in.instanceCustomIndex = custom & 0xFFFFFFu;
         in.mask = 0xFF;
         in.instanceShaderBindingTableRecordOffset = 0;
         in.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         in.accelerationStructureReference = blas;
         inst.push_back(in);
     };
-    for (const CubeInstance& c : cubes) {
+    for (size_t i = 0; i < cubes.size(); ++i) {
+        const CubeInstance& c = cubes[i];
         glm::mat4 M = glm::translate(glm::mat4(1.f), glm::vec3(c.posScale));
         M = glm::rotate(M, c.rot.x, glm::vec3(1.f, 0.f, 0.f));
         M = glm::rotate(M, c.rot.y, glm::vec3(0.f, 1.f, 0.f));
         M = glm::scale(M, glm::vec3(c.posScale.w));
-        put(M, cubeBlas_.addr);
+        put(M, cubeBlas_.addr, static_cast<uint32_t>(i));
     }
+    uint32_t j = 0;
     for (const MeshInstance& mi : meshes)
-        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive) put(mi.model, meshes_[mi.mesh].blas.addr);
+        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive) put(mi.model, meshes_[mi.mesh].blas.addr, 0x800000u | j++);
     const uint32_t n = static_cast<uint32_t>(inst.size());
 
     if (n > t.instCap) {
@@ -566,7 +673,7 @@ void Renderer::createGeometry() {
         const glm::vec2 corners[4] = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {0.5f, 0.5f}, {-0.5f, 0.5f}};
         for (int i = 0; i < 4; ++i) {
             glm::vec3 p = f.n * 0.5f + f.u * corners[i].x + f.v * corners[i].y;
-            verts.push_back({p, f.n, uvs[i]});
+            verts.push_back({p, f.n, uvs[i], f.u});
         }
         idx.insert(idx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     }
@@ -581,7 +688,7 @@ void Renderer::createGeometry() {
 
 bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> cubes,
                       std::span<const QuadInstance> worldQuads, std::span<const QuadInstance> screenQuads,
-                      std::span<const MeshInstance> meshes) {
+                      std::span<const MeshInstance> meshes, std::span<const CubeRange> cubeRanges) {
     VkContext::FrameCtx frame;
     if (!ctx_.beginFrame(frame)) return false;
     const uint32_t fi = frame.frameIndex;
@@ -627,16 +734,40 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         // The top-level structure is rebuilt whenever ray-traced shadows are on (and once
         // regardless, so the descriptor always points at a valid structure).
         if (params.rtShadows > 0 || !tlas_[fi].built) buildTlas(cmd, fi, cubes, meshes);
+        // Mesh info for reflection hits, in TLAS order.
+        ensureMeshInfoCapacity(fi, meshes.size());
+        {
+            auto* dst = static_cast<MeshInfoGpu*>(meshInfo_[fi].mapped);
+            size_t j = 0;
+            for (const MeshInstance& mi : meshes) {
+                if (mi.mesh >= meshes_.size() || !meshes_[mi.mesh].alive) continue;
+                const MeshRes& m = meshes_[mi.mesh];
+                dst[j++] = {ctx_.bufferAddress(m.vb), ctx_.bufferAddress(m.ib), mi.color, mi.emissive};
+            }
+            if (j == 0) dst[0] = {};
+        }
         VkWriteDescriptorSetAccelerationStructureKHR wa{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
         wa.accelerationStructureCount = 1;
         wa.pAccelerationStructures = &tlas_[fi].as;
-        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-        w.pNext = &wa;
-        w.dstSet = sets_[fi];
-        w.dstBinding = 3;
-        w.descriptorCount = 1;
-        w.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-        vkUpdateDescriptorSets(ctx_.device(), 1, &w, 0, nullptr);
+        VkDescriptorBufferInfo cb{cubeInst_[fi].buffer, 0, VK_WHOLE_SIZE};
+        VkDescriptorBufferInfo mb{meshInfo_[fi].buffer, 0, VK_WHOLE_SIZE};
+        VkWriteDescriptorSet w[3]{};
+        w[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[0].pNext = &wa;
+        w[0].dstSet = sets_[fi];
+        w[0].dstBinding = 3;
+        w[0].descriptorCount = 1;
+        w[0].descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        w[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[1].dstSet = sets_[fi];
+        w[1].dstBinding = 6;
+        w[1].descriptorCount = 1;
+        w[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        w[1].pBufferInfo = &cb;
+        w[2] = w[1];
+        w[2].dstBinding = 7;
+        w[2].pBufferInfo = &mb;
+        vkUpdateDescriptorSets(ctx_.device(), 3, w, 0, nullptr);
     }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
     struct MeshPush { glm::mat4 model; glm::vec4 color; glm::vec4 emissive; };
@@ -752,7 +883,14 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         VkDeviceSize offs[2] = {0, 0};
         vkCmdBindVertexBuffers(cmd, 0, 2, vbs, offs);
         vkCmdBindIndexBuffer(cmd, cubeIB_.buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, cubeIndexCount_, static_cast<uint32_t>(cubes.size()), 0, 0, 0);
+        const CubeRange whole{0, static_cast<uint32_t>(cubes.size()), 0};
+        std::span<const CubeRange> ranges = cubeRanges.empty() ? std::span<const CubeRange>(&whole, 1) : cubeRanges;
+        for (const CubeRange& r : ranges) {
+            if (r.count == 0 || r.first + r.count > cubes.size()) continue;
+            const int mat = (r.material > 0 && r.material < kMaxMaterials) ? r.material : 0;
+            vkCmdPushConstants(cmd, pipeLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(int), &mat);
+            vkCmdDrawIndexed(cmd, cubeIndexCount_, r.count, 0, 0, r.first);
+        }
     }
     if (!meshes.empty()) {
         vkCmdSetDepthTestEnable(cmd, VK_TRUE);

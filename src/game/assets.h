@@ -70,6 +70,8 @@ public:
     std::string wall = "wall";
     std::string floor = "floor";
     std::string ceiling = "ceiling";
+    // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
+    std::string wallLump, floorLump, ceilingLump;
     std::string crosshair = "crosshair";
     std::string white = "__white";
     EnemyArt enemies[kEnemyTiers];
