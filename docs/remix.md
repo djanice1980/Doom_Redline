@@ -139,6 +139,17 @@ time (height from luminance, normal from its gradient, roughness from
 inverse local contrast), which is a few dozen lines and has no licensing
 question; it also covers the block tiles, which the port has nothing for.
 
+Decision (David, 2026-09-16): the maps are only meaningful alongside the
+original textures, and the game only draws Doom art when the player supplies
+their own WAD, so bundle them gated on that: they are loaded only when a WAD
+is in use, never on the placeholder set. Keep it minimal, six files for the
+three textures REDLINE actually uses (STARTAN3, FLOOR4_8, CEIL3_5; about
+100 KB), under `assets/materials/` with a CREDITS file naming
+github.com/vs-shirokii/gzdoom-rt and a note in LICENSE that those files are
+derived from id Software textures and are not covered by the MIT licence.
+Extend the set only when the arena gains textures. The albedo-generated
+fallback still covers the block tiles and the placeholder art.
+
 How that feeds items 2 and 3: reflections need a per-pixel roughness for the
 floor (the roughness map or the generated one) and a metallic/mirror flag
 per surface (from textures.json conventions: floor tiles semi-glossy, walls
