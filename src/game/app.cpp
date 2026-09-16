@@ -52,7 +52,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (opts_.rtShadows >= 0) rtShadows_ = opts_.rtShadows;
     if (opts_.msaa >= 0) msaa_ = opts_.msaa != 0;
     if (opts_.brutal >= 0) brutal_ = opts_.brutal != 0;
-    fps_.setBrutal(brutal_);
+    fps_.setBrutal(brutalActive());
     if (opts_.bloom >= 0) bloom_ = opts_.bloom != 0;
     ctx_ = std::make_unique<render::VkContext>(window_, opts_.preferIntegrated);
     renderer_ = std::make_unique<render::Renderer>(*ctx_);
@@ -202,6 +202,7 @@ bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extr
 void App::applyAssets(Assets&& fresh) {
     assets_ = std::move(fresh);
     for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
+    fps_.setBrutal(brutalActive());
     renderer_->setAtlas(assets_.atlas().image());
     loadMaterials();
     buildEnvironment();
@@ -346,7 +347,7 @@ void App::newGame() {
     uint32_t seed = opts_.seed ? opts_.seed : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xFFFFFFFFu);
     game_ = std::make_unique<core::Game>(seed);
     fps_ = FpsMode();
-    fps_.setBrutal(brutal_);
+    fps_.setBrutal(brutalActive());
     for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
     ambient_.reset(seed, 1);
     brawlDecals_.clear();
@@ -772,10 +773,10 @@ void App::adjustOption(int dir) {
     case 10: if (dir > 0) browseForWad(true); break;
     case 11: if (dir > 0) openScreen(kScreenEmailEntry); break;
     case 12: setDoomArt(doomArtOff_); break;   // toggles
-    case 13: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
-    case 14: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
-    case 15: bloom_ = !bloom_; saveDisplaySettings(); break;
-    case 16: brutal_ = !brutal_; fps_.setBrutal(brutal_); saveSettings(); break;
+    case 13: if (assets_.usingWad()) { brutal_ = !brutal_; fps_.setBrutal(brutalActive()); saveSettings(); } break;   // sub-option of DOOM ART
+    case 14: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
+    case 15: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
+    case 16: bloom_ = !bloom_; saveDisplaySettings(); break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -1247,7 +1248,10 @@ void App::handleEvents() {
             if (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT) {
                 const Hotspot* h = hotspotAt(e.button.x, e.button.y);
                 bool left = e.button.button == SDL_BUTTON_LEFT;
-                if (!opts_.clicks.empty()) std::fprintf(stderr, "[ui] click %.0f,%.0f -> %s (hotspots %zu)\n", e.button.x, e.button.y, h ? (std::to_string(h->kind) + "/" + std::to_string(h->index)).c_str() : "none", hotspots_.size());
+                if (!opts_.clicks.empty()) {
+                    std::fprintf(stderr, "[ui] click %.0f,%.0f -> %s (hotspots %zu)\n", e.button.x, e.button.y, h ? (std::to_string(h->kind) + "/" + std::to_string(h->index)).c_str() : "none", hotspots_.size());
+                    if (!h) for (const Hotspot& hs : hotspots_) std::fprintf(stderr, "[ui]   hotspot kind %d index %d at %.0f,%.0f size %.0fx%.0f\n", hs.kind, hs.index, hs.x, hs.y, hs.w, hs.h);
+                }
                 if (h && h->kind == kHotMenu && left) { menu_.index = h->index; play("menu_select", 0.7f); menuSelect(); }
                 else if (h && h->kind == kHotScreenItem && left) { screenIndex_ = h->index; screenKey(SDLK_RETURN, false); }
                 else if (h && h->kind == kHotOptionRow) { screenIndex_ = h->index; adjustOption(left ? 1 : -1); }   // right-click steps back
@@ -1421,7 +1425,7 @@ void App::handleFpsEvents() {
         const EnemyArt& art = assets_.enemies[std::clamp(ev.kind, 0, kEnemyKinds - 1)];
         switch (ev.type) {
         case FpsEvent::Type::Shoot:
-            if (brutal_ && assets_.brWeaponSounds) play(std::string("br_") + assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
+            if (brutalActive() && assets_.brWeaponSounds) play(std::string("br_") + assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
             else play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
             muzzleLight_ = 1.f;
             shakeT_ = ev.a == kRocketLauncher ? 0.2f : (ev.a == kShotgun ? 0.12f : 0.04f);
@@ -1438,7 +1442,7 @@ void App::handleFpsEvents() {
         }
         case FpsEvent::Type::WeaponSwitch: std::fprintf(stderr, "[fps] weapon -> %s\n", assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].name.c_str()); play("menu", 0.5f, 1.3f); break;
         case FpsEvent::Type::RocketBlast:
-            if (brutal_ && assets_.brExplodeSounds) play("br_explode" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brExplodeSounds)), 1.f);
+            if (brutalActive() && assets_.brExplodeSounds) play("br_explode" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brExplodeSounds)), 1.f);
             else play("rocket_hit", 1.f);
             shakeT_ = 0.35f; rumble(0.8f, 0.6f, 300);
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
@@ -1469,7 +1473,7 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f, 80); break;
         case FpsEvent::Type::EnemyHit:
             play(art.painSound, 0.8f, 1.f, 120);
-            if (brutal_ && !assets_.brSpray[bloodColorForKind(ev.kind)].empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray[bloodColorForKind(ev.kind)]});
+            if (brutalActive() && !assets_.brSpray[bloodColorForKind(ev.kind)].empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray[bloodColorForKind(ev.kind)]});
             break;
         case FpsEvent::Type::BulletHole:
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos, 0.f, 0.6f, 0.006f, &assets_.brSmoke});
@@ -1490,7 +1494,7 @@ void App::handleFpsEvents() {
             shakeT_ = std::max(shakeT_, 0.08f);
             break;
         case FpsEvent::Type::EnemyAttack:
-            if (brutal_ && ev.kind == 1 && assets_.brImpSounds) play("impclaw" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brImpSounds)), 0.7f);
+            if (brutalActive() && ev.kind == 1 && assets_.brImpSounds) play("impclaw" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brImpSounds)), 0.7f);
             else play(art.attackSound, 0.7f);
             break;
         case FpsEvent::Type::Explosion:
@@ -1500,8 +1504,8 @@ void App::handleFpsEvents() {
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
         case FpsEvent::Type::PlayerHit:
-            play(brutal_ && assets_.brPlayerPain ? "br_pain" : "pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200);
-            if (brutal_ && !assets_.blood.empty()) {   // blood on the screen
+            play(brutalActive() && assets_.brPlayerPain ? "br_pain" : "pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200);
+            if (brutalActive() && !assets_.blood.empty()) {   // blood on the screen
                 std::uniform_real_distribution<float> u(0.f, 1.f);
                 VkExtent2D ext = renderer_->extent();
                 for (int i = 0; i < 3; ++i)
@@ -1513,7 +1517,7 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
         case FpsEvent::Type::EnemySight: {
             // Announce the biggest monster in the room and log the roster.
-            if (brutal_ && ev.kind == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.9f);
+            if (brutalActive() && ev.kind == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.9f);
             else play(art.sightSound, 0.9f);
             std::string roster;
             for (const Enemy& en : fps_.enemies()) roster += (roster.empty() ? "" : ", ") + assets_.enemies[std::clamp(en.kind, 0, kEnemyKinds - 1)].name + "(" + std::to_string(en.cells.size()) + ")";
@@ -1587,7 +1591,7 @@ void App::update(float dt) {
         ambient_.update(dt);
         // Silent scenery (no sound over the Tetris game), but in Brutal mode the brawl leaves blood.
         for (const BrawlEvent& be : ambient_.drainEvents()) {
-            if (!brutal_) continue;
+            if (!brutalActive()) continue;
             const int c = bloodColorForTier(be.tier);
             if (be.type == BrawlEvent::Type::Pain && !assets_.brSpray[c].empty()) bursts_.push_back({be.pos + glm::vec3(0.f, 0.9f, 0.f), 0.f, 0.4f, 0.006f, &assets_.brSpray[c]});
             if (be.type == BrawlEvent::Type::Death) {
@@ -2153,7 +2157,7 @@ void App::addFpsActors() {
         if (e.gibbed && !e.alive()) {
             if (art.xdeath.empty()) continue;
             anim = &art.xdeath;
-        } else if (!e.alive() && brutal_ && e.deathKind >= 0 && e.deathKind < kDeathKinds && !art.brDeath[e.deathKind].empty()) {
+        } else if (!e.alive() && brutalActive() && e.deathKind >= 0 && e.deathKind < kDeathKinds && !art.brDeath[e.deathKind].empty()) {
             anim = &art.brDeath[e.deathKind];
             loop = false;
             t = e.state == Enemy::State::Dead ? e.stateT + 0.8f : e.stateT;
@@ -2164,6 +2168,7 @@ void App::addFpsActors() {
         if (e.state == Enemy::State::Dead) {
             float life = (e.tier == 3) ? 0.35f : (e.tier >= 5 ? 1.2f : 1.6f);
             if (brutalLife > 0.f) life = std::max(life, brutalLife - 0.8f + (e.deathKind == kDeathPlasma ? 0.4f : 1.4f));   // let the animation finish, then fade
+            life += 5.f;   // bodies stay around a while before they fade
             float fadeStart = life - 0.35f;
             if (e.stateT >= life) continue;
             if (e.stateT > fadeStart) {
@@ -2509,7 +2514,7 @@ void App::addHud() {
             const WeaponArt& wa = assets_.weapons[std::clamp(fps_.currentWeapon(), 0, kWeaponArt - 1)];
             bool flip = false;
             // Brutal mode with the pack: Brutal Doom's weapon art, flash baked into the fire frames.
-            const bool brutalArt = brutal_ && assets_.usingWad() && !wa.brIdle.empty() && !wa.brFire.empty();
+            const bool brutalArt = brutalActive() && !wa.brIdle.empty() && !wa.brFire.empty();
             // Firing: the fire frames with the flash on top. Just released (the plasma rifle's
             // vents): the cool-down frame for a moment. Otherwise idle.
             const float coolFor = std::max(0.25f, weaponDef(fps_.currentWeapon()).cycle) + 0.55f;
@@ -2711,10 +2716,13 @@ void App::addHud() {
     if (screen_ != kScreenNone) {
         panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.88f));
         int rowIndex = 0;
-        auto row = [&](float y, const std::string& label, const std::string& value, bool sel) {
-            glm::vec4 c = sel ? yellow : dim;
-            text(W * 0.5f - 20.f, y, (sel ? "> " : "") + label, s, c, 2);
-            text(W * 0.5f + 20.f, y, value, s, sel ? white : dim, 0);
+        // enabled = false greys the row out (it stays selectable but does nothing); sub-options are drawn smaller with a dash.
+        auto row = [&](float y, const std::string& label, const std::string& value, bool sel, bool enabled = true, bool sub = false) {
+            const glm::vec4 grey(0.45f, 0.45f, 0.5f, 1.f);
+            const float fs = s * (sub ? 0.85f : 1.f);
+            glm::vec4 c = !enabled ? grey : sel ? yellow : dim;
+            text(W * 0.5f - 20.f, y, std::string(sel ? "> " : "") + (sub ? "- " : "") + label, fs, c, 2);
+            text(W * 0.5f + 20.f, y, value, fs, !enabled ? grey : sel ? white : dim, 0);
             float lw = static_cast<float>(assets_.textWidth(label, s)), vw = static_cast<float>(assets_.textWidth(value, s));
             hotRect(W * 0.5f - 20.f - lw - 30.f, y - 4.f, lw + 40.f + vw + 30.f, static_cast<float>(assets_.fontHeight) * s + 8.f, kHotOptionRow, rowIndex++);
         };
@@ -2737,11 +2745,11 @@ void App::addHud() {
             row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 9); y += lh * 1.08f;
             row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)", screenIndex_ == 10); y += lh * 1.08f;
             row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.08f;
-            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.08f;
-            row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 13); y += lh * 1.08f;
-            row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 14); y += lh * 1.08f;
-            row(y, "BLOOM", bloom_ ? "ON" : "OFF", screenIndex_ == 15); y += lh * 1.08f;
-            row(y, "BRUTAL", brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 16); y += lh * 1.3f;
+            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.0f;
+            row(y, "BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 13, assets_.usingWad(), true); y += lh * 1.08f;
+            row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 14); y += lh * 1.08f;
+            row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 15); y += lh * 1.08f;
+            row(y, "BLOOM", bloom_ ? "ON" : "OFF", screenIndex_ == 16); y += lh * 1.3f;
             hotText(W * 0.5f, y, screenIndex_ == 17 ? "> BACK <" : "BACK", s, screenIndex_ == 17 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
@@ -2928,7 +2936,7 @@ void App::buildScene() {
     addDecor();
     if (!ambient_.empty() && (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::Paused && pausedFrom_ == Mode::Blocks) || (mode_ == Mode::GameOver && !diedInFps_))) {
         addAmbient();
-        if (brutal_) { size_t i = 0; for (const Decal& d : brawlDecals_) drawDecal(d, i++); }
+        if (brutalActive()) { size_t i = 0; for (const Decal& d : brawlDecals_) drawDecal(d, i++); }
     }
     addBursts();
     bool actors = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyOut || (mode_ == Mode::GameOver && diedInFps_) || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)));

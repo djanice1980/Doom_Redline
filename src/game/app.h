@@ -179,7 +179,8 @@ private:
     VoxelModels voxels_;
     bool useVoxels_ = false;
     bool doomArtOff_ = false;          // play on the placeholder art even though a WAD is known
-    bool brutal_ = true;               // OPTIONS > BRUTAL: blood, gibs, casings, bullet holes, screen blood
+    bool brutal_ = true;               // OPTIONS > DOOM ART > BRUTAL: blood, gibs, casings, bullet holes, screen blood
+    bool brutalActive() const { return brutal_ && assets_.usingWad(); }   // the preference only applies on Doom art
     struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
     std::vector<ScreenBlood> screenBlood_;
     struct Burst { glm::vec3 pos; float t, ttl, px; const SpriteAnim* anim; };   // one-shot sprite effects (blood clouds, smoke)
