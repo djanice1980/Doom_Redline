@@ -132,6 +132,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     applyScenario();
     // First run without Doom data: offer to find it before anything else.
     if (wadMissing_ && opts_.scenario == "title") openScreen(kScreenWadSetup);
+    if (doomArtOff_ && assets_.usingWad()) setDoomArt(false);   // the profile prefers the placeholder look
 }
 
 // Music: MUS tracks from the WAD through the OPL3 emulator with GENMIDI, or
@@ -170,12 +171,8 @@ bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extr
         std::fprintf(stderr, "[assets] %s is not a usable Doom WAD\n", wad.string().c_str());
         return false;
     }
-    assets_ = std::move(fresh);
-    renderer_->setAtlas(assets_.atlas().image());
-    buildEnvironment();
-    buildProps();
-    initMusic();
-    music_.stop(0.f);   // updateMusic() restarts the right track from the new set
+    applyAssets(std::move(fresh));
+    doomArtOff_ = false;
     wadMissing_ = false;
     wadStatus_.clear();
     wadPath_ = wad.string();
@@ -185,6 +182,36 @@ bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extr
     announce("DOOM DATA: " + assets_.wadName() + (assets_.oggMusic.empty() ? "" : "  +  SOUNDTRACKS"), glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
     std::fprintf(stderr, "[assets] switched to %s\n", wad.string().c_str());
     return true;
+}
+
+void App::applyAssets(Assets&& fresh) {
+    assets_ = std::move(fresh);
+    renderer_->setAtlas(assets_.atlas().image());
+    buildEnvironment();
+    buildProps();
+    initMusic();
+    music_.stop(0.f);   // updateMusic() restarts the right track from the new set
+}
+
+// The "just because" switch: OFF swaps in the procedural placeholder set while the
+// WAD stays known; ON reloads it. The choice is saved with the other settings.
+void App::setDoomArt(bool on) {
+    if (on) {
+        doomArtOff_ = false;
+        if (assets_.usingWad()) return;
+        if (!wadPath_.empty()) { reloadAssets(wadPath_); return; }
+        if (auto w = Assets::findWad(opts_.wad, prefDir_, baseDir_)) { reloadAssets(*w); return; }
+        wadMissing_ = true;   // nothing to reload: back to the chooser
+        openScreen(kScreenWadSetup);
+        return;
+    }
+    doomArtOff_ = true;
+    if (!assets_.usingWad()) return;
+    Assets fresh;
+    fresh.load(std::nullopt, audio_);
+    applyAssets(std::move(fresh));
+    announce("PLACEHOLDER ART", glm::vec4(0.8f, 0.9f, 1.f, 1.f), 1.1f);
+    std::fprintf(stderr, "[assets] Doom art switched off (placeholder set)\n");
 }
 
 void App::saveWadChoice(const std::string& path) const {
@@ -424,6 +451,7 @@ void App::loadSettings() {
     padInvertY_ = false;
     padRumble_ = true;
     useVoxels_ = voxels_.available();   // default on when the pack is present
+    doomArtOff_ = false;
     music_.setEnabled(true);
     music_.setVolume(opts_.musicVolume);
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "r")) {
@@ -437,6 +465,7 @@ void App::loadSettings() {
             else if (k == "pad_invert") padInvertY_ = v != "0";
             else if (k == "pad_rumble") padRumble_ = v != "0";
             else if (k == "voxels") useVoxels_ = v != "0";
+            else if (k == "doom_art") doomArtOff_ = v == "0";
         }
         std::fclose(f);
     }
@@ -663,6 +692,7 @@ void App::adjustOption(int dir) {
     case 9: if (dir > 0) browseForWad(); break;
     case 10: if (dir > 0) browseForWad(true); break;
     case 11: if (dir > 0) openScreen(kScreenEmailEntry); break;
+    case 12: setDoomArt(doomArtOff_); break;   // toggles
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -684,12 +714,12 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 13;   // 12 options + BACK
+        const int n = 14;   // 13 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 12) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 12) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 12) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 13) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 13) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 13) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
@@ -899,9 +929,9 @@ void App::applyDisplay() {
 
 void App::saveSettings() const {
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
-        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\n",
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\n",
                      musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0,
-                     music_.volume(), padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0);
+                     music_.volume(), padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1);
         std::fclose(f);
     }
 }
@@ -2338,8 +2368,9 @@ void App::addHud() {
             row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.25f;
             row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 9); y += lh * 1.25f;
             row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER: FIND EXTRAS.WAD)", screenIndex_ == 10); y += lh * 1.25f;
-            row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.6f;
-            text(W * 0.5f, y, screenIndex_ == 12 ? "> BACK <" : "BACK", s, screenIndex_ == 12 ? yellow : dim, 1);
+            row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.25f;
+            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.6f;
+            text(W * 0.5f, y, screenIndex_ == 13 ? "> BACK <" : "BACK", s, screenIndex_ == 13 ? yellow : dim, 1);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {

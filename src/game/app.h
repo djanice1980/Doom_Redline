@@ -115,6 +115,8 @@ private:
     // Doom data: the WAD can be chosen at runtime (first-run screen, OPTIONS) and swapped in live.
     void initMusic();
     bool reloadAssets(const std::filesystem::path& wad, const std::string& extras = "");
+    void applyAssets(Assets&& fresh);           // swap the loaded set in (atlas, environment, props, music)
+    void setDoomArt(bool on);                   // OPTIONS > DOOM ART: placeholder art without touching the WAD choice
     void browseForWad(bool extras = false);
     void saveWadChoice(const std::string& path) const;
     void saveExtrasChoice(const std::string& path) const;
@@ -156,6 +158,7 @@ private:
     Assets assets_;
     VoxelModels voxels_;
     bool useVoxels_ = false;
+    bool doomArtOff_ = false;          // play on the placeholder art even though a WAD is known
     HighScores highScores_;
     Trophies trophies_;
     MachineInfo machine_;              // this save folder's install id and hardware facts

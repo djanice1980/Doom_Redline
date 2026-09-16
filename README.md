@@ -89,6 +89,10 @@ REDLINE never touches the network: there is no update check, no telemetry
 and no online score submission in this build (the plan for an opt-in
 leaderboard is in `docs/online-and-releases.md`).
 
+To see the game without any of it, OPTIONS > DOOM ART switches to the
+procedural placeholder set on the spot (and back), remembered per player;
+`--no-wad` does the same for one run without touching the WAD choice.
+
 If nothing is found, the title screen asks: **REDLINE NEEDS DOOM** offers a
 native file browser, a typed path, or playing on with placeholder art. The
 chosen WAD is checked, swapped in live (art, sounds, music) and remembered;
