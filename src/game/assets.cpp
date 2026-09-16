@@ -341,12 +341,18 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         e.deathSound = std::string("death") + std::to_string(t);
         e.attackSound = std::string("attack") + std::to_string(t);
     }
-    struct WDef { const char* name; const char* gun; const char* idle; const char* fire; float fps; const char* flash; const char* flashFrames; const char* sound; };
+    // Doom's plasma rifle fires on frame A with the PLSF flash (which includes the glowing
+    // barrel) drawn over it; PLSGB0 is the vent/cool-down frame shown once the trigger is
+    // released, with a very different origin, so it must never be the firing frame.
+    // The flash sprites are cut to sit on the frame Doom fires from (SHTG/PLSG A, MISG B,
+    // CHGG A/B), so each weapon fires on that frame and draws the flash only while it shows;
+    // the shotgun's pump frames B-D and the plasma vent frame B have other origins.
+    struct WDef { const char* name; const char* gun; const char* idle; const char* fire; float fps; const char* flash; const char* flashFrames; const char* sound; const char* cool; float flashFor; };
     const WDef wdefs[kWeaponArt] = {
-        {"SHOTGUN", "SHTG", "A", "BCDCB", 9.f, "SHTF", "AB", "shoot"},
-        {"CHAINGUN", "CHGG", "A", "AB", 16.f, "CHGF", "AB", "fire_chain"},
-        {"ROCKET LAUNCHER", "MISG", "A", "BA", 6.f, "MISF", "ABCD", "fire_rocket"},
-        {"PLASMA RIFLE", "PLSG", "A", "B", 12.f, "PLSF", "AB", "fire_plasma"},
+        {"SHOTGUN", "SHTG", "A", "ABCDCB", 9.f, "SHTF", "AB", "shoot", "", 0.11f},
+        {"CHAINGUN", "CHGG", "A", "AB", 16.f, "CHGF", "AB", "fire_chain", "", 0.12f},
+        {"ROCKET LAUNCHER", "MISG", "A", "BA", 6.f, "MISF", "ABCD", "fire_rocket", "", 0.16f},
+        {"PLASMA RIFLE", "PLSG", "A", "A", 12.f, "PLSF", "AB", "fire_plasma", "B", 0.17f},
     };
     for (int w = 0; w < kWeaponArt; ++w) {
         WeaponArt& a = weapons[w];
@@ -355,6 +361,9 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         ok &= addSprite(a.idle, wdefs[w].gun, wdefs[w].idle, 1.f);
         ok &= addSprite(a.fire, wdefs[w].gun, wdefs[w].fire, wdefs[w].fps);
         ok &= addSprite(a.flash, wdefs[w].flash, wdefs[w].flashFrames, 12.f);
+        a.cooldown = SpriteAnim{};
+        a.flashFor = wdefs[w].flashFor;
+        if (*wdefs[w].cool) addSprite(a.cooldown, wdefs[w].gun, wdefs[w].cool, 1.f);
     }
     const char* pickupSprites[kPickupArt] = {"STIM", "MEDI", "CLIP", "ROCK", "CELL", "MGUN", "LAUN", "PLAS"};
     for (int k = 0; k < kPickupArt; ++k) ok &= addSprite(pickups[k], pickupSprites[k], "A", 1.f);

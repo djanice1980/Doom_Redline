@@ -54,7 +54,8 @@ if(REDLINE_BUILD_GAME)
       shaders/quad.vert shaders/quad.frag
       shaders/shadow_cube.vert shaders/shadow_quad.vert shaders/shadow_quad.frag
       shaders/mesh.vert shaders/mesh.frag shaders/shadow_mesh.vert
-      shaders/cube_rt.frag shaders/mesh_rt.frag shaders/quad_rt.vert)
+      shaders/cube_rt.frag shaders/mesh_rt.frag shaders/quad_rt.vert
+      shaders/post.vert shaders/bright.frag shaders/blur.frag shaders/composite.frag)
   file(GLOB SHADER_INCLUDES ${CMAKE_SOURCE_DIR}/shaders/*.glsl)
   set(SHADER_HEADERS)
   foreach(src ${SHADER_SOURCES})

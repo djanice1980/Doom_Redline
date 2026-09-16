@@ -80,6 +80,9 @@ struct FrameParams {
     // 1 = ray-traced sun, 2 = ray-traced sun and every point light,
     // 3 = 2 plus ray-traced reflections on cubes flagged reflective (params.w bit 1).
     int rtShadows = 0;
+    // Post-processing: exposure multiplier and bloom strength (0 = no bloom passes).
+    float exposure = 1.f;
+    float bloom = 0.4f;
 };
 
 class Renderer {
@@ -109,12 +112,22 @@ public:
     bool screenshot(const std::string& path);
     VkExtent2D extent() const { return ctx_.extent(); }
     bool rayTracingAvailable() const { return rt_; }
+    // 4x (or 2x) multisampling of the world pass; rebuilds the pipelines. No-op when unsupported.
+    void setMsaa(bool on);
+    bool msaa() const { return msaaSamples_ != VK_SAMPLE_COUNT_1_BIT; }
+    bool msaaAvailable() const { return ctx_.maxMsaa() != VK_SAMPLE_COUNT_1_BIT; }
 
 private:
     struct Ubo;
     void createDescriptors();
     void createPipelines();
+    void destroyPipelines();
     void createGeometry();
+    // Offscreen targets (HDR colour, MSAA colour/depth, bloom chain) sized to the swapchain.
+    void createTargets();
+    void destroyTargets();
+    void createPostDescriptors();
+    void writePostDescriptors();
     void writeDescriptors();
     Texture createFlatTexture(uint8_t r, uint8_t g, uint8_t b);
     void ensureInstanceCapacity(uint32_t frame, size_t cubes, size_t quads);
@@ -131,6 +144,22 @@ private:
     VkPipeline shadowQuadPipe_ = VK_NULL_HANDLE;
     VkPipeline meshPipe_ = VK_NULL_HANDLE;
     VkPipeline shadowMeshPipe_ = VK_NULL_HANDLE;
+    // Post-processing: the world is drawn into a 16-bit HDR target (multisampled and
+    // resolved when MSAA is on), bloom is built from it, and the composite pass tone maps
+    // into the swapchain image, where the HUD quads are drawn last at full precision.
+    VkPipeline quadLdrPipe_ = VK_NULL_HANDLE;
+    VkPipeline brightPipe_ = VK_NULL_HANDLE;
+    VkPipeline blurPipe_ = VK_NULL_HANDLE;
+    VkPipeline compositePipe_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout postLayout_ = VK_NULL_HANDLE;
+    VkDescriptorPool postPool_ = VK_NULL_HANDLE;
+    VkPipelineLayout postPipeLayout_ = VK_NULL_HANDLE;
+    VkSampler postSampler_ = VK_NULL_HANDLE;
+    enum PostSet { kSetHdr, kSetB0, kSetB1, kSetB2, kSetB3, kSetB4, kSetB5, kSetComposite, kSetCount };
+    VkDescriptorSet postSets_[kSetCount]{};
+    struct Targets { VkExtent2D extent{}; Texture hdr, msaaColor, msaaDepth; Texture bloom[6]; } tg_;   // bloom: 0/1 half, 2/3 quarter, 4/5 eighth
+    VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
+    std::vector<QuadInstance> quadScratch_;
     // Ray tracing: one bottom-level structure per mesh (and one for the unit cube), a
     // top-level structure rebuilt every frame from the instance lists.
     struct Blas { VkAccelerationStructureKHR as = VK_NULL_HANDLE; Buffer buf; VkDeviceAddress addr = 0; };

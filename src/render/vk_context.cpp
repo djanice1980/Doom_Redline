@@ -134,6 +134,10 @@ void VkContext::pickDevice(bool preferIntegrated) {
         VkPhysicalDeviceFeatures f{};
         vkGetPhysicalDeviceFeatures(physical_, &f);
         bc_ = f.textureCompressionBC == VK_TRUE;
+        VkPhysicalDeviceProperties p{};
+        vkGetPhysicalDeviceProperties(physical_, &p);
+        const VkSampleCountFlags counts = p.limits.framebufferColorSampleCounts & p.limits.framebufferDepthSampleCounts;
+        maxMsaa_ = (counts & VK_SAMPLE_COUNT_4_BIT) ? VK_SAMPLE_COUNT_4_BIT : (counts & VK_SAMPLE_COUNT_2_BIT) ? VK_SAMPLE_COUNT_2_BIT : VK_SAMPLE_COUNT_1_BIT;
     }
 
     uint32_t en = 0;
@@ -465,7 +469,7 @@ void VkContext::destroyBuffer(Buffer& b) {
     b = {};
 }
 
-Texture VkContext::createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props, uint32_t mipLevels) {
+Texture VkContext::createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props, uint32_t mipLevels, VkSampleCountFlagBits samples) {
     Texture t;
     t.width = w;
     t.height = h;
@@ -477,7 +481,7 @@ Texture VkContext::createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImage
     ci.extent = {w, h, 1};
     ci.mipLevels = mipLevels;
     ci.arrayLayers = 1;
-    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.samples = samples;
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = usage;
     ci.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;

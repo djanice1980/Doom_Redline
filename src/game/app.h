@@ -58,6 +58,8 @@ struct Options {
     std::optional<std::filesystem::path> voxelDir;   // KVX pack directory (default: auto-detect)
     int voxels = -1;                   // -1 saved preference, 0 sprites, 1 voxel models
     int rtShadows = -1;                // -1 saved preference, 0 shadow map, 1 ray-traced sun, 2 all lights, 3 + reflections
+    int msaa = -1;                     // -1 saved preference, 0 off, 1 on
+    int bloom = -1;                    // -1 saved preference, 0 off, 1 on
 };
 
 class App {
@@ -213,6 +215,9 @@ private:
     // Display: 0 windowed, 1 borderless fullscreen, 2 exclusive fullscreen.
     int displayMode_ = 0;
     int rtShadows_ = 3;                // machine setting (display.txt): 0 map, 1 sun, 2 all lights, 3 + reflections; used when the GPU can
+    bool msaa_ = true;                 // machine settings (display.txt): multisampling and bloom
+    bool bloom_ = true;
+    bool hdrQuads_ = false;            // while set, screen sprites/panels go into the HDR world pass (weapon + flash)
     int resW_ = 1600, resH_ = 900;
     std::vector<std::pair<int, int>> resolutions_;
     // Level-up card and per-game stats for trophies.

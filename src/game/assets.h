@@ -39,6 +39,8 @@ constexpr int kPickupArt = 8;         // stim, medikit, bullets, rockets, cells,
 struct WeaponArt {
     std::string name;
     SpriteAnim idle, fire, flash;
+    SpriteAnim cooldown;      // shown briefly after the trigger is released (plasma rifle's vent frame); may be empty
+    float flashFor = 0.12f;   // seconds the muzzle flash is drawn after a shot (matches the frame it was drawn for)
     std::string fireSound;
     glm::vec4 tint{1.f};
 };

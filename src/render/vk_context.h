@@ -79,7 +79,9 @@ public:
     Buffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, bool map, bool deviceAddress = false);
     VkDeviceAddress bufferAddress(const Buffer& b) const;
     void destroyBuffer(Buffer& b);
-    Texture createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, uint32_t mipLevels = 1);
+    Texture createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, uint32_t mipLevels = 1, VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT);
+    // Highest MSAA count usable for colour + depth attachments (1 when unsupported).
+    VkSampleCountFlagBits maxMsaa() const { return maxMsaa_; }
     // Uploads every mip level (level 0 first, extents halving) of a texture created with that many levels.
     void uploadTextureLevels(Texture& t, const std::vector<std::vector<uint8_t>>& levels);
     bool bcTexturesSupported() const { return bc_; }
@@ -113,6 +115,7 @@ private:
     std::string gpuName_;
     bool rayQuery_ = false;
     bool bc_ = false;                 // textureCompressionBC (BC5/BC7 material maps)
+    VkSampleCountFlagBits maxMsaa_ = VK_SAMPLE_COUNT_1_BIT;
     RtFuncs rt_;
     VkDeviceSize scratchAlignment_ = 256;
 

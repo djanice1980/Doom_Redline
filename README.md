@@ -194,6 +194,17 @@ Surviving a fight brings up a level-up card: the new level, demons slain,
 blocks destroyed, fight time and damage taken. The collapse plays behind it
 and the next piece waits until the card is gone.
 
+## Post-processing: HDR, bloom, anti-aliasing
+
+The world is rendered to a 16-bit HDR target, so torches, muzzle flashes,
+plasma bolts, explosions and the glowing red rows carry light past white.
+A three-level bloom picks that up and a soft-knee tone curve rolls the
+highlights off instead of clipping them; everything below the knee keeps
+the same look as before, and the HUD is drawn afterwards at full precision.
+OPTIONS > BLOOM turns the bloom off; OPTIONS > ANTI-ALIASING switches 4x
+MSAA on the world pass (2x on GPUs without 4x). Both are machine settings
+in `display.txt`, overridable per run with `--bloom 0|1` and `--msaa 0|1`.
+
 ## Ray tracing: shadows and reflections
 
 On a GPU with Vulkan ray-query support (GeForce RTX, Radeon RX 6000 and
