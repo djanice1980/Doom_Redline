@@ -111,6 +111,7 @@ struct Enemy {
     float ammoDropCooldown = 0.f;
     float growT = 0.f;       // visual flash after growing
     bool grown = false;      // has absorbed blocks at least once
+    bool gibbed = false;     // brutal: blown apart (XDEATH frames / chunks instead of the death animation)
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 
@@ -130,6 +131,27 @@ struct Explosion {
     float duration = 0.45f;
     float radius = 1.5f;
     int hitType = -1;   // -1 = big blast sprite, else projectileHit[type]
+};
+
+// Brutal mode: blood drops, meat chunks and shell casings with simple physics.
+struct Gore {
+    glm::vec3 pos, vel;
+    float ttl = 3.f;
+    float size = 0.05f;
+    float spin = 0.f;
+    int kind = 0;            // 0 blood drop, 1 meat chunk, 2 shell casing
+    int bounces = 0;
+    bool resting = false;
+};
+
+// A flat sprite stuck to the floor or a wall: blood pools, wall splats, bullet holes.
+struct Decal {
+    glm::vec3 pos;
+    glm::vec3 normal{0.f, 1.f, 0.f};
+    float size = 0.3f;
+    float yaw = 0.f;
+    float age = 0.f;
+    int kind = 0;            // 0 blood pool, 1 blood splat, 2 bullet hole
 };
 
 struct Debris {
@@ -154,7 +176,7 @@ struct FpsInput {
 
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
-                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown } type;
+                      Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown, EnemyGibbed } type;
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
@@ -206,6 +228,11 @@ public:
     const std::vector<Projectile>& projectiles() const { return projectiles_; }
     const std::vector<Explosion>& explosions() const { return explosions_; }
     const std::vector<Debris>& debris() const { return debris_; }
+    const std::vector<Gore>& gore() const { return gore_; }
+    const std::vector<Decal>& decals() const { return decals_; }
+    // Brutal mode: blood sprays, gib deaths, casings, bullet holes and lasting blood decals.
+    void setBrutal(bool on) { brutal_ = on; }
+    bool brutal() const { return brutal_; }
     const std::vector<Pickup>& pickups() const { return pickups_; }
     std::vector<FpsEvent> drainEvents();
 
@@ -215,11 +242,15 @@ public:
     float rayBlockDistance(glm::vec3 o, glm::vec3 d, float maxT, const core::Game& game) const;
 
     void spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red);
+    void spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind);
+    void spawnGibs(const Enemy& e);
+    void addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind);
+    void updateGore(float dt);
 
 private:
     void fire(core::Game& game);
     void hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game);
-    void damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos);
+    void damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir = glm::vec3(0.f));
     void explodeEnemy(Enemy& e, core::Game& game);
     void dropLoot(const Enemy& e);
     void spawnPickup(PickupKind kind, glm::vec3 from, glm::vec3 home);
@@ -239,6 +270,9 @@ private:
     std::vector<Projectile> projectiles_;
     std::vector<Explosion> explosions_;
     std::vector<Debris> debris_;
+    std::vector<Gore> gore_;
+    std::vector<Decal> decals_;
+    bool brutal_ = true;
     std::vector<Pickup> pickups_;
     std::vector<FpsEvent> events_;
     glm::vec3 playerPos_{0.f, 0.f, 18.5f};

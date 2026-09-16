@@ -194,6 +194,20 @@ Surviving a fight brings up a level-up card: the new level, demons slain,
 blocks destroyed, fight time and damage taken. The collapse plays behind it
 and the next piece waits until the card is gone.
 
+## Brutal mode
+
+On by default (OPTIONS > BRUTAL, `--brutal 0|1`, saved with the profile
+settings): every hit sprays blood that pools on the floor and splats on the
+walls, overkill blows monsters apart (zombies and imps use Doom's own gib
+frames, the others leave chunks), the shotgun and chaingun eject casings,
+missed shots leave bullet holes, and taking damage throws blood on the
+screen. Everything comes from the player's own WAD (BLUD, POL5, PUFF, the
+XDEATH frames and the DSSLOP sound); the placeholder art has procedural
+stand-ins. Blood stays for about a minute. It is a native take on the
+Brutal Doom feel, not the mod itself: Brutal Doom is a GZDoom mod (DECORATE
+and ZScript) and its assets are not freely redistributable, so REDLINE does
+not load or bundle it.
+
 ## Post-processing: HDR, bloom, anti-aliasing
 
 The world is rendered to a 16-bit HDR target, so torches, muzzle flashes,

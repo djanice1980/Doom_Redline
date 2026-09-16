@@ -294,6 +294,104 @@ void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int coun
     }
 }
 
+// The arena as App::buildEnvironment lays it out: inner wall faces and the floor top.
+namespace {
+constexpr float kArenaX = 15.f, kArenaZMin = -2.f, kArenaZMax = 23.f;
+constexpr size_t kMaxGore = 900, kMaxDecals = 260;
+}  // namespace
+
+void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind) {
+    if (!brutal_) return;
+    if (gore_.size() + static_cast<size_t>(count) > kMaxGore) count = static_cast<int>(kMaxGore - gore_.size());
+    std::uniform_real_distribution<float> u(-1.f, 1.f);
+    for (int i = 0; i < count; ++i) {
+        Gore g;
+        g.kind = kind;
+        g.pos = pos + glm::vec3(u(rng_), u(rng_), u(rng_)) * 0.12f;
+        glm::vec3 scatter(u(rng_), u(rng_) * 0.7f, u(rng_));
+        g.vel = dir * speed * (0.4f + 0.6f * std::fabs(u(rng_))) + scatter * speed * 0.55f + glm::vec3(0.f, 1.6f, 0.f);
+        g.size = kind == 1 ? 0.05f + 0.07f * std::fabs(u(rng_)) : 0.03f + 0.03f * std::fabs(u(rng_));
+        g.ttl = kind == 1 ? 8.f : 3.f;
+        g.spin = u(rng_) * 7.f;
+        gore_.push_back(g);
+    }
+}
+
+void FpsMode::spawnGibs(const Enemy& e) {
+    const glm::vec3 chest = e.pos + glm::vec3(0.f, 0.55f * e.height, 0.f);
+    spawnBlood(chest, glm::vec3(0.f, 0.6f, 0.f), 12 + 5 * e.tier, 5.f, 1);
+    spawnBlood(chest, glm::vec3(0.f, 0.4f, 0.f), 30 + 8 * e.tier, 5.5f, 0);
+    addDecal(glm::vec3(e.pos.x, 0.f, e.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.9f + 0.25f * static_cast<float>(e.tier), 0);
+}
+
+void FpsMode::addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind) {
+    if (!brutal_) return;
+    if (decals_.size() >= kMaxDecals) decals_.erase(decals_.begin());
+    std::uniform_real_distribution<float> u(0.f, 6.2831853f);
+    Decal d;
+    d.pos = pos;
+    d.normal = normal;
+    d.size = size;
+    d.yaw = u(rng_);
+    d.kind = kind;
+    decals_.push_back(d);
+}
+
+void FpsMode::updateGore(float dt) {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    for (size_t i = 0; i < gore_.size();) {
+        Gore& g = gore_[i];
+        g.ttl -= dt;
+        bool gone = g.ttl <= 0.f;
+        if (!g.resting) {
+            g.vel.y -= (g.kind == 2 ? 10.f : 14.f) * dt;
+            g.pos += g.vel * dt;
+            const float half = g.size * 0.5f;
+            // Walls: blood sticks as a splat, chunks and casings bounce off.
+            for (int axis = 0; axis < 2 && !gone; ++axis) {
+                float& p = axis == 0 ? g.pos.x : g.pos.z;
+                float& v = axis == 0 ? g.vel.x : g.vel.z;
+                const float lo = (axis == 0 ? -kArenaX : kArenaZMin) + half, hi = (axis == 0 ? kArenaX : kArenaZMax) - half;
+                if (p < lo || p > hi) {
+                    const float side = p < lo ? -1.f : 1.f;
+                    if (g.kind == 0) {
+                        glm::vec3 n = axis == 0 ? glm::vec3(-side, 0.f, 0.f) : glm::vec3(0.f, 0.f, -side);
+                        glm::vec3 at = g.pos;
+                        (axis == 0 ? at.x : at.z) = (side < 0.f ? lo - half : hi + half) + n[axis == 0 ? 0 : 2] * 0.02f;
+                        if (at.y > 0.05f) addDecal(at, n, 0.2f + 0.2f * u(rng_), 1);
+                        gone = true;
+                    } else {
+                        p = std::clamp(p, lo, hi);
+                        v = -v * 0.4f;
+                    }
+                }
+            }
+            // Floor: blood becomes a pool, chunks and casings bounce then rest.
+            if (!gone && g.pos.y - half <= 0.f && g.vel.y < 0.f) {
+                if (g.kind == 0) {
+                    addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.14f + 0.22f * u(rng_), 0);
+                    gone = true;
+                } else {
+                    g.pos.y = half;
+                    ++g.bounces;
+                    if (g.kind == 1 && g.bounces == 1) addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.25f + 0.3f * u(rng_), 0);
+                    g.vel.y = -g.vel.y * (g.kind == 2 ? 0.3f : 0.35f);
+                    g.vel.x *= 0.55f;
+                    g.vel.z *= 0.55f;
+                    if (g.vel.y < 0.9f) { g.resting = true; g.vel = glm::vec3(0.f); g.spin = 0.f; }
+                }
+            }
+        }
+        if (gone) { gore_[i] = gore_.back(); gore_.pop_back(); }
+        else ++i;
+    }
+    for (size_t i = 0; i < decals_.size();) {
+        decals_[i].age += dt;
+        if (decals_[i].age > 60.f) decals_.erase(decals_.begin() + static_cast<std::ptrdiff_t>(i));
+        else ++i;
+    }
+}
+
 void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
     if (health_ <= 0.f || god_ || invulnT_ > 0.f) return;
     damageTaken_ += dmg;
@@ -310,17 +408,23 @@ void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
 }
 
 // ---------------------------------------------------------------------------
-void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos) {
+void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir) {
     if (!e.alive()) return;
     e.hp -= dmg;
     push(FpsEvent::Type::EnemyHit, hitPos, e.tier);
-    spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
+    if (brutal_) spawnBlood(hitPos, dir, 6 + static_cast<int>(dmg * 0.15f), 4.5f, 0);
+    else spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
     if (e.hp <= 0.f) {
         health_ = std::max(health_, std::min(100.f, health_ + 5.f));   // small heal per kill keeps long fights winnable
         e.state = Enemy::State::Dying;
         e.stateT = 0.f;
         e.animT = 0.f;
-        push(FpsEvent::Type::EnemyDied, e.pos, e.tier);
+        // Brutal: overkill (rockets, point-blank shotgun, a big hit past the remaining health)
+        // or plain luck blows the monster apart. The two bosses only explode.
+        std::uniform_real_distribution<float> lucky(0.f, 1.f);
+        e.gibbed = brutal_ && e.tier <= 4 && (dmg >= 60.f || -e.hp >= 0.4f * e.maxHp || lucky(rng_) < 0.3f);
+        if (e.gibbed) { spawnGibs(e); push(FpsEvent::Type::EnemyGibbed, e.pos, e.tier); }
+        push(FpsEvent::Type::EnemyDied, e.pos, e.tier, e.gibbed ? 1 : 0);
         dropLoot(e);
     } else if (e.state != Enemy::State::Emerging) {
         e.state = Enemy::State::Pain;
@@ -364,10 +468,24 @@ void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game) 
         if (t < bestT) { bestT = t; best = &e; }
     }
     if (!best) {
-        if (blockT < 60.f) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 2, false);
+        // Nothing hit: a bullet hole where the shot meets a wall or the floor (before any block).
+        float tWall = 60.f;
+        glm::vec3 nWall(0.f, 1.f, 0.f);
+        auto plane = [&](float p0, float dir, float target, glm::vec3 n) {
+            if (std::fabs(dir) < 1e-5f) return;
+            float t = (target - p0) / dir;
+            if (t > 0.f && t < tWall) { tWall = t; nWall = n; }
+        };
+        plane(o.x, d.x, -kArenaX, {1.f, 0.f, 0.f});
+        plane(o.x, d.x, kArenaX, {-1.f, 0.f, 0.f});
+        plane(o.z, d.z, kArenaZMin, {0.f, 0.f, 1.f});
+        plane(o.z, d.z, kArenaZMax, {0.f, 0.f, -1.f});
+        plane(o.y, d.y, 0.f, {0.f, 1.f, 0.f});
+        if (blockT < 60.f && blockT < tWall) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 2, false);
+        else if (tWall < 60.f) addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2);
         return;
     }
-    damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), o + d * bestT);
+    damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), o + d * bestT, d);
 }
 
 void FpsMode::fire(core::Game& game) {
@@ -380,6 +498,19 @@ void FpsMode::fire(core::Game& game) {
     push(FpsEvent::Type::Shoot, eye(), 0, weapon_);
     glm::vec3 o = eye();
     glm::vec3 d = forward();
+    if (brutal_ && (weapon_ == kShotgun || weapon_ == kChaingun) && gore_.size() < kMaxGore) {
+        // A shell casing ejected to the right of the gun.
+        std::uniform_real_distribution<float> u(-1.f, 1.f);
+        glm::vec3 right(-std::cos(yaw_), 0.f, std::sin(yaw_));
+        Gore g;
+        g.kind = 2;
+        g.pos = o + right * 0.3f + d * 0.4f - glm::vec3(0.f, 0.25f, 0.f);
+        g.vel = right * (2.2f + u(rng_) * 0.6f) + glm::vec3(0.f, 2.2f + u(rng_) * 0.5f, 0.f) + d * 0.4f;
+        g.size = weapon_ == kShotgun ? 0.05f : 0.035f;
+        g.ttl = 6.f;
+        g.spin = u(rng_) * 12.f;
+        gore_.push_back(g);
+    }
     if (w.spread > 0.f) {
         std::uniform_real_distribution<float> u(-1.f, 1.f);
         glm::vec3 right(-std::cos(yaw_), 0.f, std::sin(yaw_));
@@ -893,6 +1024,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         if (explosions_[i].t >= explosions_[i].duration) { explosions_[i] = explosions_.back(); explosions_.pop_back(); }
         else ++i;
     }
+    updateGore(dt);
     for (size_t i = 0; i < debris_.size();) {
         Debris& d = debris_[i];
         if (d.homing) {

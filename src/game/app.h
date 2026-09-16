@@ -59,6 +59,7 @@ struct Options {
     int voxels = -1;                   // -1 saved preference, 0 sprites, 1 voxel models
     int rtShadows = -1;                // -1 saved preference, 0 shadow map, 1 ray-traced sun, 2 all lights, 3 + reflections
     int msaa = -1;                     // -1 saved preference, 0 off, 1 on
+    int brutal = -1;                   // -1 saved preference, 0 off, 1 on (gore, gibs, casings)
     int bloom = -1;                    // -1 saved preference, 0 off, 1 on
 };
 
@@ -129,6 +130,8 @@ private:
     bool reloadAssets(const std::filesystem::path& wad, const std::string& extras = "");
     void applyAssets(Assets&& fresh);           // swap the loaded set in (atlas, environment, props, music)
     void setDoomArt(bool on);                   // OPTIONS > DOOM ART: placeholder art without touching the WAD choice
+    void decal(const std::string& key, glm::vec3 pos, glm::vec3 normal, float size, float yaw, glm::vec4 color);
+    void addGore();                             // brutal: blood, chunks, casings and decals from the fight
     void loadMaterials();                       // normal/roughness maps for the arena textures (WAD art only)
     int materialSlot(const std::string& lump) const;
     void browseForWad(bool extras = false);
@@ -173,6 +176,9 @@ private:
     VoxelModels voxels_;
     bool useVoxels_ = false;
     bool doomArtOff_ = false;          // play on the placeholder art even though a WAD is known
+    bool brutal_ = true;               // OPTIONS > BRUTAL: blood, gibs, casings, bullet holes, screen blood
+    struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
+    std::vector<ScreenBlood> screenBlood_;
     HighScores highScores_;
     Trophies trophies_;
     MachineInfo machine_;              // this save folder's install id and hardware facts

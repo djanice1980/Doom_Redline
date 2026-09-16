@@ -42,6 +42,7 @@ void usage() {
         "  --rt 0|1|2|3         Ray tracing: 0 off (shadow map), 1 sun shadows, 2 sun and all lights, 3 plus floor reflections\n"
         "  --msaa 0|1           Multisample anti-aliasing off/on (default: saved setting, on)\n"
         "  --bloom 0|1          Bloom off/on (default: saved setting, on)\n"
+        "  --brutal 0|1         Brutal mode (blood, gibs, casings, bullet holes) off/on (default: saved setting, on)\n"
         "  --music <set>        classic (OPL) | sc55 (original score recordings) | modern (Andrew Hulshult); remembered\n"
         "Environment: REDLINE_WAD, REDLINE_GPU, REDLINE_VALIDATION=1, REDLINE_NOVSYNC=1, REDLINE_SOUNDFONT=<file.sf2>\n");
 }
@@ -91,6 +92,7 @@ int main(int argc, char** argv) {
         else if (a == "--rt") o.rtShadows = std::clamp(std::atoi(next()), 0, 3);
         else if (a == "--msaa") o.msaa = std::atoi(next()) != 0;
         else if (a == "--bloom") o.bloom = std::atoi(next()) != 0;
+        else if (a == "--brutal") o.brutal = std::atoi(next()) != 0;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
         else { std::fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }

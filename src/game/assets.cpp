@@ -180,11 +180,30 @@ void Assets::loadProcedural(audio::Audio& audio) {
         anim(e.attack, "enemy_attack", 1, 4.f, [](int) { return proc::enemyFrame(1, 64); });
         anim(e.pain, "enemy_pain", 1, 4.f, [](int) { return proc::enemyFrame(2, 64); });
         anim(e.death, "enemy_death", 4, 8.f, [](int i) { return proc::enemyFrame(3 + i, 64); });
+        e.xdeath = SpriteAnim{};
         e.sightSound = "enemy_sight";
         e.painSound = "enemy_pain";
         e.deathSound = "enemy_die";
         e.attackSound = t == 0 ? "shoot" : "fireball";
     }
+    // Gore placeholders: soft blobs (red drops and pool, grey puff).
+    auto blob = [](int size, uint8_t r, uint8_t g, uint8_t b, float edge) {
+        Image im(size, size);
+        for (int y = 0; y < size; ++y)
+            for (int x = 0; x < size; ++x) {
+                float dx = (x + 0.5f) / size - 0.5f, dy = (y + 0.5f) / size - 0.5f;
+                float d = std::sqrt(dx * dx + dy * dy) * 2.f;
+                float wob = 0.85f + 0.15f * std::sin(std::atan2(dy, dx) * 5.f);
+                float a = std::clamp((wob - d) / edge, 0.f, 1.f);
+                uint8_t* p = &im.rgba[(static_cast<size_t>(y) * size + x) * 4];
+                p[0] = r; p[1] = g; p[2] = b; p[3] = static_cast<uint8_t>(a * 255.f);
+            }
+        return im;
+    };
+    anim(blood, "blood", 3, 10.f, [&](int i) { return blob(8 + 2 * i, 150, 10, 10, 0.5f); });
+    anim(puff, "puff", 4, 12.f, [&](int i) { return blob(10 + 2 * i, 120, 120, 120, 0.7f); });
+    if (!atlas_.has("blood_pool")) atlas_.add("blood_pool", blob(32, 120, 8, 8, 0.35f));
+    bloodPool = "blood_pool";
     const char* weaponNames[kWeaponArt] = {"SHOTGUN", "CHAINGUN", "ROCKET LAUNCHER", "PLASMA RIFLE"};
     const glm::vec4 weaponTints[kWeaponArt] = {{1.f, 1.f, 1.f, 1.f}, {0.8f, 0.8f, 0.9f, 1.f}, {0.6f, 0.9f, 0.6f, 1.f}, {0.6f, 0.7f, 1.f, 1.f}};
     const char* weaponSounds[kWeaponArt] = {"shoot", "fire_chain", "fire_rocket", "fire_plasma"};
@@ -252,6 +271,7 @@ void Assets::loadProcedural(audio::Audio& audio) {
     add("pickup_item", proc::sndClear());
     add("pickup_weapon", proc::sndLevelUp());
     add("bfg", proc::sndExplode());
+    add("gib", proc::sndHit());
 }
 
 // ---------------------------------------------------------------------------
@@ -314,15 +334,15 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     };
     bool ok = true;
     // Monster classes by red-region size. Frame letters follow the Doom state tables.
-    struct Def { const char* sprite; const char* walk; const char* attack; const char* pain; const char* death; float px; };
+    struct Def { const char* sprite; const char* walk; const char* attack; const char* pain; const char* death; float px; const char* xdeath; };
     const Def defs[kEnemyTiers] = {
-        {"POSS", "ABCD", "EF", "G", "HIJKL", 0.031f},      // zombieman: hitscan
-        {"TROO", "ABCD", "EFG", "H", "IJKL", 0.031f},      // imp: fireball
-        {"SARG", "ABCD", "EFG", "H", "IJKLMN", 0.031f},    // demon: melee
-        {"HEAD", "A", "BCD", "E", "FGHIJK", 0.034f},       // cacodemon: floats, fast fireball
-        {"BOSS", "ABCD", "EFG", "H", "IJKLMNO", 0.033f},   // baron: green fireball, tanky
-        {"CYBR", "ABCD", "EF", "G", "HIJKLMNOP", 0.030f},  // cyberdemon: rockets
-        {"SPID", "ABCDEF", "GH", "I", "JKLMNOPQRS", 0.030f}, // spider mastermind: chaingun
+        {"POSS", "ABCD", "EF", "G", "HIJKL", 0.031f, "NOPQRSTU"},      // zombieman: hitscan
+        {"TROO", "ABCD", "EFG", "H", "IJKL", 0.031f, "NOPQRSTU"},      // imp: fireball
+        {"SARG", "ABCD", "EFG", "H", "IJKLMN", 0.031f, ""},    // demon: melee
+        {"HEAD", "A", "BCD", "E", "FGHIJK", 0.034f, ""},       // cacodemon: floats, fast fireball
+        {"BOSS", "ABCD", "EFG", "H", "IJKLMNO", 0.033f, ""},   // baron: green fireball, tanky
+        {"CYBR", "ABCD", "EF", "G", "HIJKLMNOP", 0.030f, ""},  // cyberdemon: rockets
+        {"SPID", "ABCDEF", "GH", "I", "JKLMNOPQRS", 0.030f, ""}, // spider mastermind: chaingun
     };
     const char* sightSnd[kEnemyTiers] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT", "DSCYBSIT", "DSSPISIT"};
     const char* painSnd[kEnemyTiers] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN"};
@@ -336,6 +356,8 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         ok &= addSprite(e.attack, defs[t].sprite, defs[t].attack, 6.f);
         ok &= addSprite(e.pain, defs[t].sprite, defs[t].pain, 6.f);
         ok &= addSprite(e.death, defs[t].sprite, defs[t].death, 9.f);
+        e.xdeath = SpriteAnim{};
+        if (*defs[t].xdeath) addSprite(e.xdeath, defs[t].sprite, defs[t].xdeath, 10.f);
         e.sightSound = std::string("sight") + std::to_string(t);
         e.painSound = std::string("pain") + std::to_string(t);
         e.deathSound = std::string("death") + std::to_string(t);
@@ -368,6 +390,13 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     const char* pickupSprites[kPickupArt] = {"STIM", "MEDI", "CLIP", "ROCK", "CELL", "MGUN", "LAUN", "PLAS"};
     for (int k = 0; k < kPickupArt; ++k) ok &= addSprite(pickups[k], pickupSprites[k], "A", 1.f);
     ok &= addSprite(explosion, "MISL", "BCD", 12.f);
+    // Gore (brutal mode): blood drops, the pool of blood and flesh, bullet puffs. Missing lumps just lose the effect.
+    addSprite(blood, "BLUD", "ABC", 10.f);
+    addSprite(puff, "PUFF", "ABCD", 12.f);
+    {
+        SpriteAnim pool;
+        if (addSprite(pool, "POL5", "A", 1.f) && !pool.empty()) bloodPool = pool.frames[0];
+    }
     // Decor (optional: a missing lump only loses that prop).
     addSprite(torchRed, "TRED", "ABCD", 8.f);
     addSprite(torchBlue, "TBLU", "ABCD", 8.f);
@@ -500,6 +529,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSound("pickup_item", {"DSITEMUP"}, proc::sndClear());
     addSound("pickup_weapon", {"DSWPNUP"}, proc::sndLevelUp());
     addSound("bfg", {"DSBFG", "DSRXPLOD"}, proc::sndExplode());
+    addSound("gib", {"DSSLOP"}, proc::sndHit());
     for (int t = 0; t < kEnemyTiers; ++t) {
         addSound(enemies[t].sightSound, {sightSnd[t]}, proc::sndRedLine());
         addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());

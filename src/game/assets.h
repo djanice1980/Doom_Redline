@@ -26,6 +26,7 @@ struct SpriteAnim {
 struct EnemyArt {
     std::string name;
     SpriteAnim walk, attack, pain, death;
+    SpriteAnim xdeath;        // gib death frames (zombies and imps have them); empty otherwise
     float metresPerPixel = 0.031f;
     glm::vec4 tint{1.f};
     std::string sightSound, painSound, deathSound, attackSound;   // logical sound names
@@ -72,6 +73,9 @@ public:
     std::string wall = "wall";
     std::string floor = "floor";
     std::string ceiling = "ceiling";
+    // Brutal-mode gore: blood drops (BLUD), the pool-of-blood decoration (POL5) and bullet puffs (PUFF).
+    SpriteAnim blood, puff;
+    std::string bloodPool;
     // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
     std::string wallLump, floorLump, ceilingLump;
     std::string crosshair = "crosshair";

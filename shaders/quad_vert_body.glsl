@@ -5,7 +5,7 @@ layout(location = 0) in vec4 iPos;      // world xyz (mode 0) or screen xy in pi
 layout(location = 1) in vec4 iSize;     // x width, y height, z anchorX, w anchorY (0..1 inside the quad; (0.5,0) = bottom centre)
 layout(location = 2) in vec4 iUVRect;   // u0 v0 u1 v1
 layout(location = 3) in vec4 iColor;    // rgba tint
-layout(location = 4) in vec4 iParams;   // x mode (0 world billboard, 1 screen), y lit (0/1), z flip x (0/1), w flags
+layout(location = 4) in vec4 iParams;   // x mode (0 world billboard, 1 screen, 2 floor decal, 3 wall decal), y lit (0/1), z flip x (0/1), w flags
 
 layout(location = 0) out vec2 vUV;
 layout(location = 1) out vec4 vColor;
@@ -26,7 +26,26 @@ void main() {
     vMode = iParams.x;
     vLight = vec3(1.0);
 
-    if (iParams.x < 0.5) {
+    if (iParams.x > 1.5) {
+        // Flat decal: mode 2 lies on the floor (yaw in iPos.w), mode 3 hangs on a wall whose
+        // normal is (iSize.z, 0, iSize.w); both are centred on iPos.
+        vec2 ext = (c - 0.5) * iSize.xy;
+        vec3 n, right, up;
+        if (iParams.x < 2.5) {
+            float yaw = iPos.w;
+            n = vec3(0.0, 1.0, 0.0);
+            right = vec3(cos(yaw), 0.0, -sin(yaw));
+            up = vec3(sin(yaw), 0.0, cos(yaw));
+        } else {
+            n = normalize(vec3(iSize.z, 0.0, iSize.w));
+            right = vec3(n.z, 0.0, -n.x);
+            up = vec3(0.0, 1.0, 0.0);
+        }
+        vec3 world = iPos.xyz + right * ext.x + up * ext.y;
+        vWorldPos = world;
+        if (iParams.y > 0.5) vLight = shade(world, n, vec3(1.0), 0.9, 0.0);
+        gl_Position = u.viewProj * vec4(world, 1.0);
+    } else if (iParams.x < 0.5) {
         // World billboard: face the camera around the vertical axis only (Doom style).
         vec3 camRight = vec3(u.view[0][0], u.view[1][0], u.view[2][0]);
         vec3 right = normalize(vec3(camRight.x, 0.0, camRight.z));

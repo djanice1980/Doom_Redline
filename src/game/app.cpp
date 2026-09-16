@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 #include <stdexcept>
 
 #include <glm/gtc/constants.hpp>
@@ -50,6 +51,8 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (displayMode_ != 0) applyDisplay();
     if (opts_.rtShadows >= 0) rtShadows_ = opts_.rtShadows;
     if (opts_.msaa >= 0) msaa_ = opts_.msaa != 0;
+    if (opts_.brutal >= 0) brutal_ = opts_.brutal != 0;
+    fps_.setBrutal(brutal_);
     if (opts_.bloom >= 0) bloom_ = opts_.bloom != 0;
     ctx_ = std::make_unique<render::VkContext>(window_, opts_.preferIntegrated);
     renderer_ = std::make_unique<render::Renderer>(*ctx_);
@@ -529,6 +532,7 @@ void App::loadSettings() {
             else if (k == "pad_rumble") padRumble_ = v != "0";
             else if (k == "voxels") useVoxels_ = v != "0";
             else if (k == "doom_art") doomArtOff_ = v == "0";
+            else if (k == "brutal") brutal_ = v != "0";
         }
         std::fclose(f);
     }
@@ -759,6 +763,7 @@ void App::adjustOption(int dir) {
     case 13: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
     case 14: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
     case 15: bloom_ = !bloom_; saveDisplaySettings(); break;
+    case 16: brutal_ = !brutal_; fps_.setBrutal(brutal_); saveSettings(); break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -780,7 +785,7 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 17;   // 16 options + BACK
+        const int n = 18;   // 17 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_LEFT) { if (screenIndex_ < 14) adjustOption(-1); }
@@ -998,9 +1003,9 @@ void App::applyDisplay() {
 
 void App::saveSettings() const {
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
-        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\n",
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\n",
                      musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0,
-                     music_.volume(), padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1);
+                     music_.volume(), padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0);
         std::fclose(f);
     }
 }
@@ -1440,14 +1445,24 @@ void App::handleFpsEvents() {
             break;
         case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f, 80); break;
         case FpsEvent::Type::EnemyHit: play(art.painSound, 0.8f, 1.f, 120); break;
-        case FpsEvent::Type::EnemyDied: play(art.deathSound, 1.f); break;
+        case FpsEvent::Type::EnemyDied: if (!ev.a) play(art.deathSound, 1.f); break;   // a = 1: gibbed, the slop plays instead
+        case FpsEvent::Type::EnemyGibbed: play("gib", 1.f); shakeT_ = std::max(shakeT_, 0.08f); break;
         case FpsEvent::Type::EnemyAttack: play(art.attackSound, 0.7f); break;
         case FpsEvent::Type::Explosion:
             play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
-        case FpsEvent::Type::PlayerHit: play("pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200); break;
+        case FpsEvent::Type::PlayerHit:
+            play("pain", 1.f); shakeT_ = 0.25f; rumble(0.6f, 0.3f, 200);
+            if (brutal_ && !assets_.blood.empty()) {   // blood on the screen
+                static std::mt19937 rng_(1234u);
+                std::uniform_real_distribution<float> u(0.f, 1.f);
+                VkExtent2D ext = renderer_->extent();
+                for (int i = 0; i < 3; ++i)
+                    screenBlood_.push_back({u(rng_) * ext.width, u(rng_) * ext.height, 4.f + 5.f * u(rng_), 0.f, 1.4f + 0.8f * u(rng_), static_cast<int>(u(rng_) * 3.f) % 3});
+            }
+            break;
         case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f, 1.f, 80); break;
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
@@ -1509,6 +1524,11 @@ void App::update(float dt) {
     announcements_.erase(std::remove_if(announcements_.begin(), announcements_.end(), [](const Announcement& a) { return a.t > 2.f; }), announcements_.end());
     shakeT_ = std::max(0.f, shakeT_ - dt);
     muzzleLight_ = std::max(0.f, muzzleLight_ - dt * 8.f);
+    for (size_t i = 0; i < screenBlood_.size();) {
+        screenBlood_[i].t += dt;
+        if (screenBlood_[i].t >= screenBlood_[i].ttl) screenBlood_.erase(screenBlood_.begin() + static_cast<std::ptrdiff_t>(i));
+        else ++i;
+    }
     pollGamepad(dt);
     if (levelCardT_ < kLevelCardTime) levelCardT_ += dt;
 
@@ -2048,6 +2068,11 @@ void App::addFpsActors() {
         case Enemy::State::Dying: anim = &art.death; loop = false; t = e.stateT; break;
         case Enemy::State::Dead: anim = &art.death; loop = false; t = 100.f; break;
         }
+        // Gibbed: the XDEATH frames where Doom has them (zombies, imps), otherwise the chunks are the corpse.
+        if (e.gibbed && !e.alive()) {
+            if (art.xdeath.empty()) continue;
+            anim = &art.xdeath;
+        }
         // Corpses fade out; cacodemons (a big sprite lying in the way) go quickest.
         float corpseScale = 1.f;
         if (e.state == Enemy::State::Dead) {
@@ -2097,6 +2122,7 @@ void App::addFpsActors() {
         if (d.red) cube(d.pos, d.size, glm::vec4(d.color, 1.f), assets_.redBlock, glm::vec3(1.f, 0.1f, 0.05f), 0.6f * fade);
         else cube(d.pos, d.size, glm::vec4(d.color * fade, 1.f), assets_.block);
     }
+    addGore();
 }
 
 void App::addLights() {
@@ -2165,6 +2191,38 @@ void App::screenSprite(const std::string& key, float x, float y, float scale, gl
     q.color = color;
     q.params = glm::vec4(1.f, 0.f, flip ? 1.f : 0.f, hdrQuads_ ? 2.f : 0.f);
     screenQuads_.push_back(q);
+}
+
+void App::decal(const std::string& key, glm::vec3 pos, glm::vec3 normal, float size, float yaw, glm::vec4 color) {
+    const render::AtlasRegion& r = assets_.region(key);
+    render::QuadInstance q;
+    const bool floor = normal.y > 0.5f;
+    q.pos = glm::vec4(pos, yaw);
+    const float aspect = r.w > 0 ? static_cast<float>(r.h) / static_cast<float>(r.w) : 1.f;
+    q.size = floor ? glm::vec4(size, size * aspect, 0.5f, 0.5f) : glm::vec4(size, size * aspect, normal.x, normal.z);
+    q.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
+    q.color = color;
+    q.params = glm::vec4(floor ? 2.f : 3.f, 1.f, 0.f, 0.f);
+    worldQuads_.push_back(q);
+}
+
+void App::addGore() {
+    for (const Gore& g : fps_.gore()) {
+        const float fade = std::min(1.f, g.ttl / 0.5f);
+        const float age = std::max(0.f, (g.kind == 1 ? 8.f : g.kind == 2 ? 6.f : 3.f) - g.ttl);
+        if (g.kind == 0) cube(g.pos, g.size, glm::vec4(0.5f * fade, 0.02f, 0.02f, 1.f), assets_.white);
+        else if (g.kind == 1) cube(g.pos, g.size, glm::vec4(0.38f * fade, 0.04f * fade, 0.03f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
+        else cube(g.pos, g.size, glm::vec4(0.85f * fade, 0.68f * fade, 0.22f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
+    }
+    // Decals: oldest first so newer blood lands on top; a tiny lift per decal avoids z-fighting between them.
+    size_t i = 0;
+    for (const Decal& d : fps_.decals()) {
+        const float alpha = d.age > 52.f ? std::max(0.f, 1.f - (d.age - 52.f) / 8.f) : 1.f;
+        glm::vec3 pos = d.pos + d.normal * (0.006f + 0.0015f * static_cast<float>(i++ % 12));
+        if (d.kind == 0 && !assets_.bloodPool.empty()) decal(assets_.bloodPool, pos, d.normal, d.size, d.yaw, glm::vec4(0.65f, 0.55f, 0.55f, alpha));
+        else if (d.kind == 1 && !assets_.blood.empty()) decal(assets_.blood.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(0.75f, 0.2f, 0.2f, alpha));
+        else if (d.kind == 2 && !assets_.puff.empty()) decal(assets_.puff.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(0.25f, 0.25f, 0.25f, alpha));
+    }
 }
 
 void App::announce(const std::string& text, glm::vec4 color, float scale) {
@@ -2321,6 +2379,12 @@ void App::addHud() {
                 }
             }
             hdrQuads_ = false;
+            // Brutal: blood splashed on the screen slides down and fades.
+            for (const ScreenBlood& b : screenBlood_) {
+                const float k = b.t / b.ttl;
+                const std::string& key = assets_.blood.frames[static_cast<size_t>(b.frame) % assets_.blood.frames.size()];
+                screenSprite(key, b.x, b.y + k * k * 60.f * gs, b.scale * gs, glm::vec4(0.7f, 0.05f, 0.05f, 0.85f * (1.f - k)), 0.5f, 0.5f);
+            }
             screenSprite(assets_.crosshair, W * 0.5f, H * 0.5f, std::max(1.f, s * 0.7f), glm::vec4(1.f, 1.f, 1.f, 0.85f), 0.5f, 0.5f);
         }
         if (fps_.pickupFlash() > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 1.f, 0.6f, 0.18f * fps_.pickupFlash()));
@@ -2506,8 +2570,9 @@ void App::addHud() {
             row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.08f;
             row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 13); y += lh * 1.08f;
             row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 14); y += lh * 1.08f;
-            row(y, "BLOOM", bloom_ ? "ON" : "OFF", screenIndex_ == 15); y += lh * 1.3f;
-            hotText(W * 0.5f, y, screenIndex_ == 16 ? "> BACK <" : "BACK", s, screenIndex_ == 16 ? yellow : dim, 1, kHotBack, 0);
+            row(y, "BLOOM", bloom_ ? "ON" : "OFF", screenIndex_ == 15); y += lh * 1.08f;
+            row(y, "BRUTAL", brutal_ ? "ON  (BLOOD, GIBS, CASINGS)" : "OFF", screenIndex_ == 16); y += lh * 1.3f;
+            hotText(W * 0.5f, y, screenIndex_ == 17 ? "> BACK <" : "BACK", s, screenIndex_ == 17 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {

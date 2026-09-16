@@ -27,13 +27,13 @@ Effort is a rough estimate. Tick items off here as they land, with the commit.
 
 ## Motion and feedback
 
-- [ ] **Particles** (1 day). Sparks on a line clear, embers from torches, blood
+- [~] **Particles** (blood, chunks and casings done 2026-09-16 as Brutal mode; sparks, embers, dust still open). Sparks on a line clear, embers from torches, blood
       on hits, dust when the BFG drops the stack, shell casings. Reuses the
       billboard path.
 - [ ] **Line-clear and landing effects** (half a day). Flash and ring shockwave
       on a clear, dust puff on landing, a soft light following the falling piece.
-- [ ] **Decals** (1 day). Bullet holes on walls and blood on the floor that stay.
-- [ ] **Weapon feel** (half a day). Bob and sway while walking, recoil on the
+- [x] **Decals** (done 2026-09-16: blood pools, wall splats, bullet holes; Brutal mode). Bullet holes on walls and blood on the floor that stay.
+- [~] **Weapon feel** (screen blood on damage done; bob/sway/recoil still open). Bob and sway while walking, recoil on the
       shotgun, Doom-style red screen tint on damage.
 - [ ] **Glossy blocks and frame** (an hour). Extend the reflective flag to the
       board frame and the blocks.

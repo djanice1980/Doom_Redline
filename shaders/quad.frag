@@ -12,8 +12,9 @@ layout(location = 0) out vec4 outColor;
 void main() {
     vec4 tex = texture(atlas, vUV);
     float a = tex.a * vColor.a;
-    if (vMode < 0.5 && tex.a < 0.5) discard;   // hard-edged Doom sprites
+    bool world = vMode < 0.5 || vMode > 1.5;
+    if (world && tex.a < 0.5) discard;   // hard-edged Doom sprites and decals
     vec3 col = tex.rgb * vColor.rgb * vLight;
-    if (vMode < 0.5) col = applyFog(col, vWorldPos);
+    if (world) col = applyFog(col, vWorldPos);
     outColor = vec4(col, a);
 }

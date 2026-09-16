@@ -15,6 +15,8 @@ void main() {
     if (iParams.z > 0.5) uvc.x = 1.0 - uvc.x;
     vUV = vec2(mix(iUVRect.x, iUVRect.z, uvc.x), mix(iUVRect.w, iUVRect.y, uvc.y));
     vAlpha = iColor.a;
+    // Decals (modes 2/3) lie on surfaces and cast nothing: throw them out of the clip volume.
+    if (iParams.x > 1.5) { gl_Position = vec4(4.0, 4.0, 4.0, 1.0); return; }
     // Same camera-facing card as the main pass so the shadow matches what is drawn.
     vec3 camRight = vec3(u.view[0][0], u.view[1][0], u.view[2][0]);
     vec3 right = normalize(vec3(camRight.x, 0.0, camRight.z));
