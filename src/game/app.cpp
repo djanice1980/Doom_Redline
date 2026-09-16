@@ -1384,6 +1384,7 @@ void App::handleGameEvents() {
         case core::EventType::PieceRotated: play("rotate", 0.6f, 1.f, 80); break;
         case core::EventType::PieceLocked:
             play("lock", 0.8f);
+            if (std::getenv("REDLINE_LOG_FX")) std::fprintf(stderr, "[fx] piece locked: %zu remembered cells, smoke frames %zu\n", lastPieceCells_.size(), assets_.brSmoke.frames.size());
             // Dust where the piece lands: a puff under each cell that has nothing of the piece below it.
             if (!assets_.brSmoke.empty())
                 for (const auto& [cx, cy] : lastPieceCells_) {
@@ -1392,7 +1393,10 @@ void App::handleGameEvents() {
                     if (lowest && cy >= 0) bursts_.push_back({boardPos(static_cast<float>(cx), static_cast<float>(cy)) + glm::vec3(0.f, -0.45f, 0.7f), 0.f, 0.55f, 0.009f, &assets_.brSmoke, glm::vec4(0.9f, 0.85f, 0.8f, 0.9f)});
                 }
             break;
-        case core::EventType::HardDrop: shakeT_ = 0.15f; break;
+        case core::EventType::HardDrop:
+            shakeT_ = 0.15f;
+            for (auto& cell : lastPieceCells_) cell.second += ev.a;   // the drop and the lock land in one tick: move the remembered cells down
+            break;
         case core::EventType::LinesCleared: {
             play("clear", 0.9f, ev.a >= 4 ? 1.3f : 1.f);
             // Flash, a shockwave ring per row, dust along it and a few sparks.
@@ -2170,6 +2174,11 @@ void App::billboard(const std::string& key, glm::vec3 feet, float metresPerPixel
     worldQuads_.push_back(q);
 }
 
+void App::softBillboard(const std::string& key, glm::vec3 pos, float metresPerPixel, glm::vec4 color) {
+    billboard(key, pos, metresPerPixel, color, false, false);
+    worldQuads_.back().params.w += 4.f;   // soft alpha (see quad.frag), skipped by the shadow pass
+}
+
 void App::actor(const std::string& key, glm::vec3 feet, float metresPerPixel, glm::vec4 color, bool lit, bool flip, float yaw, glm::vec3 emissive, float emissiveStrength) {
     if (useVoxels_) {
         if (const VoxelModel* m = voxels_.get(key)) {
@@ -2435,13 +2444,14 @@ void App::addGore() {
 }
 
 void App::addBursts() {
+    if (std::getenv("REDLINE_LOG_FX") && !bursts_.empty()) std::fprintf(stderr, "[fx] frame %d: %zu bursts, first at %.1f,%.1f,%.1f t=%.2f\n", frameCount_, bursts_.size(), bursts_[0].pos.x, bursts_[0].pos.y, bursts_[0].pos.z, bursts_[0].t);
     // One-shot sprite bursts: blood clouds at hits, smoke at bullet holes and blasts.
     for (const Burst& b : bursts_) {
         const float k = b.t / b.ttl;
         const int n = static_cast<int>(b.anim->frames.size());
         const int i = std::clamp(static_cast<int>(k * static_cast<float>(n)), 0, n - 1);
         const float fade = k > 0.7f ? (1.f - k) / 0.3f : 1.f;
-        billboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(glm::vec3(b.tint) * fade, b.tint.a * fade), false, false);
+        softBillboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(glm::vec3(b.tint) * fade, b.tint.a * fade));
     }
     // Embers: tiny glowing cubes; rings: an expanding, fading shockwave in the board plane.
     for (const Ember& e : embers_) {

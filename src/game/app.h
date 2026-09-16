@@ -134,6 +134,7 @@ private:
     void decal(const std::string& key, glm::vec3 pos, glm::vec3 normal, float size, float yaw, glm::vec4 color);
     void addGore();                             // brutal: blood, chunks, casings and decals from the fight
     void addBursts();                           // one-shot sprite effects (blood clouds, smoke, sparks)
+    void softBillboard(const std::string& key, glm::vec3 pos, float metresPerPixel, glm::vec4 color);   // no alpha cutoff, no shadow
     void drawDecal(const Decal& d, size_t index);
     void loadMaterials();                       // normal/roughness maps for the arena textures (WAD art only)
     int materialSlot(const std::string& lump) const;

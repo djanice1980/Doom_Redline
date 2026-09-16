@@ -41,6 +41,26 @@ float rtVisibility(vec3 origin, vec3 dir, float tmax) {
 }
 #endif
 
+#ifdef RT_SHADOWS
+// Ray-traced ambient occlusion: three short rays over the hemisphere, rotated by a position
+// hash so the pattern breaks up (three is what the Radeon 8060S affords). 1 = open, 0.3 = boxed in.
+float rtAmbientOcclusion(vec3 P, vec3 N) {
+    const float radius = 0.7;
+    vec3 T = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0.0, 1.0, 0.0)) : cross(N, vec3(1.0, 0.0, 0.0)));
+    vec3 B = cross(N, T);
+    float noise = fract(sin(dot(P.xz * 37.1 + P.y * 11.7, vec2(12.9898, 78.233))) * 43758.5453);   // per-position hash (works in every stage)
+    float occluded = 0.0;
+    for (int i = 0; i < 3; ++i) {
+        float a = (float(i) + noise) * 2.399963;          // golden angle spiral
+        float r = sqrt((float(i) + 0.5 + noise) / 3.0);   // cosine-weighted: denser near the normal
+        float z = sqrt(max(0.0, 1.0 - r * r));
+        vec3 dir = T * (r * cos(a)) + B * (r * sin(a)) + N * z;
+        occluded += 1.0 - rtVisibility(P + N * 0.03, dir, radius);
+    }
+    return 1.0 - 0.7 * occluded / 3.0;
+}
+#endif
+
 // 1 = lit by the sun, 0 = fully shadowed. 3x3 percentage-closer filter.
 float sunShadow(vec3 P, vec3 N) {
     if (u.shadow.z <= 0.0) return 1.0;
@@ -60,7 +80,11 @@ float sunShadow(vec3 P, vec3 N) {
 // Lambert + Blinn-Phong with a sun and up to MAX_LIGHTS point lights.
 vec3 shade(vec3 P, vec3 N, vec3 albedo, float roughness, float metallic) {
     vec3 V = normalize(u.cameraPos.xyz - P);
-    vec3 diffuse = u.ambient.rgb * albedo;
+    float ao = 1.0;
+#ifdef RT_SHADOWS
+    if (u.counts.y > 2) ao = rtAmbientOcclusion(P, N);   // contact shadows in the full (reflections) mode
+#endif
+    vec3 diffuse = u.ambient.rgb * albedo * ao;
     vec3 spec = vec3(0.0);
     float shininess = mix(96.0, 4.0, roughness);
     vec3 specColor = mix(vec3(0.04), albedo, metallic);
