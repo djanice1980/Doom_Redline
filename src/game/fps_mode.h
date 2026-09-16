@@ -141,6 +141,7 @@ struct Gore {
     float spin = 0.f;
     int kind = 0;            // 0 blood drop, 1 meat chunk, 2 shell casing
     int variant = 0;         // random: which chunk model/sprite; casings: bit 0 = shotgun shell
+    int color = 0;           // blood colour: 0 red, 1 green (barons), 2 blue (cacodemons)
     int bounces = 0;
     bool resting = false;
 };
@@ -153,7 +154,11 @@ struct Decal {
     float yaw = 0.f;
     float age = 0.f;
     int kind = 0;            // 0 blood pool, 1 blood splat, 2 bullet hole
+    int color = 0;           // as Gore::color
 };
+
+// Doom's monsters bleed red except cacodemons (blue) and the baron family (green).
+inline int bloodColorForTier(int tier) { return tier == 3 ? 2 : tier == 4 ? 1 : 0; }
 
 struct Debris {
     glm::vec3 pos, vel;
@@ -244,9 +249,9 @@ public:
     float rayBlockDistance(glm::vec3 o, glm::vec3 d, float maxT, const core::Game& game) const;
 
     void spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red);
-    void spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind);
+    void spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind, int color = 0);
     void spawnGibs(const Enemy& e);
-    void addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind);
+    void addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind, int color = 0);
     void updateGore(float dt);
 
 private:

@@ -300,7 +300,7 @@ constexpr float kArenaX = 15.f, kArenaZMin = -2.f, kArenaZMax = 23.f;
 constexpr size_t kMaxGore = 900, kMaxDecals = 260;
 }  // namespace
 
-void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind) {
+void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind, int color) {
     if (!brutal_) return;
     if (gore_.size() + static_cast<size_t>(count) > kMaxGore) count = static_cast<int>(kMaxGore - gore_.size());
     std::uniform_real_distribution<float> u(-1.f, 1.f);
@@ -314,18 +314,20 @@ void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, i
         g.ttl = kind == 1 ? 8.f : 3.f;
         g.spin = u(rng_) * 7.f;
         g.variant = static_cast<int>((u(rng_) + 1.f) * 127.5f) & 0xFF;
+        g.color = color;
         gore_.push_back(g);
     }
 }
 
 void FpsMode::spawnGibs(const Enemy& e) {
     const glm::vec3 chest = e.pos + glm::vec3(0.f, 0.55f * e.height, 0.f);
-    spawnBlood(chest, glm::vec3(0.f, 0.6f, 0.f), 12 + 5 * e.tier, 5.f, 1);
-    spawnBlood(chest, glm::vec3(0.f, 0.4f, 0.f), 30 + 8 * e.tier, 5.5f, 0);
-    addDecal(glm::vec3(e.pos.x, 0.f, e.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.9f + 0.25f * static_cast<float>(e.tier), 0);
+    const int color = bloodColorForTier(e.tier);
+    spawnBlood(chest, glm::vec3(0.f, 0.6f, 0.f), 12 + 5 * e.tier, 5.f, 1, color);
+    spawnBlood(chest, glm::vec3(0.f, 0.4f, 0.f), 30 + 8 * e.tier, 5.5f, 0, color);
+    addDecal(glm::vec3(e.pos.x, 0.f, e.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.9f + 0.25f * static_cast<float>(e.tier), 0, color);
 }
 
-void FpsMode::addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind) {
+void FpsMode::addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind, int color) {
     if (!brutal_) return;
     if (decals_.size() >= kMaxDecals) decals_.erase(decals_.begin());
     std::uniform_real_distribution<float> u(0.f, 6.2831853f);
@@ -335,6 +337,7 @@ void FpsMode::addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind) {
     d.size = size;
     d.yaw = u(rng_);
     d.kind = kind;
+    d.color = color;
     decals_.push_back(d);
 }
 
@@ -359,7 +362,7 @@ void FpsMode::updateGore(float dt) {
                         glm::vec3 n = axis == 0 ? glm::vec3(-side, 0.f, 0.f) : glm::vec3(0.f, 0.f, -side);
                         glm::vec3 at = g.pos;
                         (axis == 0 ? at.x : at.z) = (side < 0.f ? lo - half : hi + half) + n[axis == 0 ? 0 : 2] * 0.02f;
-                        if (at.y > 0.05f) addDecal(at, n, 0.2f + 0.2f * u(rng_), 1);
+                        if (at.y > 0.05f) addDecal(at, n, 0.2f + 0.2f * u(rng_), 1, g.color);
                         gone = true;
                     } else {
                         p = std::clamp(p, lo, hi);
@@ -370,13 +373,13 @@ void FpsMode::updateGore(float dt) {
             // Floor: blood becomes a pool, chunks and casings bounce then rest.
             if (!gone && g.pos.y - half <= 0.f && g.vel.y < 0.f) {
                 if (g.kind == 0) {
-                    addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.14f + 0.22f * u(rng_), 0);
+                    addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.14f + 0.22f * u(rng_), 0, g.color);
                     gone = true;
                 } else {
                     g.pos.y = half;
                     ++g.bounces;
                     if (g.kind == 2 && g.bounces == 1) push(FpsEvent::Type::CasingBounce, g.pos, 0, g.variant & 1);
-                    if (g.kind == 1 && g.bounces == 1) addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.25f + 0.3f * u(rng_), 0);
+                    if (g.kind == 1 && g.bounces == 1) addDecal(glm::vec3(g.pos.x, 0.f, g.pos.z), glm::vec3(0.f, 1.f, 0.f), 0.25f + 0.3f * u(rng_), 0, g.color);
                     g.vel.y = -g.vel.y * (g.kind == 2 ? 0.3f : 0.35f);
                     g.vel.x *= 0.55f;
                     g.vel.z *= 0.55f;
@@ -414,7 +417,7 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir) 
     if (!e.alive()) return;
     e.hp -= dmg;
     push(FpsEvent::Type::EnemyHit, hitPos, e.tier);
-    if (brutal_) spawnBlood(hitPos, dir, 6 + static_cast<int>(dmg * 0.15f), 4.5f, 0);
+    if (brutal_) spawnBlood(hitPos, dir, 6 + static_cast<int>(dmg * 0.15f), 4.5f, 0, bloodColorForTier(e.tier));
     else spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
     if (e.hp <= 0.f) {
         health_ = std::max(health_, std::min(100.f, health_ + 5.f));   // small heal per kill keeps long fights winnable
@@ -484,7 +487,7 @@ void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game) 
         plane(o.z, d.z, kArenaZMax, {0.f, 0.f, -1.f});
         plane(o.y, d.y, 0.f, {0.f, 1.f, 0.f});
         if (blockT < 60.f && blockT < tWall) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 2, false);
-        else if (tWall < 60.f) { addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2); if (brutal_) push(FpsEvent::Type::BulletHole, o + d * tWall + nWall * 0.12f); }
+        else if (tWall < 60.f) { addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2); if (brutal_) push(FpsEvent::Type::BulletHole, o + d * tWall + nWall * 0.12f, 0, nWall.y > 0.5f ? 0 : 1); }
         return;
     }
     damageEnemy(*best, damage * (bestT < 2.5f ? 1.4f : 1.f), o + d * bestT, d);

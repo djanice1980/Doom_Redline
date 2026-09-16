@@ -16,10 +16,16 @@ sprites/  (from the Brutal Doom Community Expansion, GPLv3)
     BLHT  blood cloud at the point of impact       (SPRITES/GORE_GENERIC/BLOOD)
     XDB1  small meat chunks                        (SPRITES/GORE_GENERIC/BLOOD)
     XME1  larger gibs                              (SPRITES/GORE_GENERIC/BLOOD)
+    BSP5, BLOG, BLHG, XDB5, XME5  the same in green (SPRITES/GORE_GENERIC/GREENBLOOD)
+    BSP3, BLOB, BLHB, XDB3, XME3  the same in blue  (SPRITES/GORE_GENERIC/BLUEBLOOD)
     PUF2  smoke puff                               (SPRITES/SMOKE)
     C4S1  bullet casing                            (SPRITES/WEAPONS/CASINGS)
     C4S2  shotgun shell                            (SPRITES/WEAPONS/CASINGS)
     EXP4  rocket / BFG fireball, 25 frames         (SPRITES/EXPLOSIONS)
+    PLX6  plasma bolt burst, 25 frames             (SPRITES/EXPLOSIONS)
+    SPKN  sparks, 26 frames                        (SPRITES/PARTICLES)
+    LENR, LENY, LENB, LENG, LENW  soft light discs for the torches and lamps (SPRITES/FLARES)
+    FLAR  muzzle flare                             (SPRITES/FLARES)
     The expansion is maintained by BLOODWOLF333 and the Brutal Doom community
     on top of Brutal Doom by Sergeant_Mark_IV; its DetailedCredits.txt lists the
     artists of the individual resources where known. The repository is
@@ -31,6 +37,9 @@ sounds/  (from the Brutal Doom Community Expansion, GPLv3, same source)
     DSSHELL1-3  shotgun shell hitting the floor    (SOUNDS/COMBAT/CASING)
     DSCASIN1-3  bullet casing hitting the floor    (SOUNDS/COMBAT/CASING)
     LQDRIP1-3   blood drips                        (SOUNDS/GORE)
+    SPARKS1-4   sparks                             (SOUNDS/WORLD)
+    RICOCHE2/3/5  ricochets                        (SOUNDS/COMBAT)
+    BHITDIR1-3  bullets hitting the floor          (SOUNDS/COMBAT)
 
 voxels/  (from the Brutal Voxel Cyber Horror Monster Mix, MIT)
     https://github.com/RENEGADE-ANDROiD/Brutal_Voxel_Cyber_Horror_Monster_Mix

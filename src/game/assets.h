@@ -79,8 +79,13 @@ public:
     // The bundled community pack (assets/brutal, see CREDITS.txt there): richer gore. Empty anims when absent.
     std::optional<std::filesystem::path> brutalPackDir;   // set before load(); found with findBrutalPack()
     bool brutalPack = false;
-    SpriteAnim brChunk, brChunkBig, brPool, brSplat, brSpray, brSmoke, brCasingBullet, brCasingShell, brBlast;
+    SpriteAnim brChunk[3], brChunkBig[3], brPool[3], brSplat[3], brSpray[3];   // indexed by blood colour: red, green, blue
+    SpriteAnim brSmoke, brCasingBullet, brCasingShell, brBlast;
+    SpriteAnim brSparks, brPlasmaHit;                 // sparks off metal and blocks; plasma bolt burst
+    SpriteAnim brFlare[5];                            // soft light discs: red, yellow, blue, green, white
+    SpriteAnim brMuzzleFlare;
     int brGibSounds = 0, brShellSounds = 0, brCasingSounds = 0, brDripSounds = 0;   // "gibdeathN", "shellN", "casingN", "dripN" (1-based)
+    int brSparkSounds = 0, brRicochetSounds = 0, brDirtSounds = 0;                   // "sparksN", "ricochetN", "bhitN"
     static std::optional<std::filesystem::path> findBrutalPack(const std::string& baseDir);
     // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
     std::string wallLump, floorLump, ceilingLump;

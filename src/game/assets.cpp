@@ -651,8 +651,10 @@ bool decodeOgg(const fs::path& p, int& rate, std::vector<float>& out) {
 
 void Assets::loadBrutalPack(audio::Audio& audio) {
     brutalPack = false;
-    for (SpriteAnim* a : {&brChunk, &brChunkBig, &brPool, &brSplat, &brSpray, &brSmoke, &brCasingBullet, &brCasingShell, &brBlast}) *a = SpriteAnim{};
-    brGibSounds = brShellSounds = brCasingSounds = brDripSounds = 0;
+    for (int c = 0; c < 3; ++c) for (SpriteAnim* a : {&brChunk[c], &brChunkBig[c], &brPool[c], &brSplat[c], &brSpray[c]}) *a = SpriteAnim{};
+    for (SpriteAnim* a : {&brSmoke, &brCasingBullet, &brCasingShell, &brBlast, &brSparks, &brPlasmaHit, &brMuzzleFlare}) *a = SpriteAnim{};
+    for (SpriteAnim& a : brFlare) a = SpriteAnim{};
+    brGibSounds = brShellSounds = brCasingSounds = brDripSounds = brSparkSounds = brRicochetSounds = brDirtSounds = 0;
     if (!brutalPackDir) return;
     const fs::path dir = *brutalPackDir;
     int sprites = 0, sounds = 0;
@@ -700,12 +702,25 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
             a.mirrored.push_back(false);
         }
     };
-    pngAnim(brChunk, "XDB1", "ABCDEFGHJKOP", 1.f);       // small meat chunks (one frame per chunk)
+    // Red, green (barons) and blue (cacodemons) blood: the same five effects per colour.
+    const char* chunkSets[3] = {"XDB1", "XDB5", "XDB3"};
+    const char* chunkBigSets[3] = {"XME1", "XME5", "XME3"};
+    const char* poolSets[3] = {"BLOR", "BLOG", "BLOB"};
+    const char* splatSets[3] = {"BSP1", "BSP5", "BSP3"};
+    const char* spraySets[3] = {"BLHT", "BLHG", "BLHB"};
+    for (int c = 0; c < 3; ++c) {
+        pngAnim(brChunk[c], chunkSets[c], "ABCDEFGHJKOP", 1.f);       // small meat chunks (one frame per chunk)
+        pngAnim(brChunkBig[c], chunkBigSets[c], "ABCD", 1.f);         // bigger gibs
+        pngAnim(brPool[c], poolSets[c], "ABCDEFGHIJK", 14.f);         // pool spreading on the floor
+        pngAnim(brSplat[c], splatSets[c], "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12.f);   // wall splat: hits, spreads, dries dark
+        pngAnim(brSpray[c], spraySets[c], "ABCDEFGHIJ", 24.f);        // blood cloud at the hit point
+    }
     pngAnim(brBlast, "EXP4", "ABCDEFGHIJKLMNOPQRSTUVWXY", 40.f, 1);   // fireball at half size (128px)
-    pngAnim(brChunkBig, "XME1", "ABCD", 1.f);            // bigger gibs
-    pngAnim(brPool, "BLOR", "ABCDEFGHIJK", 14.f);        // blood pool spreading on the floor
-    pngAnim(brSplat, "BSP1", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 12.f);   // wall splat: hits, spreads, dries dark
-    pngAnim(brSpray, "BLHT", "ABCDEFGHIJ", 24.f);        // blood cloud at the hit point
+    pngAnim(brSparks, "SPKN", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 40.f, 1); // sparks at half size
+    pngAnim(brPlasmaHit, "PLX6", "ABCDEFGHIJKLMNOPQRSTUVWXY", 50.f);  // blue plasma burst (128px)
+    const char* flareSets[5] = {"LENR", "LENY", "LENB", "LENG", "LENW"};
+    for (int c = 0; c < 5; ++c) pngAnim(brFlare[c], flareSets[c], "A", 1.f, 2);   // 256 -> 64px soft discs
+    pngAnim(brMuzzleFlare, "FLAR", "B", 1.f);
     pngAnim(brSmoke, "PUF2", "ABCDEFGHIJKL", 18.f);      // smoke puff
     pngAnim(brCasingBullet, "C4S1", "ABCDEFGHIJKLM", 20.f);   // A-H tumbling, I-M lying
     pngAnim(brCasingShell, "C4S2", "ABCDEFGHIJKLMN", 20.f);
@@ -728,6 +743,12 @@ void Assets::loadBrutalPack(audio::Audio& audio) {
     for (int i = 1; i <= 3; ++i) if (sound("shell" + std::to_string(i), "DSSHELL" + std::to_string(i) + ".wav")) brShellSounds = i;
     for (int i = 1; i <= 3; ++i) if (sound("casing" + std::to_string(i), "DSCASIN" + std::to_string(i) + ".ogg")) brCasingSounds = i;
     for (int i = 1; i <= 3; ++i) if (sound("drip" + std::to_string(i), "LQDRIP" + std::to_string(i) + ".ogg")) brDripSounds = i;
+    for (int i = 1; i <= 4; ++i) if (sound("sparks" + std::to_string(i), "SPARKS" + std::to_string(i) + ".ogg")) brSparkSounds = i;
+    {
+        const char* rico[3] = {"RICOCHE2.wav", "RICOCHE3.wav", "RICOCHE5.wav"};
+        for (int i = 0; i < 3; ++i) if (sound("ricochet" + std::to_string(i + 1), rico[i])) brRicochetSounds = i + 1;
+    }
+    for (int i = 1; i <= 3; ++i) if (sound("bhit" + std::to_string(i), "BHITDIR" + std::to_string(i) + ".ogg")) brDirtSounds = i;
     brutalPack = sprites > 0;
     std::fprintf(stderr, "[brutal] %s: %d sprites, %d sounds\n", dir.string().c_str(), sprites, sounds);
 }

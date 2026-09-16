@@ -1435,7 +1435,13 @@ void App::handleFpsEvents() {
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
-        case FpsEvent::Type::BlockBroken: play("lock", 0.7f, 0.8f, 100); shakeT_ = std::max(shakeT_, 0.08f); break;
+        case FpsEvent::Type::BlockBroken:
+            play("lock", 0.7f, 0.8f, 100); shakeT_ = std::max(shakeT_, 0.08f);
+            if (!assets_.brSparks.empty()) {
+                bursts_.push_back({ev.pos, 0.f, 0.5f, 0.012f, &assets_.brSparks});
+                if (assets_.brSparkSounds) play("sparks" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brSparkSounds)), 0.5f, 1.f, 80);
+            }
+            break;
         case FpsEvent::Type::Score:
             announce(art.name + "  +" + std::to_string(ev.a), ev.tier >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : glm::vec4(1.f), ev.tier >= 4 ? 1.5f : 1.1f);
             ++fightStats_.kills;
@@ -1454,10 +1460,14 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::PlasmaHit: play("fireball_hit", 0.4f, 1.4f, 80); break;
         case FpsEvent::Type::EnemyHit:
             play(art.painSound, 0.8f, 1.f, 120);
-            if (brutal_ && !assets_.brSpray.empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray});
+            if (brutal_ && !assets_.brSpray[bloodColorForTier(ev.tier)].empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray[bloodColorForTier(ev.tier)]});
             break;
         case FpsEvent::Type::BulletHole:
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos, 0.f, 0.6f, 0.006f, &assets_.brSmoke});
+            if (ev.a) {   // wall: sparks and a ricochet; floor: a dull thud
+                if (!assets_.brSparks.empty()) bursts_.push_back({ev.pos, 0.f, 0.45f, 0.007f, &assets_.brSparks});
+                if (assets_.brRicochetSounds) play("ricochet" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brRicochetSounds)), 0.35f, 1.f, 60);
+            } else if (assets_.brDirtSounds) play("bhit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brDirtSounds)), 0.3f, 1.f, 60);
             break;
         case FpsEvent::Type::CasingBounce:
             if (ev.a && assets_.brShellSounds) play("shell" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brShellSounds)), 0.5f, 1.f, 30);
@@ -1853,6 +1863,13 @@ void App::addDecor() {
         // Flames and lamps sit above 1.0 so they bloom; barrels and candelabras stay plain.
         const bool glows = p.anim == &assets_.torchRed || p.anim == &assets_.torchBlue || p.anim == &assets_.torchGreen || p.anim == &assets_.lamp;
         if (!key.empty()) actor(key, p.pos, p.px, glows ? glm::vec4(1.5f, 1.5f, 1.5f, 1.f) : glm::vec4(1.f), true, flip, 0.f);
+        // A soft flare disc over each flame, flickering with the light (community pack).
+        const int flare = p.anim == &assets_.torchRed ? 0 : p.anim == &assets_.torchBlue ? 2 : p.anim == &assets_.torchGreen ? 3 : p.anim == &assets_.lamp ? 4 : p.anim == &assets_.candelabra ? 1 : -1;
+        if (flare >= 0 && !assets_.brFlare[flare].empty()) {
+            const float f = 0.8f + 0.2f * std::sin(time_ * 9.f + p.phase * 3.f) * std::sin(time_ * 4.7f + p.phase);
+            const float size = (flare == 4 ? 0.024f : flare == 1 ? 0.012f : 0.018f) * f;
+            billboard(assets_.brFlare[flare].frames[0], p.pos + glm::vec3(0.f, p.lightHeight - 0.35f, 0.f), size, glm::vec4(1.f, 1.f, 1.f, 0.55f * f), false, false);
+        }
     }
 }
 
@@ -2140,15 +2157,17 @@ void App::addFpsActors() {
         // Blasts are always 2D fireballs (the pack's 25-frame one when present), never voxels.
         const bool blast = ex.hitType < 0;
         const bool packBlast = blast && !assets_.brBlast.empty();
-        const SpriteAnim& anim = blast ? (packBlast ? assets_.brBlast : assets_.explosion) : assets_.projectileHit[std::clamp(ex.hitType, 0, kProjectileTypes - 1)];
+        const bool packPlasma = ex.hitType == kProjPlasma && !assets_.brPlasmaHit.empty();
+        const SpriteAnim& anim = blast ? (packBlast ? assets_.brBlast : assets_.explosion) : packPlasma ? assets_.brPlasmaHit : assets_.projectileHit[std::clamp(ex.hitType, 0, kProjectileTypes - 1)];
         int n = static_cast<int>(anim.frames.size());
         if (n == 0) continue;
         int i = std::clamp(static_cast<int>(t * n), 0, n - 1);
-        float scale = packBlast ? 0.02f * (1.2f + 0.35f * ex.radius) : blast ? 0.031f * (1.6f + 0.4f * ex.radius) : 0.031f * 1.2f;
+        float scale = packBlast ? 0.02f * (1.2f + 0.35f * ex.radius) : blast ? 0.031f * (1.6f + 0.4f * ex.radius) : packPlasma ? 0.011f : 0.031f * 1.2f;
         // Blasts: deeper orange-red, translucent, fading out over the burst; impact puffs stay as drawn.
         const glm::vec4 tint = packBlast ? glm::vec4(1.7f, 1.15f, 0.8f, 0.95f - 0.3f * t) : blast ? glm::vec4(2.0f, 0.6f, 0.25f, 0.9f - 0.45f * t) : glm::vec4(1.6f, 1.6f, 1.6f, 1.f);
         const glm::vec3 glow = blast ? glm::vec3(1.f, 0.32f, 0.1f) : glm::vec3(1.f, 0.7f, 0.4f);
         if (blast) billboard(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, packBlast ? 0.6f : 0.9f, 0.f), scale, tint, false, anim.mirrored[static_cast<size_t>(i)]);
+        else if (packPlasma) billboard(anim.frames[static_cast<size_t>(i)], ex.pos, scale, glm::vec4(1.6f, 1.6f, 1.6f, 1.f), false, false);
         else actor(anim.frames[static_cast<size_t>(i)], ex.pos - glm::vec3(0.f, 0.2f, 0.f), scale, tint, false, anim.mirrored[static_cast<size_t>(i)], 0.f, glow, 0.6f);
     }
     for (const Debris& d : fps_.debris()) {
@@ -2209,6 +2228,12 @@ void App::addLights() {
         if (muzzleLight_ > 0.f && mode_ == Mode::Fps) {
             glm::vec3 mc = fps_.currentWeapon() == kPlasmaRifle ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 0.8f, 0.4f);
             cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, mc, 3.f * muzzleLight_}});
+            // Flare at the muzzle (community pack): blue for plasma, fire for the rest.
+            const SpriteAnim& fl = fps_.currentWeapon() == kPlasmaRifle ? assets_.brFlare[2] : assets_.brMuzzleFlare;
+            if (!fl.empty()) {
+                glm::vec3 right(-std::cos(fps_.yaw()), 0.f, std::sin(fps_.yaw()));
+                billboard(fl.frames[0], fps_.eye() + fps_.forward() * 1.0f + right * 0.18f - glm::vec3(0.f, 0.22f, 0.f), 0.0022f * muzzleLight_ + 0.0012f, glm::vec4(1.4f, 1.4f, 1.4f, 0.6f * muzzleLight_), false, false);
+            }
         }
     }
     std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.score < b.score; });
@@ -2245,13 +2270,18 @@ void App::addGore() {
     for (const Gore& g : fps_.gore()) {
         const float fade = std::min(1.f, g.ttl / 0.5f);
         const float age = std::max(0.f, (g.kind == 1 ? 8.f : g.kind == 2 ? 6.f : 3.f) - g.ttl);
+        static const glm::vec3 kBlood[3] = {{0.5f, 0.02f, 0.02f}, {0.12f, 0.5f, 0.05f}, {0.1f, 0.2f, 0.75f}};
+        const glm::vec3 bc = kBlood[std::clamp(g.color, 0, 2)];
         if (g.kind == 0) {
-            cube(g.pos, g.size, glm::vec4(0.5f * fade, 0.02f, 0.02f, 1.f), assets_.white);
+            cube(g.pos, g.size, glm::vec4(bc * fade, 1.f), assets_.white);
         } else if (g.kind == 1) {
             // Meat: a voxel gib when the packs are there, a sprite chunk from the pack, else a dark cube.
             const float k = g.size / 0.085f;
             const VoxelModel* m = useVoxels_ ? voxels_.get("GIB" + std::to_string(g.variant % 10) + "_" + ((g.variant & 16) ? "A" : "B")) : nullptr;
+            const int c = std::clamp(g.color, 0, 2);
             if (m) {
+                // The voxel gibs are red meat; green and blue monsters get theirs tinted.
+                static const glm::vec3 kMeatTint[3] = {{1.f, 1.f, 1.f}, {0.35f, 1.1f, 0.35f}, {0.4f, 0.55f, 1.3f}};
                 render::MeshInstance mi;
                 mi.mesh = m->mesh;
                 glm::mat4 M = glm::translate(glm::mat4(1.f), g.pos);
@@ -2260,19 +2290,19 @@ void App::addGore() {
                 M = glm::scale(M, glm::vec3(0.010f * k * m->scale));
                 M = glm::translate(M, -m->pivot);
                 mi.model = M;
-                mi.color = glm::vec4(fade, fade, fade, 1.f);
+                mi.color = glm::vec4(kMeatTint[c] * fade, 1.f);
                 meshes_.push_back(mi);
-            } else if (pack && !assets_.brChunk.empty()) {
-                const SpriteAnim& a = (g.variant % 7 == 0 && !assets_.brChunkBig.empty()) ? assets_.brChunkBig : assets_.brChunk;
+            } else if (pack && !assets_.brChunk[c].empty()) {
+                const SpriteAnim& a = (g.variant % 7 == 0 && !assets_.brChunkBig[c].empty()) ? assets_.brChunkBig[c] : assets_.brChunk[c];
                 billboard(a.frames[static_cast<size_t>(g.variant) % a.frames.size()], g.pos, 0.013f * k, glm::vec4(fade, fade, fade, 1.f), true, (g.variant & 32) != 0);
             } else {
-                cube(g.pos, g.size, glm::vec4(0.38f * fade, 0.04f * fade, 0.03f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
+                cube(g.pos, g.size, glm::vec4(bc * 0.75f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
             }
         } else {
             const SpriteAnim& a = (g.variant & 1) ? assets_.brCasingShell : assets_.brCasingBullet;
             if (pack && a.frames.size() >= 13) {
                 const size_t frame = g.resting ? 8 + static_cast<size_t>(g.variant / 2) % 5 : static_cast<size_t>(age * 20.f + static_cast<float>(g.variant)) % 8;
-                billboard(a.frames[frame], g.pos, 0.0065f, glm::vec4(fade, fade, fade, 1.f), true, false);
+                billboard(a.frames[frame], g.pos, 0.0038f, glm::vec4(fade, fade, fade, 1.f), true, false);
             } else {
                 cube(g.pos, g.size, glm::vec4(0.85f * fade, 0.68f * fade, 0.22f * fade, 1.f), assets_.white, glm::vec3(0.f), 0.f, 0.f, 0.f, g.spin * age);
             }
@@ -2291,17 +2321,22 @@ void App::addGore() {
     for (const Decal& d : fps_.decals()) {
         const float alpha = d.age > 52.f ? std::max(0.f, 1.f - (d.age - 52.f) / 8.f) : 1.f;
         glm::vec3 pos = d.pos + d.normal * (0.006f + 0.0015f * static_cast<float>(i++ % 12));
-        if (d.kind == 0 && pack && !assets_.brPool.empty()) {
+        const int c = std::clamp(d.color, 0, 2);
+        static const glm::vec4 kFallbackPool[3] = {{0.65f, 0.55f, 0.55f, 1.f}, {0.3f, 0.7f, 0.25f, 1.f}, {0.3f, 0.35f, 0.9f, 1.f}};
+        static const glm::vec4 kFallbackSplat[3] = {{0.75f, 0.2f, 0.2f, 1.f}, {0.2f, 0.75f, 0.2f, 1.f}, {0.2f, 0.3f, 0.9f, 1.f}};
+        if (d.kind == 0 && pack && !assets_.brPool[c].empty()) {
             // The pool spreads over half a second, then stays.
-            const size_t f = std::min(assets_.brPool.frames.size() - 1, static_cast<size_t>(d.age * assets_.brPool.fps));
-            decal(assets_.brPool.frames[f], pos, d.normal, d.size * 1.3f, d.yaw, glm::vec4(0.85f, 0.85f, 0.85f, alpha));
-        } else if (d.kind == 1 && pack && !assets_.brSplat.empty()) {
+            const SpriteAnim& a = assets_.brPool[c];
+            const size_t f = std::min(a.frames.size() - 1, static_cast<size_t>(d.age * a.fps));
+            decal(a.frames[f], pos, d.normal, d.size * 1.3f, d.yaw, glm::vec4(0.85f, 0.85f, 0.85f, alpha));
+        } else if (d.kind == 1 && pack && !assets_.brSplat[c].empty()) {
             // Hits, spreads, then dries dark over most of its life.
-            const size_t n = assets_.brSplat.frames.size();
+            const SpriteAnim& a = assets_.brSplat[c];
+            const size_t n = a.frames.size();
             const size_t f = d.age < 1.5f ? std::min<size_t>(19, static_cast<size_t>(d.age * 12.f)) : std::min(n - 1, 19 + static_cast<size_t>((d.age - 1.5f) / 8.f));
-            decal(assets_.brSplat.frames[f], pos, d.normal, d.size * 1.4f, d.yaw, glm::vec4(0.9f, 0.9f, 0.9f, alpha));
-        } else if (d.kind == 0 && !assets_.bloodPool.empty()) decal(assets_.bloodPool, pos, d.normal, d.size, d.yaw, glm::vec4(0.65f, 0.55f, 0.55f, alpha));
-        else if (d.kind == 1 && !assets_.blood.empty()) decal(assets_.blood.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(0.75f, 0.2f, 0.2f, alpha));
+            decal(a.frames[f], pos, d.normal, d.size * 1.4f, d.yaw, glm::vec4(0.9f, 0.9f, 0.9f, alpha));
+        } else if (d.kind == 0 && !assets_.bloodPool.empty()) decal(assets_.bloodPool, pos, d.normal, d.size, d.yaw, glm::vec4(glm::vec3(kFallbackPool[c]), alpha));
+        else if (d.kind == 1 && !assets_.blood.empty()) decal(assets_.blood.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(glm::vec3(kFallbackSplat[c]), alpha));
         else if (d.kind == 2 && !assets_.puff.empty()) decal(assets_.puff.frames.back(), pos, d.normal, d.size, d.yaw, glm::vec4(0.25f, 0.25f, 0.25f, alpha));
     }
 }
