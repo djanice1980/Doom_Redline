@@ -17,7 +17,7 @@ Clean-up done 2026-09-15: the build-story deck and its generator are
 untracked (side project; they stay on disk under `docs/` and `tools/` and are
 git-ignored), no machine paths remain in tracked files, and the README states
 that the game never touches the network. `.gitignore` excludes `build/`,
-`*.wad`, `wads/`; the Voxel Doom pack is found in `~/Downloads`, never copied.
+`*.wad`, `wads/`. The Voxel Doom pack (MIT) is tracked under `assets/voxel-doom/` (23 MB) so releases can bundle it.
 Ready to `git remote add origin ... && git push -u origin master`.
 
 ## 2. Releases from GitHub Actions

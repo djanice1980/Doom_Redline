@@ -76,15 +76,16 @@ flats, font glyphs, sounds) and can dump individual lumps; `--help` lists flags.
 ## Voxel models (optional)
 
 Monsters, pickups, projectiles and the arena decor can be drawn as 3D voxel
-models instead of sprites using Cheello's *Voxel Doom* pack (MIT licensed, not
-shipped here). Point the game at a folder of `.kvx` files (the pack's
-`VOXELDEF.txt` next to or inside it is read for angle offsets and scales):
+models instead of sprites using Cheello's *Voxel Doom* pack, which is MIT
+licensed and ships with the game in `assets/voxel-doom/` (credits and licence
+in that folder). Installed builds carry it next to the executable on Windows
+(`voxels/`) and under `share/redline/voxel-doom` on Linux, so nothing needs
+to be downloaded. A different pack or location can still be given:
 
 1. `--voxels-dir <dir>`
 2. `$REDLINE_VOXELS`
-3. `./voxels`
-4. `~/.local/share/redline/redline/voxels`
-5. `~/Downloads/doom-voxel-models/voxel-doom-kvx/kvx`
+3. the bundled pack (next to the exe, `share/redline`, or `assets/` in a checkout)
+4. `./voxels` and `~/.local/share/redline/redline/voxels`
 
 When a pack is found, OPTIONS gains a MODELS row (SPRITES / VOXELS, default
 VOXELS, saved per player); `--voxels` and `--sprites` force it for one run.

@@ -157,10 +157,13 @@ if(REDLINE_BUILD_GAME)
   install(TARGETS redline RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
   install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
   install(DIRECTORY docs/ DESTINATION ${CMAKE_INSTALL_DOCDIR}/docs FILES_MATCHING PATTERN "*.md")
+  # The Voxel Doom pack (MIT) ships with the game: next to the exe on Windows, under share/ on Linux.
   if(WIN32)
     # The DLLs of every imported dependency (SDL3, vorbis, ogg ...) go next to the exe.
     install(FILES $<TARGET_RUNTIME_DLLS:redline> DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(DIRECTORY assets/voxel-doom/ DESTINATION ${CMAKE_INSTALL_BINDIR}/voxels)
   elseif(UNIX AND NOT APPLE)
+    install(DIRECTORY assets/voxel-doom/ DESTINATION ${CMAKE_INSTALL_DATADIR}/redline/voxel-doom)
     install(FILES packaging/linux/redline.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES packaging/linux/redline.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
     install(FILES packaging/linux/redline-48.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/48x48/apps RENAME redline.png)

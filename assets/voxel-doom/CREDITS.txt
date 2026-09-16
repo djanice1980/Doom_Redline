@@ -1,0 +1,5 @@
+Voxel Doom by Cheello (ChilloQuake), MIT License (see LICENSE in this folder).
+Zandronum conversion of the pack by SDMXII. 530 KVX voxel models, one per
+sprite frame, and the VOXELDEF that maps sprite frames to models.
+REDLINE ships this pack unchanged as its optional 3D-model set (OPTIONS > MODELS).
+Original: https://www.moddb.com/mods/voxel-doom

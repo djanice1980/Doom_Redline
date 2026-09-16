@@ -14,7 +14,7 @@ namespace rl::game {
 
 namespace fs = std::filesystem;
 
-std::optional<fs::path> VoxelModels::findPack(const std::optional<fs::path>& explicitDir, const std::string& prefDir) {
+std::optional<fs::path> VoxelModels::findPack(const std::optional<fs::path>& explicitDir, const std::string& prefDir, const std::string& baseDir) {
     auto hasKvx = [](const fs::path& p) {
         std::error_code ec;
         if (!fs::is_directory(p, ec)) return false;
@@ -28,6 +28,17 @@ std::optional<fs::path> VoxelModels::findPack(const std::optional<fs::path>& exp
     std::vector<fs::path> candidates;
     if (explicitDir) candidates.push_back(*explicitDir);
     if (const char* env = std::getenv("REDLINE_VOXELS")) candidates.emplace_back(env);
+    // The pack bundled with the game (MIT licensed): install layouts and the source tree.
+    if (!baseDir.empty()) {
+        fs::path base(baseDir);
+        candidates.push_back(base / "voxels");                                   // Windows zip / installer
+        candidates.push_back(base / ".." / "share" / "redline" / "voxel-doom");  // Linux: bin/../share
+        candidates.push_back(base / "assets" / "voxel-doom");
+        candidates.push_back(base / ".." / "assets" / "voxel-doom");             // build/ next to the checkout
+    }
+    candidates.emplace_back("assets/voxel-doom");
+    candidates.emplace_back("/usr/share/redline/voxel-doom");
+    candidates.emplace_back("/usr/local/share/redline/voxel-doom");
     candidates.emplace_back("voxels");
     if (!prefDir.empty()) candidates.emplace_back(fs::path(prefDir) / "voxels");
     if (const char* home = std::getenv("HOME")) {

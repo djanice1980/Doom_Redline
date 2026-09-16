@@ -26,8 +26,10 @@ struct VoxelModel {
 
 class VoxelModels {
 public:
-    // Searches: explicit dir, $REDLINE_VOXELS, ./voxels, <pref>/voxels, ~/Downloads/doom-voxel-models/voxel-doom-kvx/kvx.
-    static std::optional<std::filesystem::path> findPack(const std::optional<std::filesystem::path>& explicitDir, const std::string& prefDir);
+    // Searches: explicit dir, $REDLINE_VOXELS, the pack shipped with the game (next to the
+    // executable on Windows, share/redline on Linux, assets/ in a source checkout), ./voxels,
+    // <pref>/voxels, then the Downloads folder the pack was first extracted to.
+    static std::optional<std::filesystem::path> findPack(const std::optional<std::filesystem::path>& explicitDir, const std::string& prefDir, const std::string& baseDir = "");
 
     bool init(render::Renderer& renderer, const std::filesystem::path& dir);
     bool available() const { return !defs_.empty(); }

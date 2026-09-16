@@ -96,7 +96,9 @@ App::App(Options opts) : opts_(std::move(opts)) {
     {
         std::string pref;
         if (char* p = SDL_GetPrefPath("redline", "redline")) { pref = p; SDL_free(p); }
-        if (auto dir = VoxelModels::findPack(opts_.voxelDir, pref)) voxels_.init(*renderer_, *dir);
+        std::string base;
+        if (const char* b = SDL_GetBasePath()) base = b;
+        if (auto dir = VoxelModels::findPack(opts_.voxelDir, pref, base)) voxels_.init(*renderer_, *dir);
         else std::fprintf(stderr, "[voxels] no Voxel Doom pack found (set REDLINE_VOXELS or --voxels-dir); sprites only\n");
     }
 
