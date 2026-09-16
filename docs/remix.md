@@ -139,7 +139,9 @@ time (height from luminance, normal from its gradient, roughness from
 inverse local contrast), which is a few dozen lines and has no licensing
 question; it also covers the block tiles, which the port has nothing for.
 
-Decision (David, 2026-09-16): the maps are only meaningful alongside the
+Decision (David, 2026-09-16, done the same day: `assets/materials/`, six
+files, CREDITS.txt, LICENSE note, installed as `materials/` next to the exe
+and `share/redline/materials` on Linux): the maps are only meaningful alongside the
 original textures, and the game only draws Doom art when the player supplies
 their own WAD, so bundle them gated on that: they are loaded only when a WAD
 is in use, never on the placeholder set. Keep it minimal, six files for the

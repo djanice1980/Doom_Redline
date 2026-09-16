@@ -208,6 +208,15 @@ setting in `display.txt`; `--rt 0|1|2` forces it for one run and
 `REDLINE_NO_RT=1` hides the capability entirely. Other GPUs keep the shadow
 map and never see the row.
 
+## Bundled third-party data
+
+`assets/voxel-doom/` is Cheello's Voxel Doom (MIT). `assets/materials/` holds
+normal and roughness maps for the three Doom textures the arena uses, taken
+from the GZDoom: Ray Traced project (github.com/vs-shirokii/gzdoom-rt); they
+derive from id Software textures, are credited in the folder, and are only
+used alongside your own WAD. Neither is covered by the MIT licence of the
+code.
+
 ## The arena
 
 The board stands in a stone hall lit by a low sun that casts real shadows

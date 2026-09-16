@@ -68,6 +68,7 @@ EOF
     if [ "${REDLINE_STAGE_TESTS:-0}" = "1" ]; then cp /tmp/bw/*_test.exe "$DEST"/ 2>/dev/null || true; fi
     cp /work/README.md /work/LICENSE "$DEST"/
     cp -r /work/assets/voxel-doom "$DEST"/voxels     # the MIT-licensed Voxel Doom pack, found next to the exe
+    cp -r /work/assets/materials "$DEST"/materials   # normal/roughness maps for the arena textures (see CREDITS.txt inside)
     cp -r /work/docs "$DEST"/docs && rm -f "$DEST"/docs/*.pptx
     queue=$(ls "$DEST"/*.exe); seen=""
     while [ -n "$queue" ]; do
