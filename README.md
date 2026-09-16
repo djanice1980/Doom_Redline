@@ -194,6 +194,20 @@ Surviving a fight brings up a level-up card: the new level, demons slain,
 blocks destroyed, fight time and damage taken. The collapse plays behind it
 and the next piece waits until the card is gone.
 
+## Ray-traced shadows
+
+On a GPU with Vulkan ray-query support (GeForce RTX, Radeon RX 6000 and
+newer including the RDNA3 laptop chips, Intel Arc) OPTIONS > SHADOWS offers
+SHADOW MAP, RAY TRACED: SUN, and RAY TRACED: SUN + ALL LIGHTS. In the last
+mode every torch, lamp, muzzle flash, fireball and glowing red block casts
+a shadow: the stack throws torchlight shadows on the floor and monsters
+shadow each other. The scene's cubes and voxel models are kept in a
+top-level acceleration structure rebuilt every frame; sprites do not cast
+ray-traced shadows (voxel models, the default, do). The choice is a machine
+setting in `display.txt`; `--rt 0|1|2` forces it for one run and
+`REDLINE_NO_RT=1` hides the capability entirely. Other GPUs keep the shadow
+map and never see the row.
+
 ## The arena
 
 The board stands in a stone hall lit by a low sun that casts real shadows
@@ -358,7 +372,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --level <n>         --absorb <sec>     --god              --arsenal <n>
 --keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
 --voxels-dir <dir>  --voxels           --sprites          --reload-wad <file>
---extras <file>
+--extras <file>     --rt 0|1|2
 ```
 
 A Windows test build can be cross-compiled from Linux with Docker:

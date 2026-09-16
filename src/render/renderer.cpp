@@ -14,6 +14,9 @@
 #include "shaders/mesh_vert.h"
 #include "shaders/mesh_frag.h"
 #include "shaders/shadow_mesh_vert.h"
+#include "shaders/cube_rt_frag.h"
+#include "shaders/mesh_rt_frag.h"
+#include "shaders/quad_rt_vert.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -46,7 +49,7 @@ constexpr size_t kInitialCubes = 8192;
 constexpr size_t kInitialQuads = 4096;
 }  // namespace
 
-Renderer::Renderer(VkContext& ctx) : ctx_(ctx) {
+Renderer::Renderer(VkContext& ctx) : ctx_(ctx), rt_(ctx.rayQuerySupported()) {
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = VK_FILTER_NEAREST;   // chunky Doom pixels
     sci.minFilter = VK_FILTER_LINEAR;
@@ -91,7 +94,8 @@ Renderer::~Renderer() {
         ctx_.destroyBuffer(cubeInst_[i]);
         ctx_.destroyBuffer(quadInst_[i]);
     }
-    for (MeshRes& m : meshes_) if (m.alive) { ctx_.destroyBuffer(m.vb); ctx_.destroyBuffer(m.ib); }
+    for (MeshRes& m : meshes_) if (m.alive) { ctx_.destroyBuffer(m.vb); ctx_.destroyBuffer(m.ib); if (rt_) { ctx_.destroyBuffer(m.posf); destroyBlas(m.blas); } }
+    if (rt_) { destroyBlas(cubeBlas_); for (Tlas& t : tlas_) destroyTlas(t); }
     ctx_.destroyTexture(atlas_);
     ctx_.destroyTexture(shadowMap_);
     if (cubePipe_) vkDestroyPipeline(d, cubePipe_, nullptr);
@@ -138,15 +142,21 @@ void Renderer::createDescriptors() {
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding tlasBinding{};
+    tlasBinding.binding = 3;
+    tlasBinding.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    tlasBinding.descriptorCount = 1;
+    tlasBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding all[4] = {bindings[0], bindings[1], bindings[2], tlasBinding};
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    lci.bindingCount = 3;
-    lci.pBindings = bindings;
+    lci.bindingCount = rt_ ? 4 : 3;
+    lci.pBindings = all;
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * 2}};
+    VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * 2}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight;
-    pci.poolSizeCount = 2;
+    pci.poolSizeCount = rt_ ? 3 : 2;
     pci.pPoolSizes = sizes;
     vkCheck(vkCreateDescriptorPool(d, &pci, nullptr, &pool_), "vkCreateDescriptorPool");
 
@@ -204,8 +214,8 @@ void Renderer::setAtlas(const Image& img) {
 void Renderer::createPipelines() {
     VkDevice d = ctx_.device();
     VkShaderModule cubeVS = ctx_.createShader(shaders::cube_vert, shaders::cube_vert_size);
-    VkShaderModule cubeFS = ctx_.createShader(shaders::cube_frag, shaders::cube_frag_size);
-    VkShaderModule quadVS = ctx_.createShader(shaders::quad_vert, shaders::quad_vert_size);
+    VkShaderModule cubeFS = rt_ ? ctx_.createShader(shaders::cube_rt_frag, shaders::cube_rt_frag_size) : ctx_.createShader(shaders::cube_frag, shaders::cube_frag_size);
+    VkShaderModule quadVS = rt_ ? ctx_.createShader(shaders::quad_rt_vert, shaders::quad_rt_vert_size) : ctx_.createShader(shaders::quad_vert, shaders::quad_vert_size);
     VkShaderModule quadFS = ctx_.createShader(shaders::quad_frag, shaders::quad_frag_size);
 
     VkFormat colorFmt = ctx_.swapchainFormat();
@@ -335,7 +345,7 @@ void Renderer::createPipelines() {
     // Mesh: binding 0 per-vertex (int16 position + normal index, RGBA8 colour).
     {
         VkShaderModule meshVS = ctx_.createShader(shaders::mesh_vert, shaders::mesh_vert_size);
-        VkShaderModule meshFS = ctx_.createShader(shaders::mesh_frag, shaders::mesh_frag_size);
+        VkShaderModule meshFS = rt_ ? ctx_.createShader(shaders::mesh_rt_frag, shaders::mesh_rt_frag_size) : ctx_.createShader(shaders::mesh_frag, shaders::mesh_frag_size);
         VkShaderModule shVS = ctx_.createShader(shaders::shadow_mesh_vert, shaders::shadow_mesh_vert_size);
         VkVertexInputBindingDescription b[1] = {{0, sizeof(MeshVertex), VK_VERTEX_INPUT_RATE_VERTEX}};
         VkVertexInputAttributeDescription a[2] = {
@@ -360,12 +370,21 @@ void Renderer::createPipelines() {
 
 uint32_t Renderer::createMesh(std::span<const MeshVertex> verts, std::span<const uint32_t> indices) {
     MeshRes m;
+    const VkBufferUsageFlags asIn = rt_ ? static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) : 0u;
     m.vb = ctx_.createBuffer(verts.size_bytes(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
-    m.ib = ctx_.createBuffer(indices.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+    m.ib = ctx_.createBuffer(indices.size_bytes(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | asIn, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rt_);
     ctx_.uploadBuffer(m.vb, verts.data(), verts.size_bytes());
     ctx_.uploadBuffer(m.ib, indices.data(), indices.size_bytes());
     m.indexCount = static_cast<uint32_t>(indices.size());
     m.alive = true;
+    if (rt_) {
+        // Acceleration structures want float positions; the draw path keeps its 12-byte vertices.
+        std::vector<glm::vec3> pos(verts.size());
+        for (size_t i = 0; i < verts.size(); ++i) pos[i] = glm::vec3(verts[i].x, verts[i].y, verts[i].z);
+        m.posf = ctx_.createBuffer(pos.size() * sizeof(glm::vec3), VK_BUFFER_USAGE_TRANSFER_DST_BIT | asIn, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, true);
+        ctx_.uploadBuffer(m.posf, pos.data(), pos.size() * sizeof(glm::vec3));
+        m.blas = buildBlas(ctx_.bufferAddress(m.posf), static_cast<uint32_t>(pos.size()), sizeof(glm::vec3), ctx_.bufferAddress(m.ib), static_cast<uint32_t>(indices.size() / 3));
+    }
     for (size_t i = 0; i < meshes_.size(); ++i)
         if (!meshes_[i].alive) { meshes_[i] = m; return static_cast<uint32_t>(i); }
     meshes_.push_back(m);
@@ -377,7 +396,155 @@ void Renderer::destroyMesh(uint32_t id) {
     ctx_.waitIdle();
     ctx_.destroyBuffer(meshes_[id].vb);
     ctx_.destroyBuffer(meshes_[id].ib);
+    if (rt_) { ctx_.destroyBuffer(meshes_[id].posf); destroyBlas(meshes_[id].blas); }
     meshes_[id] = MeshRes{};
+}
+
+// --- acceleration structures ---------------------------------------------------
+Renderer::Blas Renderer::buildBlas(VkDeviceAddress vtxAddr, uint32_t vtxCount, VkDeviceSize stride, VkDeviceAddress idxAddr, uint32_t triCount) {
+    const VkContext::RtFuncs& rt = ctx_.rt();
+    VkAccelerationStructureGeometryKHR geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geom.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    geom.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    geom.geometry.triangles.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    geom.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    geom.geometry.triangles.vertexData.deviceAddress = vtxAddr;
+    geom.geometry.triangles.vertexStride = stride;
+    geom.geometry.triangles.maxVertex = vtxCount - 1;
+    geom.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+    geom.geometry.triangles.indexData.deviceAddress = idxAddr;
+    VkAccelerationStructureBuildGeometryInfoKHR bi{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    bi.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    bi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    bi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    bi.geometryCount = 1;
+    bi.pGeometries = &geom;
+    VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+    rt.getBuildSizes(ctx_.device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, &triCount, &sizes);
+    Blas b;
+    b.buf = ctx_.createBuffer(sizes.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, true);
+    VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+    ci.buffer = b.buf.buffer;
+    ci.size = sizes.accelerationStructureSize;
+    ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    vkCheck(rt.create(ctx_.device(), &ci, nullptr, &b.as), "vkCreateAccelerationStructureKHR");
+    const VkDeviceSize align = ctx_.scratchAlignment();
+    Buffer scratch = ctx_.createBuffer(sizes.buildScratchSize + align, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, true);
+    VkDeviceAddress sa = ctx_.bufferAddress(scratch);
+    sa = (sa + align - 1) & ~(align - 1);
+    bi.dstAccelerationStructure = b.as;
+    bi.scratchData.deviceAddress = sa;
+    VkAccelerationStructureBuildRangeInfoKHR range{triCount, 0, 0, 0};
+    const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+    ctx_.oneTimeSubmit([&](VkCommandBuffer cmd) { rt.cmdBuild(cmd, 1, &bi, &pRange); });
+    ctx_.destroyBuffer(scratch);
+    VkAccelerationStructureDeviceAddressInfoKHR ai{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+    ai.accelerationStructure = b.as;
+    b.addr = rt.getAddress(ctx_.device(), &ai);
+    return b;
+}
+
+void Renderer::destroyBlas(Blas& b) {
+    if (b.as) ctx_.rt().destroy(ctx_.device(), b.as, nullptr);
+    if (b.buf.buffer) ctx_.destroyBuffer(b.buf);
+    b = Blas{};
+}
+
+void Renderer::destroyTlas(Tlas& t) {
+    if (t.as) ctx_.rt().destroy(ctx_.device(), t.as, nullptr);
+    if (t.buf.buffer) ctx_.destroyBuffer(t.buf);
+    if (t.instances.buffer) ctx_.destroyBuffer(t.instances);
+    if (t.scratch.buffer) ctx_.destroyBuffer(t.scratch);
+    t = Tlas{};
+}
+
+// Rebuilds this frame's top-level structure from the cube and mesh instance lists.
+void Renderer::buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeInstance> cubes, std::span<const MeshInstance> meshes) {
+    const VkContext::RtFuncs& rt = ctx_.rt();
+    Tlas& t = tlas_[fi];
+    std::vector<VkAccelerationStructureInstanceKHR> inst;
+    inst.reserve(cubes.size() + meshes.size());
+    auto put = [&](const glm::mat4& M, VkDeviceAddress blas) {
+        VkAccelerationStructureInstanceKHR in{};
+        for (int r = 0; r < 3; ++r)
+            for (int c = 0; c < 4; ++c) in.transform.matrix[r][c] = M[c][r];
+        in.instanceCustomIndex = 0;
+        in.mask = 0xFF;
+        in.instanceShaderBindingTableRecordOffset = 0;
+        in.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+        in.accelerationStructureReference = blas;
+        inst.push_back(in);
+    };
+    for (const CubeInstance& c : cubes) {
+        glm::mat4 M = glm::translate(glm::mat4(1.f), glm::vec3(c.posScale));
+        M = glm::rotate(M, c.rot.x, glm::vec3(1.f, 0.f, 0.f));
+        M = glm::rotate(M, c.rot.y, glm::vec3(0.f, 1.f, 0.f));
+        M = glm::scale(M, glm::vec3(c.posScale.w));
+        put(M, cubeBlas_.addr);
+    }
+    for (const MeshInstance& mi : meshes)
+        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive) put(mi.model, meshes_[mi.mesh].blas.addr);
+    const uint32_t n = static_cast<uint32_t>(inst.size());
+
+    if (n > t.instCap) {
+        ctx_.waitIdle();
+        if (t.instances.buffer) ctx_.destroyBuffer(t.instances);
+        t.instCap = std::max<size_t>(n, t.instCap * 2);
+        t.instances = ctx_.createBuffer(t.instCap * sizeof(VkAccelerationStructureInstanceKHR),
+                                        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
+                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true, true);
+    }
+    if (n) std::memcpy(t.instances.mapped, inst.data(), n * sizeof(VkAccelerationStructureInstanceKHR));
+
+    VkAccelerationStructureGeometryKHR geom{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geom.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+    geom.geometry.instances.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    geom.geometry.instances.arrayOfPointers = VK_FALSE;
+    geom.geometry.instances.data.deviceAddress = ctx_.bufferAddress(t.instances);
+    VkAccelerationStructureBuildGeometryInfoKHR bi{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    bi.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    bi.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR;
+    bi.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    bi.geometryCount = 1;
+    bi.pGeometries = &geom;
+    VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+    rt.getBuildSizes(ctx_.device(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &bi, &n, &sizes);
+    if (sizes.accelerationStructureSize > t.bufSize) {
+        ctx_.waitIdle();
+        if (t.as) rt.destroy(ctx_.device(), t.as, nullptr);
+        if (t.buf.buffer) ctx_.destroyBuffer(t.buf);
+        t.bufSize = sizes.accelerationStructureSize * 3 / 2;
+        t.buf = ctx_.createBuffer(t.bufSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, true);
+        VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+        ci.buffer = t.buf.buffer;
+        ci.size = t.bufSize;
+        ci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        vkCheck(rt.create(ctx_.device(), &ci, nullptr, &t.as), "vkCreateAccelerationStructureKHR(tlas)");
+    }
+    const VkDeviceSize align = ctx_.scratchAlignment();
+    if (sizes.buildScratchSize + align > t.scratchSize) {
+        ctx_.waitIdle();
+        if (t.scratch.buffer) ctx_.destroyBuffer(t.scratch);
+        t.scratchSize = (sizes.buildScratchSize + align) * 3 / 2;
+        t.scratch = ctx_.createBuffer(t.scratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, true);
+    }
+    VkDeviceAddress sa = ctx_.bufferAddress(t.scratch);
+    sa = (sa + align - 1) & ~(align - 1);
+    bi.dstAccelerationStructure = t.as;
+    bi.scratchData.deviceAddress = sa;
+    VkAccelerationStructureBuildRangeInfoKHR range{n, 0, 0, 0};
+    const VkAccelerationStructureBuildRangeInfoKHR* pRange = &range;
+    rt.cmdBuild(cmd, 1, &bi, &pRange);
+    VkMemoryBarrier2 mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    mb.srcStageMask = VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+    mb.srcAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    mb.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
+    mb.dstAccessMask = VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &mb;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    t.built = true;
 }
 
 void Renderer::createGeometry() {
@@ -404,10 +571,12 @@ void Renderer::createGeometry() {
         idx.insert(idx.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     }
     cubeIndexCount_ = static_cast<uint32_t>(idx.size());
-    cubeVB_ = ctx_.createBuffer(verts.size() * sizeof(CubeVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
-    cubeIB_ = ctx_.createBuffer(idx.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false);
+    const VkBufferUsageFlags asIn = rt_ ? static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR) : 0u;
+    cubeVB_ = ctx_.createBuffer(verts.size() * sizeof(CubeVertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | asIn, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rt_);
+    cubeIB_ = ctx_.createBuffer(idx.size() * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | asIn, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, false, rt_);
     ctx_.uploadBuffer(cubeVB_, verts.data(), verts.size() * sizeof(CubeVertex));
     ctx_.uploadBuffer(cubeIB_, idx.data(), idx.size() * sizeof(uint32_t));
+    if (rt_) cubeBlas_ = buildBlas(ctx_.bufferAddress(cubeVB_), static_cast<uint32_t>(verts.size()), sizeof(CubeVertex), ctx_.bufferAddress(cubeIB_), cubeIndexCount_ / 3);
 }
 
 bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> cubes,
@@ -433,7 +602,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         u.lightPos[i] = glm::vec4(params.lights[i].pos, params.lights[i].radius);
         u.lightColor[i] = glm::vec4(params.lights[i].color, params.lights[i].intensity);
     }
-    u.counts = glm::ivec4(nl, 0, 0, 0);
+    u.counts = glm::ivec4(nl, rt_ ? params.rtShadows : 0, 0, 0);
     {
         glm::vec3 dir = glm::normalize(params.sunDir);
         glm::vec3 up = std::fabs(dir.y) > 0.95f ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
@@ -454,6 +623,21 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     if (!screenQuads.empty()) std::memcpy(qdst + worldQuads.size(), screenQuads.data(), screenQuads.size() * sizeof(QuadInstance));
 
     VkCommandBuffer cmd = frame.cmd;
+    if (rt_) {
+        // The top-level structure is rebuilt whenever ray-traced shadows are on (and once
+        // regardless, so the descriptor always points at a valid structure).
+        if (params.rtShadows > 0 || !tlas_[fi].built) buildTlas(cmd, fi, cubes, meshes);
+        VkWriteDescriptorSetAccelerationStructureKHR wa{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+        wa.accelerationStructureCount = 1;
+        wa.pAccelerationStructures = &tlas_[fi].as;
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.pNext = &wa;
+        w.dstSet = sets_[fi];
+        w.dstBinding = 3;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+        vkUpdateDescriptorSets(ctx_.device(), 1, &w, 0, nullptr);
+    }
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
     struct MeshPush { glm::mat4 model; glm::vec4 color; glm::vec4 emissive; };
     auto drawMeshes = [&](VkPipeline pipe) {

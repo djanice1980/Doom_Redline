@@ -57,6 +57,7 @@ struct Options {
     std::string reloadWad;             // testing: swap to this WAD after 30 frames
     std::optional<std::filesystem::path> voxelDir;   // KVX pack directory (default: auto-detect)
     int voxels = -1;                   // -1 saved preference, 0 sprites, 1 voxel models
+    int rtShadows = -1;                // -1 saved preference, 0 shadow map, 1 ray-traced sun, 2 ray-traced all lights
 };
 
 class App {
@@ -209,6 +210,7 @@ private:
     void buildProps();
     // Display: 0 windowed, 1 borderless fullscreen, 2 exclusive fullscreen.
     int displayMode_ = 0;
+    int rtShadows_ = 2;                // machine setting (display.txt): 0 map, 1 sun, 2 all lights; used when the GPU can
     int resW_ = 1600, resH_ = 900;
     std::vector<std::pair<int, int>> resolutions_;
     // Level-up card and per-game stats for trophies.

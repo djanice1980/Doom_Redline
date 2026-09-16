@@ -60,6 +60,9 @@ struct FrameParams {
     glm::vec3 shadowCenter{0.f, 8.f, 10.f};
     float shadowRadius = 26.f;
     float shadowStrength = 0.85f;   // 0 = no shadows
+    // Ray-traced shadows (needs Renderer::rayTracingAvailable()): 0 = shadow map,
+    // 1 = ray-traced sun, 2 = ray-traced sun and every point light.
+    int rtShadows = 0;
 };
 
 class Renderer {
@@ -85,6 +88,7 @@ public:
     // Writes the most recently presented frame to a PNG (blocks the GPU briefly).
     bool screenshot(const std::string& path);
     VkExtent2D extent() const { return ctx_.extent(); }
+    bool rayTracingAvailable() const { return rt_; }
 
 private:
     struct Ubo;
@@ -104,8 +108,19 @@ private:
     VkPipeline shadowQuadPipe_ = VK_NULL_HANDLE;
     VkPipeline meshPipe_ = VK_NULL_HANDLE;
     VkPipeline shadowMeshPipe_ = VK_NULL_HANDLE;
-    struct MeshRes { Buffer vb, ib; uint32_t indexCount = 0; bool alive = false; };
+    // Ray tracing: one bottom-level structure per mesh (and one for the unit cube), a
+    // top-level structure rebuilt every frame from the instance lists.
+    struct Blas { VkAccelerationStructureKHR as = VK_NULL_HANDLE; Buffer buf; VkDeviceAddress addr = 0; };
+    struct MeshRes { Buffer vb, ib; uint32_t indexCount = 0; bool alive = false; Buffer posf; Blas blas; };
     std::vector<MeshRes> meshes_;
+    bool rt_ = false;
+    Blas cubeBlas_;
+    struct Tlas { VkAccelerationStructureKHR as = VK_NULL_HANDLE; Buffer buf; VkDeviceSize bufSize = 0; Buffer instances; size_t instCap = 0; Buffer scratch; VkDeviceSize scratchSize = 0; bool built = false; };
+    Tlas tlas_[kFramesInFlight];
+    Blas buildBlas(VkDeviceAddress vtxAddr, uint32_t vtxCount, VkDeviceSize stride, VkDeviceAddress idxAddr, uint32_t triCount);
+    void destroyBlas(Blas& b);
+    void destroyTlas(Tlas& t);
+    void buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeInstance> cubes, std::span<const MeshInstance> meshes);
     VkSampler sampler_ = VK_NULL_HANDLE;
     VkSampler shadowSampler_ = VK_NULL_HANDLE;
     Texture atlas_;

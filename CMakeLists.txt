@@ -53,7 +53,9 @@ if(REDLINE_BUILD_GAME)
       shaders/cube.vert shaders/cube.frag
       shaders/quad.vert shaders/quad.frag
       shaders/shadow_cube.vert shaders/shadow_quad.vert shaders/shadow_quad.frag
-      shaders/mesh.vert shaders/mesh.frag shaders/shadow_mesh.vert)
+      shaders/mesh.vert shaders/mesh.frag shaders/shadow_mesh.vert
+      shaders/cube_rt.frag shaders/mesh_rt.frag shaders/quad_rt.vert)
+  file(GLOB SHADER_INCLUDES ${CMAKE_SOURCE_DIR}/shaders/*.glsl)
   set(SHADER_HEADERS)
   foreach(src ${SHADER_SOURCES})
     get_filename_component(name ${src} NAME)
@@ -64,7 +66,7 @@ if(REDLINE_BUILD_GAME)
       OUTPUT ${spv}
       COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
       COMMAND ${GLSLC} --target-env=vulkan1.3 -O -o ${spv} ${CMAKE_SOURCE_DIR}/${src}
-      DEPENDS ${CMAKE_SOURCE_DIR}/${src} ${CMAKE_SOURCE_DIR}/shaders/common.glsl
+      DEPENDS ${CMAKE_SOURCE_DIR}/${src} ${SHADER_INCLUDES}
       COMMENT "glslc ${src}")
     add_custom_command(
       OUTPUT ${hdr}

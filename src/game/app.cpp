@@ -48,6 +48,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (!window_) throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
     buildResolutionList();
     if (displayMode_ != 0) applyDisplay();
+    if (opts_.rtShadows >= 0) rtShadows_ = opts_.rtShadows;
     ctx_ = std::make_unique<render::VkContext>(window_, opts_.preferIntegrated);
     renderer_ = std::make_unique<render::Renderer>(*ctx_);
 
@@ -693,6 +694,7 @@ void App::adjustOption(int dir) {
     case 10: if (dir > 0) browseForWad(true); break;
     case 11: if (dir > 0) openScreen(kScreenEmailEntry); break;
     case 12: setDoomArt(doomArtOff_); break;   // toggles
+    case 13: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 3 + dir) % 3; saveDisplaySettings(); } break;
     case 7: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -714,12 +716,12 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 14;   // 13 options + BACK
+        const int n = 15;   // 14 options + BACK
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 13) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 13) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 13) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < 14) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < 14) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 14) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
@@ -839,6 +841,7 @@ void App::loadDisplaySettings() {
             std::string k = key, v = val;
             if (k == "mode") displayMode_ = std::clamp(std::atoi(v.c_str()), 0, 2);
             else if (k == "width") resW_ = std::max(640, std::atoi(v.c_str()));
+            else if (k == "rt_shadows") rtShadows_ = std::clamp(std::atoi(v.c_str()), 0, 2);
             else if (k == "height") resH_ = std::max(360, std::atoi(v.c_str()));
         }
         std::fclose(f);
@@ -850,7 +853,7 @@ void App::saveDisplaySettings() const {
     std::string base = pref ? pref : "";
     if (pref) SDL_free(pref);
     if (std::FILE* f = std::fopen((base + "display.txt").c_str(), "w")) {
-        std::fprintf(f, "mode=%d\nwidth=%d\nheight=%d\n", displayMode_, resW_, resH_);
+        std::fprintf(f, "mode=%d\nwidth=%d\nheight=%d\nrt_shadows=%d\n", displayMode_, resW_, resH_, rtShadows_);
         std::fclose(f);
     }
 }
@@ -2410,8 +2413,9 @@ void App::addHud() {
             row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 9); y += lh * 1.25f;
             row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)", screenIndex_ == 10); y += lh * 1.25f;
             row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.25f;
-            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.6f;
-            hotText(W * 0.5f, y, screenIndex_ == 13 ? "> BACK <" : "BACK", s, screenIndex_ == 13 ? yellow : dim, 1, kHotBack, 0);
+            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.25f;
+            row(y, "SHADOWS", !renderer_->rayTracingAvailable() ? "SHADOW MAP  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "SHADOW MAP" : rtShadows_ == 1 ? "RAY TRACED: SUN" : "RAY TRACED: SUN + ALL LIGHTS", screenIndex_ == 13); y += lh * 1.6f;
+            hotText(W * 0.5f, y, screenIndex_ == 14 ? "> BACK <" : "BACK", s, screenIndex_ == 14 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 2.f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
@@ -2579,6 +2583,7 @@ void App::buildScene() {
     frame_.shadowCenter = glm::vec3(0.f, 8.f, 10.f);
     frame_.shadowRadius = 26.f;
     frame_.shadowStrength = 0.85f;
+    frame_.rtShadows = renderer_->rayTracingAvailable() ? rtShadows_ : 0;
     float tilt = boardTilt();
     frame_.sunIntensity = glm::mix(0.9f, 0.55f, tilt);
     frame_.ambient = glm::mix(glm::vec3(0.30f, 0.30f, 0.34f), glm::vec3(0.21f, 0.17f, 0.17f), tilt);   // the fight stays moody but readable

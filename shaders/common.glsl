@@ -1,5 +1,8 @@
 // Shared declarations for all REDLINE shaders.
 #extension GL_GOOGLE_include_directive : enable
+#ifdef RT_SHADOWS
+#extension GL_EXT_ray_query : require
+#endif
 
 #define MAX_LIGHTS 32
 
@@ -21,6 +24,17 @@ layout(set = 0, binding = 0, std140) uniform FrameUBO {
 
 layout(set = 0, binding = 1) uniform sampler2D atlas;
 layout(set = 0, binding = 2) uniform sampler2DShadow shadowMap;
+
+#ifdef RT_SHADOWS
+layout(set = 0, binding = 3) uniform accelerationStructureEXT tlas;
+// 1 = nothing between origin and origin + dir * tmax, 0 = occluded. Opaque geometry only.
+float rtVisibility(vec3 origin, vec3 dir, float tmax) {
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.01, dir, tmax);
+    while (rayQueryProceedEXT(q)) {}
+    return rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
+}
+#endif
 
 // 1 = lit by the sun, 0 = fully shadowed. 3x3 percentage-closer filter.
 float sunShadow(vec3 P, vec3 N) {
@@ -46,11 +60,18 @@ vec3 shade(vec3 P, vec3 N, vec3 albedo, float roughness, float metallic) {
     float shininess = mix(96.0, 4.0, roughness);
     vec3 specColor = mix(vec3(0.04), albedo, metallic);
 
-    // Sun, shadowed
+    // Sun, shadowed (ray-traced when the frame asks for it, else the shadow map)
     {
         vec3 L = normalize(u.sunDir.xyz);
         float ndl = max(dot(N, L), 0.0);
-        float sh = ndl > 0.0 ? sunShadow(P, N) : 1.0;
+        float sh = 1.0;
+        if (ndl > 0.0) {
+#ifdef RT_SHADOWS
+            if (u.counts.y > 0) sh = rtVisibility(P + N * 0.04, L, 200.0);
+            else
+#endif
+            sh = sunShadow(P, N);
+        }
         diffuse += albedo * ndl * u.sunDir.w * sh;
         vec3 H = normalize(L + V);
         spec += specColor * pow(max(dot(N, H), 0.0), shininess) * ndl * u.sunDir.w * sh;
@@ -66,6 +87,12 @@ vec3 shade(vec3 P, vec3 N, vec3 albedo, float roughness, float metallic) {
         vec3 L = d / max(dist, 0.0001);
         float ndl = max(dot(N, L), 0.0);
         vec3 c = u.lightColor[i].rgb * u.lightColor[i].w * att;
+#ifdef RT_SHADOWS
+        // Torches, lamps, muzzle flashes and glowing blocks cast shadows too. The ray stops
+        // short of the light so an emitter sitting inside a block (a red cell) does not
+        // shadow itself; only lights that matter to this fragment are traced.
+        if (u.counts.y > 1 && ndl > 0.0 && att > 0.015) c *= rtVisibility(P + N * 0.04, L, max(0.05, dist - 0.6));
+#endif
         diffuse += albedo * ndl * c;
         vec3 H = normalize(L + V);
         spec += specColor * pow(max(dot(N, H), 0.0), shininess) * ndl * c;

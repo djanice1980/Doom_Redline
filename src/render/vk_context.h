@@ -47,6 +47,16 @@ public:
     VkExtent2D extent() const { return extent_; }
     const std::string& gpuName() const { return gpuName_; }
     bool rayQuerySupported() const { return rayQuery_; }
+    // Ray tracing (VK_KHR_acceleration_structure + ray_query), loaded when supported.
+    struct RtFuncs {
+        PFN_vkGetAccelerationStructureBuildSizesKHR getBuildSizes = nullptr;
+        PFN_vkCreateAccelerationStructureKHR create = nullptr;
+        PFN_vkDestroyAccelerationStructureKHR destroy = nullptr;
+        PFN_vkCmdBuildAccelerationStructuresKHR cmdBuild = nullptr;
+        PFN_vkGetAccelerationStructureDeviceAddressKHR getAddress = nullptr;
+    };
+    const RtFuncs& rt() const { return rt_; }
+    VkDeviceSize scratchAlignment() const { return scratchAlignment_; }
 
     // Frame lifecycle -----------------------------------------------------
     struct FrameCtx {
@@ -64,7 +74,9 @@ public:
     void requestResize() { resizePending_ = true; }
 
     // Resource helpers ----------------------------------------------------
-    Buffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, bool map);
+    // `deviceAddress` allocates with the device-address flag (acceleration-structure inputs, scratch, AS storage).
+    Buffer createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags props, bool map, bool deviceAddress = false);
+    VkDeviceAddress bufferAddress(const Buffer& b) const;
     void destroyBuffer(Buffer& b);
     Texture createTexture2D(uint32_t w, uint32_t h, VkFormat fmt, VkImageUsageFlags usage, VkImageAspectFlags aspect, VkMemoryPropertyFlags props = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     void destroyTexture(Texture& t);
@@ -96,6 +108,8 @@ private:
     uint32_t queueFamily_ = 0;
     std::string gpuName_;
     bool rayQuery_ = false;
+    RtFuncs rt_;
+    VkDeviceSize scratchAlignment_ = 256;
 
     VkSwapchainKHR swapchain_ = VK_NULL_HANDLE;
     VkFormat swapFormat_ = VK_FORMAT_B8G8R8A8_UNORM;

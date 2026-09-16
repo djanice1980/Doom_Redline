@@ -194,6 +194,27 @@ instanced draw.
   fragment shaders' `shade()` multiplies the sun term by a 3x3 PCF lookup;
   `shadowStrength` scales it (0 = off). The arena has no ceiling so the sun can
   reach the floor.
+- Ray-traced shadows (`VK_KHR_ray_query`, when `VkContext::rayQuerySupported()`):
+  the device is created with the acceleration-structure, ray-query and
+  deferred-host-operations extensions plus buffer device addresses, and the
+  five KHR entry points are fetched with `vkGetDeviceProcAddr`. One BLAS for
+  the unit cube (built from the cube VB/IB, which then carry the AS-input
+  usage) and one per voxel mesh (a float32 copy of the positions, built in
+  `createMesh`). `buildTlas` fills a host-visible instance buffer per frame in
+  flight from the cube list (translate * Rx * Ry * scale, matching
+  `cube.vert`) and the mesh list (their model matrices), builds the TLAS with
+  PREFER_FAST_BUILD into a per-frame buffer and scratch (grown on demand
+  after `waitIdle`), and a memory barrier hands it to the vertex and fragment
+  stages. The descriptor set gains binding 3 (acceleration structure) only
+  when supported, rewritten each frame; `cube_rt.frag`, `mesh_rt.frag` and
+  `quad_rt.vert` are `#version 460` wrappers that define `RT_SHADOWS` around
+  the shared bodies, and `common.glsl`'s `shade()` then calls `rtVisibility`
+  (opaque, terminate-on-first-hit, 0.04 normal offset) for the sun when
+  `u.counts.y >= 1` and for point lights with `att > 0.015` when
+  `u.counts.y == 2`; point-light rays stop 0.6 short of the light so a red
+  block does not shadow its own glow. The shadow map pass still runs every
+  frame so the map descriptor is always valid. Cost on the RTX 5070 Ti at
+  1600x900: about 6 ms per frame for all lights, under 1 ms for the sun only.
 - `MeshInstance`: a static mesh id (`createMesh` uploads 12-byte vertices:
   int16 corner xyz + face-normal index, RGBA8 colour) with a model matrix, tint
   and emissive passed as 96 bytes of push constants. Used for voxel models;
