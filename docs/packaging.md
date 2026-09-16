@@ -87,8 +87,11 @@ default anyway. Add `"fluidsynth"` to the dependency list to include it.
 Windows: it runs a Fedora container with the mingw-w64 toolchain and Fedora's
 mingw packages for SDL3, libvorbis, libogg and the Vulkan loader, builds with
 the repo's CMake files through a mingw toolchain file, and stages
-`build-win/redline-<version>-win64/` (redline.exe, the test executables, the
-DLLs the exe imports, README, LICENSE, docs) plus a zip of it. Needs Docker
+`build-win/redline-<version>-win64/` (redline.exe, the DLLs it imports, the
+voxel pack, README, LICENSE, docs) plus a zip of it. The unit tests are
+compiled as part of the build but not staged; `REDLINE_STAGE_TESTS=1` adds
+them for running under Wine. Nothing in the release flows (this script,
+`cmake --install`, CPack, the Inno Setup script) ever ships a test binary. Needs Docker
 and, on the first run, the network for the image and packages (about 400 MB);
 a rebuild takes a couple of minutes.
 

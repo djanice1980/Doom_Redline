@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Cross-compile a Windows x64 build of REDLINE from Linux using Docker and the
 # Fedora mingw-w64 packages (gcc, SDL3, libvorbis, Vulkan loader). Produces
-#   build-win/redline-<version>-win64/   redline.exe + the DLLs it needs
+#   build-win/redline-<version>-win64/   redline.exe + the DLLs it needs (+ the unit-test
+#                                        exes only with REDLINE_STAGE_TESTS=1)
 #   build-win/redline-<version>-win64.zip
 # No Doom data is included; the game asks for doom.wad on first launch.
 #
@@ -21,7 +22,7 @@ if [ -d /usr/include/glm ]; then GLM_ARGS=(-v /usr/include/glm:/glm/glm:ro); fi
 
 docker run --rm \
   -v "$REPO:/src:ro" -v "$OUT:/out" "${GLM_ARGS[@]}" \
-  -e VERSION="$VERSION" \
+  -e VERSION="$VERSION" -e REDLINE_STAGE_TESTS="${REDLINE_STAGE_TESTS:-0}" \
   "$IMAGE" bash -euo pipefail -c '
     dnf -q -y install mingw64-gcc-c++ mingw64-SDL3 mingw64-libvorbis mingw64-libogg \
         mingw64-vulkan-headers mingw64-vulkan-loader mingw64-winpthreads-static \
@@ -61,7 +62,10 @@ EOF
     # which on Windows comes from the graphics driver in System32.
     DEST=/out/redline-$VERSION-win64
     rm -rf "$DEST" && mkdir -p "$DEST"
-    cp /tmp/bw/redline.exe /tmp/bw/*_test.exe "$DEST"/ 2>/dev/null || cp /tmp/bw/redline.exe "$DEST"/
+    cp /tmp/bw/redline.exe "$DEST"/
+    # The unit-test executables are built (so a broken test build fails here) but only
+    # staged when asked for, e.g. to run them under Wine: REDLINE_STAGE_TESTS=1.
+    if [ "${REDLINE_STAGE_TESTS:-0}" = "1" ]; then cp /tmp/bw/*_test.exe "$DEST"/ 2>/dev/null || true; fi
     cp /work/README.md /work/LICENSE "$DEST"/
     cp -r /work/assets/voxel-doom "$DEST"/voxels     # the MIT-licensed Voxel Doom pack, found next to the exe
     cp -r /work/docs "$DEST"/docs && rm -f "$DEST"/docs/*.pptx
