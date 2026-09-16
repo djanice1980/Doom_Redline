@@ -107,3 +107,43 @@ renderer has to do its own ray tracing, which is what 1-3 are. Mesh shaders
 and opacity micromaps have no use here. Everything in 1-3 also runs on the
 Radeon 8060S, so it can be developed and tested on the laptop and profiled
 on the 5070 Ti when the eGPU is attached.
+
+## Material data in the GZDoom: Ray Traced release (looked at 2026-09-16)
+
+`gzdoom-rt-1.0.2.zip` (github.com/vs-shirokii/gzdoom-rt, GPLv3 code, built on
+the MIT-licensed RTGL1 path tracer) carries two things useful for items 2
+and 3 above:
+
+- `rt/mat/`: 1,445 small KTX2 textures giving 914 Doom wall and flat
+  textures a normal map (`<NAME>_remix_normal.ktx2`, BC5 or RGBA8, with
+  mips) and a roughness map (`<NAME>_remix_roughness.ktx2`, RGBA8); a few
+  hand-made `_n` / `_e` / `_orm` / `_h` sets for lights and doors. All three
+  textures REDLINE uses (STARTAN3, FLOOR4_8, CEIL3_5) have both maps.
+  KTX2 with no supercompression is trivial to read (48-byte header, level
+  index at offset 80) and BC5/RGBA8 upload straight into Vulkan.
+- `rt/data/textures.json` (JSON with `//` comments): 342 per-texture
+  overrides: `emissiveMult` for lights, lava, nukage and fire textures,
+  `isMirror` / `isMirrorIfSmooth` for water, blood and slime,
+  `roughnessDefault` / `metallicDefault`, and light colour/intensity for
+  emissive textures. None of our three textures has an entry, so they take
+  the port's defaults.
+
+Licensing: the `rt/` assets carry no licence text. The `_remix_` maps look
+generated from id's textures with the RTX Remix Toolkit's AI PBR tool, which
+makes them derivatives of id Software art. So: **do not bundle them**. Treat
+them like extras.wad: an optional pack found on the player's disk
+(`REDLINE_MATERIALS=<gzdoom-rt folder>/rt/mat`, or the Steam-style folder
+search) and loaded when present. The fallback that keeps the feature
+available to everyone is to generate our own maps from the albedo at load
+time (height from luminance, normal from its gradient, roughness from
+inverse local contrast), which is a few dozen lines and has no licensing
+question; it also covers the block tiles, which the port has nothing for.
+
+How that feeds items 2 and 3: reflections need a per-pixel roughness for the
+floor (the roughness map or the generated one) and a metallic/mirror flag
+per surface (from textures.json conventions: floor tiles semi-glossy, walls
+rough, water-style mirrors not used here); ray-traced AO and GI need the
+normal maps to look right on close-up walls. The renderer's cube instances
+already carry roughness/metallic params; the missing piece is a second atlas
+(or two extra channels) for the normal and roughness maps, sampled in
+`cube_frag_body.glsl`.
