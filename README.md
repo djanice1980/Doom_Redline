@@ -18,6 +18,32 @@ is present, with procedural fallbacks so the game runs without it. The music
 is Doom's own MUS scores played through a built-in OPL3 (Adlib) synthesizer
 using the WAD's GENMIDI instrument bank, the way the game sounded in 1993.
 
+## Windows
+
+Grab `redline-<version>-win64.zip` (from the GitHub release, or build it as
+described below), unzip it anywhere, and run `redline.exe`. The folder holds
+the game, `SDL3.dll`, the three ogg/vorbis DLLs, and a `voxels` folder with the
+3D model pack; nothing needs installing. Requirements:
+
+- 64-bit Windows 10 or 11 with a Vulkan-capable GPU and a current graphics
+  driver (NVIDIA, AMD and Intel drivers all ship the Vulkan loader; if the
+  game reports no Vulkan device, update the driver).
+- Your own `doom.wad` or `doom2.wad`. On first launch the game looks in the
+  Steam and GOG install folders; if it finds nothing it asks, with a file
+  browser. `extras.wad` from the Doom + Doom II rerelease, kept next to it,
+  adds the two extra soundtracks.
+
+Where things live: save data (profiles, scores, trophies, settings, the
+remembered WAD path) under `%APPDATA%\redline\redline\`, and the log at
+`%APPDATA%\redline\redline\redline.log`, which is the first thing to look at
+if the game closes at start-up. Alt+Enter toggles fullscreen; Xbox and
+PlayStation controllers work through SDL3.
+
+The Windows installer (`redline-<version>-setup.exe`, built with Inno Setup)
+does the same and asks for the WAD during setup. Building either yourself is
+covered in `docs/packaging.md`: with Visual Studio and vcpkg on Windows, or
+from Linux in one command with Docker (`packaging/windows/cross-build.sh`).
+
 ## Build (Arch / CachyOS)
 
 Everything needed is a pacman package:
