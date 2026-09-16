@@ -792,12 +792,13 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 18;   // 17 options + BACK
+        const int n = 18;   // 17 options + BACK (the last index)
+        const int back = n - 1;
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_LEFT) { if (screenIndex_ < 14) adjustOption(-1); }
-        else if (key == SDLK_RIGHT) { if (screenIndex_ < 14) adjustOption(1); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == 14) closeScreen(); else adjustOption(1); }
+        else if (key == SDLK_LEFT) { if (screenIndex_ < back) adjustOption(-1); }
+        else if (key == SDLK_RIGHT) { if (screenIndex_ < back) adjustOption(1); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == back) closeScreen(); else adjustOption(1); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
