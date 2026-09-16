@@ -1270,7 +1270,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdSetScissor(cmd, 0, 1, &vsc);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, volumePipe_);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
-        const glm::vec4 vpc(params.volumetric * 0.0025f, params.volumetric * 0.02f, 14.f, 0.f);
+        const glm::vec4 vpc(params.volumetric * 0.0006f, params.volumetric * 0.009f, 14.f, 0.f);   // faint air, glow that hugs the flames
         vkCmdPushConstants(cmd, pipeLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::vec4), &vpc);
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRendering(cmd);

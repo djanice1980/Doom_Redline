@@ -35,8 +35,8 @@ void main() {
             for (int l = 0; l < u.counts.x; ++l) {
                 vec3 dl = u.lightPos[l].xyz - P;
                 float dist = length(dl);
-                float att = clamp(1.0 - dist / max(u.lightPos[l].w, 0.001), 0.0, 1.0);
-                att *= att;
+                float att = clamp(1.0 - dist / (0.7 * max(u.lightPos[l].w, 0.001)), 0.0, 1.0);   // tighter than the surface lighting
+                att *= att * att;
                 acc += u.lightColor[l].rgb * (u.lightColor[l].w * att * pc.p.y * w);
             }
     }
