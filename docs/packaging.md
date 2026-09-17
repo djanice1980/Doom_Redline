@@ -31,6 +31,22 @@ For a smoke test of the live swap without a dialog:
 `redline --reload-wad /path/to/doom.wad` starts on placeholder art and switches
 after 30 frames.
 
+## Bundled data that is not the WAD
+
+Three folders ship with every build and are optional at runtime; the game
+falls back to WAD art when one is missing. Each is self-contained with its own
+licence or credits file, so any of them can be dropped from a release without
+touching the code:
+
+| Folder in the repo | Windows zip / installer | Linux install | What it is |
+|---|---|---|---|
+| `assets/voxel-doom/` | `voxels/` next to the exe | `share/redline/voxel-doom` | Cheello's Voxel Doom models (MIT); OPTIONS > MODELS |
+| `assets/materials/` | `materials/` | `share/redline/materials` | Normal and roughness maps for the three arena textures from GZDoom: Ray Traced |
+| `assets/brutal/` | `brutal/` | `share/redline/brutal` | Community gore sprites, sounds and voxel gibs (`CREDITS.txt` inside); OPTIONS > DOOM ART > BRUTAL |
+
+`REDLINE_VOXELS`, `REDLINE_NO_MATERIALS=1` and `REDLINE_BRUTAL_PACK` point at
+or disable each one for testing.
+
 ## Windows (MSVC + vcpkg + Inno Setup)
 
 Everything below runs in a normal Windows command prompt (or PowerShell); no

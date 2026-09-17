@@ -21,9 +21,14 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
   when a line clear beneath them (per-column collapse) or the post-fight
   collapse (`collapseAll_`, every cell falls one row per `settleStepTime`)
   drops them. `Rules::redCellsSettle` (off by default) is the opt-in "sand"
-  variant where loose red cells fall after every lock. When nothing moves, the
-  clear check runs again (a collapse can complete a row), then the red-line
-  check, then the next piece spawns.
+  variant where loose red cells fall after every lock. Every settle step also
+  applies *sticky gravity*: the grid is flood-filled into 4-connected groups
+  (red cells included) and any group with no cell on the bottom row and
+  nothing beneath it from another group falls one row. This is what stops a
+  clump from hanging in the air after a per-column clear left it unsupported
+  (`testFloatingGroupFalls`). When nothing moves, the clear check runs again
+  (a fall can complete a row, scored as a chain), then the red-line check,
+  then the next piece spawns.
 - **Corruption.** `danger()` = clamp((stackRows - corruptionStartRows) /
   (20 - corruptionStartRows)). While a piece is falling, corruption events
   fire at `corruptionRate * danger^2 * (1 + 0.1 (level-1))` per second. Each
@@ -225,6 +230,19 @@ instanced draw.
 - Negative-height viewport keeps GL conventions (+Y up, CCW front faces).
 - `screenshot()` copies the last presented swapchain image to a PNG (stored
   deflate; no zlib dependency).
+- Post chain (see README "Post-processing" and "Ray tracing" for the player's
+  view): the world renders to an RGBA16F target, 4x MSAA when enabled, then
+  bright-pass, three Gaussian levels, a half-resolution volumetric march
+  (`volume.frag`: sun through the shadow map plus point-light haze), and
+  `composite.frag` (soft-knee tone map, warm grade). The HUD is drawn LDR
+  after the composite; screen quads with `params.w` bit 1 set (weapon, muzzle
+  flash) go into the HDR pass instead. Ray-query mode 3 adds floor and block
+  reflections (hits resolved through the TLAS custom index into a cube SSBO
+  and a mesh-address table) and a three-ray ambient-occlusion term.
+- Screen quads: `mode 1` HUD, `mode 2/3` floor/wall decals, `params.w` bit 2
+  = soft alpha (no cutoff, no shadow). The atlas has three mip levels with
+  sprite edges dilated so the sharpened bilinear sampler (`atlas_frag.glsl`)
+  never bleeds transparent texels into a sprite.
 
 ## Voxel models (`src/game/kvx.cpp`, `src/game/voxels.cpp`)
 
@@ -278,10 +296,24 @@ pain / death frame runs per the Doom state tables, weapons `SHTG`/`SHTF`,
 `ROCK`, `CELL`, `MGUN`, `LAUN`, `PLAS`, rocket `MISL` (A flight, B-D blast),
 plasma `PLSS`/`PLSE`, fireballs `BAL1`/`BAL2`/`BAL7` (A-B flight, C-E impact),
 wall `STARTAN3`, floor `FLOOR4_8`, ceiling `CEIL3_5`, font `STCFN*` (converted
-to white so HUD tints work), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
+to white so HUD tints work, and stored a second time upscaled 4x through the
+xBR kernel in `core/pixel_scale.cpp` as `Assets::fontBig`, which `App::text`
+uses for anything drawn at 3x or more), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
 `DSFIRSHT`, `DSFIRXPL`, `DSPOPAIN`, `DSBGDTH1`, `DSBGSIT1`, `DSPLPAIN`,
 `DSPDIEHI`, `DSDMACT`, `DSITEMUP`, `DSPSTOP`, `DSSWTCHN`, `DSSTNMOV`, `DSGETPOW`.
 Anything missing falls back to `procedural.cpp`. Block tiles are always ours.
+
+Brutal mode (`App::brutalActive()` = the BRUTAL option and Doom art on)
+draws gore particles (`Gore`: blood, chunks, casings, colour per monster kind),
+decals (pools, splats, bullet holes), gib deaths, per-weapon death animations
+(`EnemyArt::brDeath`, a `SPRITE:FRAMES:tics` table in `assets.cpp`), Brutal
+weapon art and sounds. The art comes from the optional community pack
+(`Assets::findBrutalPack`, `assets/brutal/`, credits inside); without it the
+WAD's own blood, pool and puff sprites are used. Doom 2 monsters
+(chaingunner, hell knight, revenant, mancubus, arachnotron) are tier
+*variants* (`Enemy::kind` 7-11) when a companion `doom2.wad` sits next to the
+chosen WAD; `FpsMode` is rebuilt per game, so `setBrutal` and
+`setKindAvailable` are re-applied after `fps_ = FpsMode()`.
 
 ## Music (`src/audio/`)
 
@@ -354,8 +386,11 @@ it server-side. `stats_test` covers the round trip across two machines.
   `<pref>/profile.txt` names the last player. `switchProfile` adopts files
   from the old flat layout the first time. `--profile NAME` skips the prompt;
   scripted scenarios default to a `PLAYER` profile.
-- Overlay screens (`screen_`): Options (music set/volume/on, stick
-  sensitivity, invert, rumble), Trophies, Players, Name entry (keyboard text
+- Overlay screens (`screen_`): Options (music set, music and SFX volume
+  (`Audio::setMasterGain`), music on, stick sensitivity, invert, rumble,
+  display, resolution, models, Doom WAD, soundtrack WAD, email, Doom art with
+  BRUTAL as a sub-row, ray tracing, anti-aliasing, bloom & haze; BACK is the
+  last row, `n - 1`), Trophies, Players, Name entry (keyboard text
   input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
   both keyboard and pad input mapped to key codes.
 - Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks
@@ -371,4 +406,12 @@ it server-side. `stats_test` covers the round trip across two machines.
   squared look response (3.4 / 2.2 rad/s at full stick times sensitivity);
   left stick emulates the d-pad with hysteresis in block mode so DAS works.
 - Corpses: Dead monsters are drawn for 1.6 s (bosses 1.2 s, cacodemons
-  0.35 s) and shrink/darken over the last 0.35 s.
+  0.35 s; Brutal deaths as long as their animation) plus 5 s, and
+  shrink/darken over the last 0.35 s.
+- Evil banner: while `danger() > 0` in block mode the HUD draws the warning
+  in the column right of the board (`x = ((W/2 + 0.3H) + W - 24) / 2`), two
+  lines, with an eight-way red halo, hash-driven flicker (dropouts scale with
+  danger), a scale pop and jitter from `evilJolt_` (set on `CellTurnedRed`),
+  constant shake in panic, and `Drip` particles spawned along the last
+  banner's extent that run down as viscous blood. Announcements stack under
+  it in that column while playing, shrunk to fit; elsewhere they stay centred.
