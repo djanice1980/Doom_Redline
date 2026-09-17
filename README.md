@@ -243,11 +243,14 @@ is the chosen WAD everything is in it already.
 ## Menu text
 
 Doom's STCFN font is 8 pixels tall, and the HUD draws it four to six times
-larger. Every glyph also goes into the atlas upscaled 4x with xBR (Hyllian's
-edge-directed interpolation), and any text drawn at 3x or more uses that
-copy: stair-steps become smooth, anti-aliased diagonals and curves while flat
-edges and corners stay crisp. Small text (the hints, the status line) keeps
-the original pixels.
+larger, so the game keeps two fonts. Small text (the hints, the status line)
+uses the WAD's own pixels. Anything drawn at 3x or more uses a 4x copy of
+each glyph: the AI-upscaled one from `assets/font-hd/` (Real-ESRGAN, see the
+README there; regenerate with `tools/font_upscale.sh`) when the WAD's glyph
+matches the one it was made from, otherwise an xBR upscale (Hyllian's
+edge-directed interpolation) computed from the WAD at load time. Either way
+stair-steps become smooth, anti-aliased curves. Set `REDLINE_FONT_HD=0` to
+compare against the xBR route.
 
 ## Display scaling
 

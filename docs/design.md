@@ -318,9 +318,11 @@ pain / death frame runs per the Doom state tables, weapons `SHTG`/`SHTF`,
 `ROCK`, `CELL`, `MGUN`, `LAUN`, `PLAS`, rocket `MISL` (A flight, B-D blast),
 plasma `PLSS`/`PLSE`, fireballs `BAL1`/`BAL2`/`BAL7` (A-B flight, C-E impact),
 wall `STARTAN3`, floor `FLOOR4_8`, ceiling `CEIL3_5`, font `STCFN*` (converted
-to white so HUD tints work, and stored a second time upscaled 4x through the
-xBR kernel in `core/pixel_scale.cpp` as `Assets::fontBig`, which `App::text`
-uses for anything drawn at 3x or more), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
+to white so HUD tints work, and stored a second time at 4x as
+`Assets::fontBig`, which `App::text` uses for anything drawn at 3x or more:
+the Real-ESRGAN glyph from `assets/font-hd` when `manifest.txt` matches the
+WAD glyph's size and alpha-mask CRC, else the xBR kernel in
+`core/pixel_scale.cpp`; `fontHdGlyphs` counts the matches), `M_DOOM` title. Sounds: `DSSHOTGN`, `DSBAREXP`,
 `DSFIRSHT`, `DSFIRXPL`, `DSPOPAIN`, `DSBGDTH1`, `DSBGSIT1`, `DSPLPAIN`,
 `DSPDIEHI`, `DSDMACT`, `DSITEMUP`, `DSPSTOP`, `DSSWTCHN`, `DSSTNMOV`, `DSGETPOW`.
 Anything missing falls back to `procedural.cpp`. Block tiles are always ours.

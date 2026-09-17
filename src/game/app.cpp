@@ -111,6 +111,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
         std::fprintf(stderr, "[assets] no Doom WAD found; using procedural art (the game will ask for one; or pass --wad <file> / set REDLINE_WAD)\n");
     }
     assets_.brutalPackDir = Assets::findBrutalPack(baseDir_);
+    assets_.fontPackDir = Assets::findFontPack(baseDir_);
     if (!assets_.load(wad, audio_, extrasHint())) throw std::runtime_error("asset build failed");
     for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
     if (wad && assets_.usingWad()) wadPath_ = wad->string();
@@ -198,6 +199,7 @@ void App::initMusic() {
 bool App::reloadAssets(const std::filesystem::path& wad, const std::string& extras) {
     Assets fresh;
     fresh.brutalPackDir = assets_.brutalPackDir;
+    fresh.fontPackDir = assets_.fontPackDir;
     if (!fresh.load(wad, audio_, extras.empty() ? extrasHint() : extras) || !fresh.usingWad()) {
         std::fprintf(stderr, "[assets] %s is not a usable Doom WAD\n", wad.string().c_str());
         return false;
@@ -300,6 +302,7 @@ void App::setDoomArt(bool on) {
     if (!assets_.usingWad()) return;
     Assets fresh;
     fresh.brutalPackDir = assets_.brutalPackDir;
+    fresh.fontPackDir = assets_.fontPackDir;
     fresh.load(std::nullopt, audio_);
     applyAssets(std::move(fresh));
     announce("PLACEHOLDER ART", glm::vec4(0.8f, 0.9f, 1.f, 1.f), 1.1f);

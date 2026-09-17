@@ -82,6 +82,8 @@ public:
     std::string bloodPool;
     // The bundled community pack (assets/brutal, see CREDITS.txt there): richer gore. Empty anims when absent.
     std::optional<std::filesystem::path> brutalPackDir;   // set before load(); found with findBrutalPack()
+    std::optional<std::filesystem::path> fontPackDir;     // AI-upscaled menu font (assets/font-hd); found with findFontPack()
+    int fontHdGlyphs = 0;                                  // how many glyphs came from that pack (0 = xBR only)
     bool brutalPack = false;
     SpriteAnim brChunk[3], brChunkBig[3], brPool[3], brSplat[3], brSpray[3];   // indexed by blood colour: red, green, blue
     SpriteAnim brSmoke, brCasingBullet, brCasingShell, brBlast;
@@ -93,6 +95,7 @@ public:
     bool brWeaponSounds = false, brPlayerPain = false;   // "br_shoot" etc. and "br_pain"
     int brExplodeSounds = 0, brBoneSounds = 0, brImpSounds = 0, brZombieSight = 0;   // "br_explodeN", "bonecrN", "impclawN", "zcsitN"
     static std::optional<std::filesystem::path> findBrutalPack(const std::string& baseDir);
+    static std::optional<std::filesystem::path> findFontPack(const std::string& baseDir);
     // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
     std::string wallLump, floorLump, ceilingLump;
     std::string crosshair = "crosshair";

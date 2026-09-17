@@ -1,5 +1,6 @@
 #include "game/assets.h"
 
+#include "core/png.h"
 #include "core/png_read.h"
 #include "core/pixel_scale.h"
 #include "audio/oggstream.h"
@@ -12,6 +13,8 @@
 #include "game/procedural.h"
 #ifdef REDLINE_HAVE_WAD
 #include "wad/wad.h"
+
+namespace rl::game { namespace { std::vector<uint8_t> readAll(const std::filesystem::path& p); } }
 #endif
 
 namespace rl::game {
@@ -529,14 +532,52 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     font.clear();
     fontBig.clear();
     fontBigScale = 4;
-    // Each glyph goes in twice: as is for small text, and upscaled with smoothed
-    // edges for the menus and banners, where the HUD would otherwise show the
-    // 8-pixel letters blown up four to six times.
+    fontHdGlyphs = 0;
+    // The AI-upscaled font (assets/font-hd, see its README): one PNG per glyph at
+    // 4x, used only when the WAD's own glyph has the size and shape the manifest
+    // recorded, so a different IWAD's font never gets Doom's letters.
+    struct HdGlyph { int w, h, lx, ty; uint32_t crc; };
+    std::map<int, HdGlyph> hd;
+    if (fontPackDir) {
+        if (FILE* mf = std::fopen((*fontPackDir / "manifest.txt").string().c_str(), "r")) {
+            char line[256];
+            while (std::fgets(line, sizeof(line), mf)) {
+                int code, w, h, lx, ty; unsigned crc;
+                if (line[0] != '#' && std::sscanf(line, "%d %d %d %d %d %x", &code, &w, &h, &lx, &ty, &crc) == 6) hd[code] = {w, h, lx, ty, crc};
+            }
+            std::fclose(mf);
+        }
+    }
+    // Each glyph goes in twice: as is for small text, and upscaled for the menus
+    // and banners, where the HUD would otherwise show the 8-pixel letters blown
+    // up four to six times: the AI-upscaled copy when the pack has a match,
+    // else xBR (edge-directed interpolation) of the WAD glyph.
     auto addGlyph = [&](char ch, const Image& img) {
-        const std::string id = std::to_string(static_cast<int>(static_cast<unsigned char>(ch)));
+        const int code = static_cast<int>(static_cast<unsigned char>(ch));
+        const std::string id = std::to_string(code);
         atlas_.add("font_" + id, img);
         font[ch] = "font_" + id;
-        Image big = scalePixelArt(img, fontBigScale);
+        Image big;
+        auto it = hd.find(code);
+        if (it != hd.end() && it->second.w == img.width && it->second.h == img.height) {
+            std::vector<uint8_t> mask(static_cast<size_t>(img.width) * img.height);
+            for (size_t i = 0; i < mask.size(); ++i) mask[i] = img.rgba[i * 4 + 3] ? 1 : 0;
+            if ((rl::png_detail::crc32(mask.data(), mask.size()) ^ 0xFFFFFFFFu) == it->second.crc) {
+                char name[16];
+                std::snprintf(name, sizeof(name), "%03d.png", code);
+                if (auto png = decodePng(readAll(*fontPackDir / name))) {
+                    if (png->width == img.width * fontBigScale && png->height == img.height * fontBigScale) {
+                        big = std::move(*png);
+                        for (int i = 0; i < big.width * big.height; ++i) {   // red to white intensity, like the WAD glyphs, so tints work
+                            uint8_t* px = &big.rgba[static_cast<size_t>(i) * 4];
+                            px[0] = px[1] = px[2] = std::max({px[0], px[1], px[2]});
+                        }
+                        ++fontHdGlyphs;
+                    }
+                }
+            }
+        }
+        if (!big.valid()) big = scalePixelArt(img, fontBigScale);
         big.offsetX = img.offsetX * fontBigScale;
         big.offsetY = img.offsetY * fontBigScale;
         atlas_.add("fontb_" + id, big);
@@ -558,6 +599,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         for (auto& [ch, img] : proc::font(1)) addGlyph(ch, img);
         maxH = 7;
     }
+    if (fontPackDir) std::fprintf(stderr, "[assets] font-hd: %d of %zu glyphs from %s\n", fontHdGlyphs, font.size(), fontPackDir->string().c_str());
     fontHeight = maxH > 0 ? maxH : 8;
 
     // Sounds: prefer the WAD, fall back to procedural for anything missing.
@@ -627,6 +669,24 @@ std::optional<fs::path> Assets::findBrutalPack(const std::string& baseDir) {
     candidates.emplace_back("/usr/local/share/redline/brutal");
     std::error_code ec;
     for (const fs::path& c : candidates) if (fs::is_directory(c / "sprites", ec)) return c;
+    return std::nullopt;
+}
+
+std::optional<fs::path> Assets::findFontPack(const std::string& baseDir) {
+    std::vector<fs::path> candidates;
+    if (const char* e = std::getenv("REDLINE_FONT_HD")) { if (!*e || std::strcmp(e, "0") == 0) return std::nullopt; candidates.emplace_back(e); }
+    if (!baseDir.empty()) {
+        fs::path base(baseDir);
+        candidates.push_back(base / "font-hd");
+        candidates.push_back(base / ".." / "share" / "redline" / "font-hd");
+        candidates.push_back(base / "assets" / "font-hd");
+        candidates.push_back(base / ".." / "assets" / "font-hd");
+    }
+    candidates.emplace_back("assets/font-hd");
+    candidates.emplace_back("/usr/share/redline/font-hd");
+    candidates.emplace_back("/usr/local/share/redline/font-hd");
+    std::error_code ec;
+    for (const fs::path& c : candidates) if (fs::is_regular_file(c / "manifest.txt", ec)) return c;
     return std::nullopt;
 }
 

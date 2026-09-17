@@ -43,9 +43,11 @@ touching the code:
 | `assets/voxel-doom/` | `voxels/` next to the exe | `share/redline/voxel-doom` | Cheello's Voxel Doom models (MIT); OPTIONS > MODELS |
 | `assets/materials/` | `materials/` | `share/redline/materials` | Normal and roughness maps for the three arena textures from GZDoom: Ray Traced |
 | `assets/brutal/` | `brutal/` | `share/redline/brutal` | Community gore sprites, sounds and voxel gibs (`CREDITS.txt` inside); OPTIONS > DOOM ART > BRUTAL |
+| `assets/font-hd/` | `font-hd/` | `share/redline/font-hd` | Doom's menu font AI-upscaled 4x (`README.txt` inside); used only when the WAD's glyphs match |
 
-`REDLINE_VOXELS`, `REDLINE_NO_MATERIALS=1` and `REDLINE_BRUTAL_PACK` point at
-or disable each one for testing.
+`REDLINE_VOXELS`, `REDLINE_NO_MATERIALS=1`, `REDLINE_BRUTAL_PACK` and
+`REDLINE_FONT_HD` (a folder, or `0` to disable) point at or disable each one
+for testing.
 
 ## Windows (MSVC + vcpkg + Inno Setup)
 
