@@ -140,6 +140,16 @@ instanced draw.
   (`moveWithCollision`); cacodemons fly over blocks. Line of sight and the
   shotgun ray use `rayBlockDistance` (0.05 m march against `solidAt`, which
   treats cells below 1 m and the frame as solid).
+- Facing (`Enemy::yaw`, `moveDir`, `moveCount`, `blocked`): a monster wakes
+  facing the player. While chasing it picks one of eight compass directions
+  closest to the player (`P_NewChaseDir`), holds it 0.1-0.45 s, and turns
+  toward it at 360 deg/s; a move that made under 30 % of its expected
+  progress marks it blocked, and the next pick sidesteps 45 or 90 degrees.
+  Standing in range it tracks the player at 180 deg/s (slow enough to flank);
+  entering Attack snaps the heading to the player (`A_FaceTarget`) and keeps
+  tracking through the attack frames; Pain, Dying and Dead leave it alone.
+  `addFpsActors` passes the heading to `actor()`, which rotates voxel models
+  by it and ignores it for sprites (camera-facing billboards).
 - Enemies rise out of the board when the phase starts (their red cubes sink
   away in sync). Zombies hitscan (65 % hit chance with LOS), imps/cacos/barons
   launch BAL1/BAL2/BAL7 fireballs at the player's centre (so chest-high blocks

@@ -8,6 +8,16 @@ namespace rl::game {
 namespace {
 constexpr float kPi = 3.14159265f;
 constexpr float kMoveSpeed = 5.0f;
+// Doom's A_Chase turns 45 degrees every few tics (a few hundred degrees a second) towards the way
+// it is going; A_FaceTarget snaps to the target when it attacks.
+constexpr float kChaseTurnRate = 2.f * kPi;     // rad/s while walking
+constexpr float kStandTurnRate = kPi;           // rad/s while standing in range: slower, so it can be flanked
+
+float wrapAngle(float a) { while (a > kPi) a -= 2.f * kPi; while (a < -kPi) a += 2.f * kPi; return a; }
+void turnTowards(float& yaw, float target, float maxStep) {
+    const float d = wrapAngle(target - yaw);
+    yaw = wrapAngle(yaw + std::clamp(d, -maxStep, maxStep));
+}
 constexpr float kRunMultiplier = 1.75f;
 constexpr int kBossTier = 5;   // cyberdemon and up: at most one alive at a time
 constexpr float kMouseSens = 0.0022f;
@@ -218,6 +228,11 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
             e.absorbTimer = absorbPeriodForLevel(absorbPeriod_, level) * (0.9f + 0.2f * u(rng_));
             e.bobPhase = u(rng_) * 6.28f;
             e.stateT = -0.12f * static_cast<float>(enemies_.size());   // stagger the emergence
+            {   // wakes up facing the player
+                const glm::vec3 to = playerPos_ - e.pos;
+                e.yaw = (std::fabs(to.x) + std::fabs(to.z) > 1e-3f) ? std::atan2(to.x, to.z) : kPi;
+                e.moveDir = glm::vec3(std::sin(e.yaw), 0.f, std::cos(e.yaw));
+            }
             // The region's cells become the monster's body: clear them so the
             // pocket it stands in is open.
             for (auto [c, r] : cells) game.clearCell(c, r);
@@ -915,7 +930,8 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
 
         switch (e.state) {
         case Enemy::State::Emerging: {
-            // Rise out of the board.
+            // Rise out of the board, facing the player.
+            if (dist > 1e-3f) e.yaw = std::atan2(dir.x, dir.z);
             float t = std::clamp(e.stateT / 0.9f, 0.f, 1.f);
             float s = t * t * (3 - 2 * t);
             e.pos.y = -e.height + (e.height + restY) * s;
@@ -926,14 +942,31 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
             e.pos.y = restY;
             bool los = lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game);
             // Movers close in; flyers drift over the blocks.
+            bool walking = false;
             if (st.speed > 0.f && health_ > 0.f) {
                 float want = (st.attack == AttackKind::Melee) ? 0.9f : 5.f;
                 if (dist > want) {
-                    glm::vec3 delta = dir * st.speed * dt;
+                    walking = true;
+                    e.moveCount -= dt;
+                    if (e.moveCount <= 0.f) {
+                        // P_NewChaseDir: head for the target along one of eight compass
+                        // directions and keep it for a moment; if the last move got nowhere,
+                        // sidestep 45 or 90 degrees instead of pushing into the obstacle.
+                        float a = std::round(std::atan2(dir.x, dir.z) / (kPi / 4.f)) * (kPi / 4.f);
+                        if (e.blocked) a += (u(rng_) < 0.5f ? 1.f : -1.f) * (kPi / 4.f) * (u(rng_) < 0.5f ? 1.f : 2.f);
+                        e.moveDir = glm::vec3(std::sin(a), 0.f, std::cos(a));
+                        e.moveCount = 0.1f + 0.35f * u(rng_);
+                        e.blocked = false;
+                    }
+                    const glm::vec3 delta = e.moveDir * st.speed * dt;
+                    const glm::vec3 before = e.pos;
                     if (st.flies) e.pos += delta;
                     else moveWithCollision(e.pos, delta, e.radius, game);
+                    if (!st.flies && glm::length(e.pos - before) < 0.3f * glm::length(delta)) { e.blocked = true; e.moveCount = 0.f; }
+                    turnTowards(e.yaw, std::atan2(e.moveDir.x, e.moveDir.z), kChaseTurnRate * dt);
                 }
             }
+            if (!walking && dist > 1e-3f) turnTowards(e.yaw, std::atan2(dir.x, dir.z), kStandTurnRate * dt);
             e.attackTimer -= dt;
             bool canAttack = health_ > 0.f && e.attackTimer <= 0.f;
             if (st.attack == AttackKind::Melee) canAttack = canAttack && dist < 1.3f;
@@ -943,6 +976,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 e.stateT = 0.f;
                 e.animT = 0.f;
                 e.attacked = false;
+                if (dist > 1e-3f) e.yaw = std::atan2(dir.x, dir.z);   // A_FaceTarget
             } else if (e.attackTimer <= 0.f && !los && st.speed == 0.f) {
                 e.attackTimer = 0.4f;   // stationary and no line of sight: retry soon
             }
@@ -950,6 +984,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         }
         case Enemy::State::Attack: {
             e.pos.y = restY;
+            if (dist > 1e-3f) turnTowards(e.yaw, std::atan2(dir.x, dir.z), kChaseTurnRate * dt);   // keeps its aim through the attack frames
             if (e.stateT >= 0.35f && !e.attacked) {
                 e.attacked = true;
                 e.attackTimer = st.attackInterval * (0.7f + 0.6f * u(rng_)) * crowd * cadence;

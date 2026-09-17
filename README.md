@@ -117,6 +117,12 @@ to be downloaded. A different pack or location can still be given:
 3. the bundled pack (next to the exe, `share/redline`, or `assets/` in a checkout)
 4. `./voxels` and `~/.local/share/redline/redline/voxels`
 
+Monsters have a real heading, the way Doom's do: they face the way they are
+walking, chase along one of eight compass directions held for a moment, turn
+at a capped rate, snap round to face you when they attack, and keep their
+last heading when they die. So a voxel monster can be circled and shot in
+the back; sprites stay camera-facing, as Doom's do without rotation frames.
+
 When a pack is found, OPTIONS gains a MODELS row (SPRITES / VOXELS, default
 VOXELS, saved per player); `--voxels` and `--sprites` force it for one run.
 Each frame is greedy-meshed on first use (a cacodemon is about 20k quads, the

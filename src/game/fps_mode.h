@@ -120,6 +120,15 @@ struct Enemy {
     bool grown = false;      // has absorbed blocks at least once
     bool gibbed = false;     // brutal: blown apart (XDEATH frames / chunks instead of the death animation)
     int deathKind = -1;      // brutal: which per-weapon death animation plays (see kDeathKinds), -1 = the stock one
+    // Facing, Doom style: the monster has a heading (atan2(x, z), the draw
+    // convention) that turns at a capped rate towards where it is going, snaps
+    // to the player when it attacks, and freezes when it dies. Movement is in
+    // one of eight compass directions held for a moment (P_NewChaseDir), so a
+    // player circling fast can get to its side or back.
+    float yaw = 0.f;
+    glm::vec3 moveDir{0.f, 0.f, 1.f};
+    float moveCount = 0.f;   // seconds left before the chase direction is re-picked
+    bool blocked = false;    // last move made no progress: sidestep next time
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 

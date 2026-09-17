@@ -2317,9 +2317,9 @@ void App::addFpsActors() {
         if (e.growT > 0.f) tint = glm::mix(tint, glm::vec4(1.f, 1.f, 1.f, 1.f), e.growT);
         bool flip = false;
         const std::string& key = animFrame(*anim, t, loop, &flip);
-        glm::vec3 toPlayer = fps_.eye() - e.pos;
-        float yaw = (std::fabs(toPlayer.x) + std::fabs(toPlayer.z) > 1e-3f) ? std::atan2(toPlayer.x, toPlayer.z) : 0.f;
-        if (!key.empty()) actor(key, e.pos, art.metresPerPixel * corpseScale, tint, true, flip, yaw);
+        // The monster's own heading (sprites are camera-facing billboards regardless; voxel
+        // models turn with it, so you can get round behind one, and corpses keep it).
+        if (!key.empty()) actor(key, e.pos, art.metresPerPixel * corpseScale, tint, true, flip, e.yaw);
     }
     for (const Projectile& p : fps_.projectiles()) {
         bool flip = false;
