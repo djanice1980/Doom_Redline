@@ -150,6 +150,18 @@ instanced draw.
   tracking through the attack frames; Pain, Dying and Dead leave it alone.
   `addFpsActors` passes the heading to `actor()`, which rotates voxel models
   by it and ignores it for sprites (camera-facing billboards).
+- Arch-vile (`AttackKind::Vile`, kind 12, a baron-tier variant): entering
+  Attack pushes `EnemyAttack` at once (the DSVILATK scream); after
+  `kVileFireDelay` (0.3 s) `Enemy::fireT/firePos` place the flame on the
+  player (`VileFire` a=0 plays DSFLAMST, a=1 at one second plays DSFLAME) and
+  it follows the player while `lineOfSight` holds; at `kVileWindup` (2.4 s)
+  with sight: `hurtPlayer(20)`, `enemyBlast` at the flame (1.8 m, 70, breaks
+  blocks), `jumpVy_` = 5.5 m/s lifts `eye()` (the arch-vile jump), `VileBlast`
+  plays the barrel explosion; without sight nothing happens. The attack frames'
+  fps is set so frame O lands on the clasp. `EnemyStats::painChance` (0.12 for
+  the vile, 1 for everyone else) gates the Pain state, which cancels the
+  attack. `REDLINE_KIND=<kind>` forces every spawn to that kind for testing;
+  `REDLINE_LOG_VILE=1` logs each clasp.
 - Enemies rise out of the board when the phase starts (their red cubes sink
   away in sync). Zombies hitscan (65 % hit chance with LOS), imps/cacos/barons
   launch BAL1/BAL2/BAL7 fireballs at the player's centre (so chest-high blocks

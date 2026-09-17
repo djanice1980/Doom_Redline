@@ -189,6 +189,8 @@ void Ambient::update(float dt) {
                 case AttackKind::Melee:
                     if (dist < 1.8f) hurt(b.target, st.damage * 2.f, b.pos);
                     break;
+                case AttackKind::Vile:   // brawlers never use the flame: they just swing
+                    break;
                 }
             }
             if (b.stateT >= 0.6f) { b.state = Brawler::State::Idle; b.stateT = 0.f; }

@@ -228,9 +228,15 @@ board bleed on the floor too.
 
 With doom2.wad next to the chosen WAD (the Steam re-release keeps both in
 one folder) the roster grows: chaingunners stand in for imps, hell knights
-and revenants for cacodemons, mancubi and arachnotrons for barons, each
-about half the time, with their own behaviour (bursts, homing missiles,
-fireball volleys, plasma streams) and voxel models from the bundled pack.
+and revenants for cacodemons, mancubi, arachnotrons and arch-viles for
+barons, each about half the time, with their own behaviour (bursts, homing
+missiles, fireball volleys, plasma streams) and voxel models from the bundled
+pack. The arch-vile attacks the way it does in Doom: it screams and raises
+its arms, a flame appears on your position a moment later and follows you
+while it can see you, and about 2.4 seconds in its hands clasp: 20 damage,
+then the flame's blast for up to 70 that throws you into the air. Break its
+line of sight before the clasp and nothing happens; a hit rarely staggers
+it, but when one does the attack is cancelled.
 Without doom2.wad the original seven classes play as before. If doom2.wad
 is the chosen WAD everything is in it already.
 

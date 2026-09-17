@@ -20,7 +20,7 @@ namespace fs = std::filesystem;
 
 namespace {
 const char* kTierNames[kEnemyKinds] = {"ZOMBIE", "IMP", "DEMON", "CACODEMON", "BARON", "CYBERDEMON", "SPIDER MASTERMIND",
-                                       "CHAINGUNNER", "HELL KNIGHT", "REVENANT", "MANCUBUS", "ARACHNOTRON"};
+                                       "CHAINGUNNER", "HELL KNIGHT", "REVENANT", "MANCUBUS", "ARACHNOTRON", "ARCH-VILE"};
 }
 
 namespace {
@@ -385,11 +385,12 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         {"SKEL", "ABCDEF", "JK", "L", "LMNOPQ", 0.032f, ""},        // revenant: homing missiles
         {"FATT", "ABCDEF", "GHI", "J", "KLMNOPQRST", 0.036f, ""},   // mancubus: fireball volleys
         {"BSPI", "ABCDEF", "GH", "I", "JKLMNOP", 0.034f, ""},       // arachnotron: plasma stream
+        {"VILE", "ABCDEF", "GHIJKLMNOP", "Q", "RSTUVWXYZ[", 0.033f, ""},   // arch-vile: arms up (G), flame on the target, hands clasp (O-P)
     };
-    const char* sightSnd[kEnemyKinds] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT", "DSCYBSIT", "DSSPISIT", "DSPOSIT2", "DSKNTSIT", "DSSKESIT", "DSMANSIT", "DSBSPSIT"};
-    const char* painSnd[kEnemyKinds] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSPOPAIN", "DSDMPAIN", "DSPOPAIN", "DSMNPAIN", "DSDMPAIN"};
-    const char* deathSnd[kEnemyKinds] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH", "DSCYBDTH", "DSSPIDTH", "DSPODTH2", "DSKNTDTH", "DSSKEDTH", "DSMANDTH", "DSBSPDTH"};
-    const char* attackSnd[kEnemyKinds] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT", "DSRLAUNC", "DSPISTOL", "DSSHOTGN", "DSFIRSHT", "DSSKEATK", "DSMANATK", "DSPLASMA"};
+    const char* sightSnd[kEnemyKinds] = {"DSPOSIT1", "DSBGSIT1", "DSSGTSIT", "DSCACSIT", "DSBRSSIT", "DSCYBSIT", "DSSPISIT", "DSPOSIT2", "DSKNTSIT", "DSSKESIT", "DSMANSIT", "DSBSPSIT", "DSVILSIT"};
+    const char* painSnd[kEnemyKinds] = {"DSPOPAIN", "DSPOPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSDMPAIN", "DSPOPAIN", "DSDMPAIN", "DSPOPAIN", "DSMNPAIN", "DSDMPAIN", "DSVIPAIN"};
+    const char* deathSnd[kEnemyKinds] = {"DSPODTH1", "DSBGDTH1", "DSSGTDTH", "DSCACDTH", "DSBRSDTH", "DSCYBDTH", "DSSPIDTH", "DSPODTH2", "DSKNTDTH", "DSSKEDTH", "DSMANDTH", "DSBSPDTH", "DSVILDTH"};
+    const char* attackSnd[kEnemyKinds] = {"DSPISTOL", "DSFIRSHT", "DSSGTATK", "DSFIRSHT", "DSFIRSHT", "DSRLAUNC", "DSPISTOL", "DSSHOTGN", "DSFIRSHT", "DSSKEATK", "DSMANATK", "DSPLASMA", "DSVILATK"};
     for (int t = 0; t < kEnemyKinds; ++t) {
         EnemyArt& e = enemies[t];
         e = EnemyArt{};
@@ -410,6 +411,9 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         e.deathSound = std::string("death") + std::to_string(t);
         e.attackSound = std::string("attack") + std::to_string(t);
     }
+    // The arch-vile's ten attack frames pace the wind-up: the hands clasp on O, 2.4 s in.
+    if (enemies[12].available && !enemies[12].attack.empty()) enemies[12].attack.fps = 9.f / 2.4f;
+    addSprite(vileFire, "FIRE", "ABCDEFGH", 12.f);   // Doom 2 only; without it the flame is just its light
     // Doom's plasma rifle fires on frame A with the PLSF flash (which includes the glowing
     // barrel) drawn over it; PLSGB0 is the vent/cool-down frame shown once the trigger is
     // released, with a very different origin, so it must never be the firing frame.
@@ -591,6 +595,8 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSound("pickup_weapon", {"DSWPNUP"}, proc::sndLevelUp());
     addSound("bfg", {"DSBFG", "DSRXPLOD"}, proc::sndExplode());
     addSound("gib", {"DSSLOP"}, proc::sndHit());
+    addSound("vile_flame_start", {"DSFLAMST"}, proc::sndFireball());
+    addSound("vile_flame", {"DSFLAME"}, proc::sndFireball());
     for (int t = 0; t < kEnemyKinds; ++t) {
         addSound(enemies[t].sightSound, {sightSnd[t]}, proc::sndRedLine());
         addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());

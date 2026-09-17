@@ -28,7 +28,7 @@ inline bool flatToCell(glm::vec3 p, int& col, int& row) {
 }
 
 // ---------------------------------------------------------------------------
-enum class AttackKind { Hitscan, Projectile, Melee };
+enum class AttackKind { Hitscan, Projectile, Melee, Vile };   // Vile: the arch-vile's flame (see the Attack state)
 
 struct EnemyStats {
     const char* name;
@@ -47,12 +47,13 @@ struct EnemyStats {
     float projBlast;       // splash radius of its projectile (enemy rockets), 0 = none
     int volley = 1;        // projectiles per attack (mancubus 3)
     bool homing = false;   // its projectiles steer towards the player (revenant)
+    float painChance = 1.f;   // chance a non-lethal hit staggers it (Doom's arch-vile: almost never)
 };
 constexpr int kMaxTier = 6;   // zombie, imp, demon, cacodemon, baron, cyberdemon, spider mastermind
-// Monster kinds: 0-6 are the tiers themselves; 7-11 are Doom 2 variants that stand in for a
-// tier (chaingunner for imps, hell knight and revenant for cacodemons, mancubus and
-// arachnotron for barons) when their art is available.
-constexpr int kMonsterKinds = 12;
+// Monster kinds: 0-6 are the tiers themselves; 7-12 are Doom 2 variants that stand in for a
+// tier (chaingunner for imps, hell knight and revenant for cacodemons, mancubus, arachnotron
+// and arch-vile for barons) when their art is available.
+constexpr int kMonsterKinds = 13;
 const EnemyStats& enemyStats(int kind);
 // Biggest class the level allows to spawn (absorbing may go one higher).
 int maxTierForLevel(int level);
@@ -129,6 +130,9 @@ struct Enemy {
     glm::vec3 moveDir{0.f, 0.f, 1.f};
     float moveCount = 0.f;   // seconds left before the chase direction is re-picked
     bool blocked = false;    // last move made no progress: sidestep next time
+    // Arch-vile: its flame, placed on the player while it can see them (fireT < 0 = none).
+    float fireT = -1.f;
+    glm::vec3 firePos{0.f};
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 
@@ -205,7 +209,7 @@ struct FpsInput {
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
                       Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown, EnemyGibbed,
-                      CasingBounce, BulletHole } type;
+                      CasingBounce, BulletHole, VileFire, VileBlast } type;   // VileFire: a = 0 the flame starts, 1 it crackles
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
@@ -230,7 +234,7 @@ public:
 
     // Player
     static constexpr float kEyeHeight = 1.25f;  // blocks are chest-high walls: see over them, hide behind them
-    glm::vec3 eye() const { return playerPos_ + glm::vec3(0.f, kEyeHeight, 0.f); }
+    glm::vec3 eye() const { return playerPos_ + glm::vec3(0.f, kEyeHeight + jumpY_, 0.f); }
     glm::vec3 playerPos() const { return playerPos_; }
     glm::vec3 forward() const;
     float yaw() const { return yaw_; }
@@ -298,7 +302,7 @@ private:
     void hurtPlayer(float dmg, glm::vec3 from);
     void push(FpsEvent::Type t, glm::vec3 p = {}, int tier = 0, int a = 0, int kind = -1) { events_.push_back({t, p, tier, a, kind < 0 ? tier : kind}); }
     int pickKind(int tier);
-    bool kindAvailable_[kMonsterKinds] = {true, true, true, true, true, true, true, false, false, false, false, false};
+    bool kindAvailable_[kMonsterKinds] = {true, true, true, true, true, true, true, false, false, false, false, false, false};
 
     std::mt19937 rng_;
     std::vector<Enemy> enemies_;
@@ -311,6 +315,7 @@ private:
     std::vector<Pickup> pickups_;
     std::vector<FpsEvent> events_;
     glm::vec3 playerPos_{0.f, 0.f, 18.5f};
+    float jumpY_ = 0.f, jumpVy_ = 0.f;   // the arch-vile jump: the blast throws the player up; the view follows
     float yaw_ = 3.14159265f;   // facing -Z (towards the stack)
     float pitch_ = 0.f;
     float health_ = 100.f;

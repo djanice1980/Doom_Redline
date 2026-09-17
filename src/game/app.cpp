@@ -1561,6 +1561,13 @@ void App::handleFpsEvents() {
             if (brutalActive() && ev.kind == 1 && assets_.brImpSounds) play("impclaw" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brImpSounds)), 0.7f);
             else play(art.attackSound, 0.7f);
             break;
+        case FpsEvent::Type::VileFire:
+            play(ev.a == 0 ? "vile_flame_start" : "vile_flame", 0.9f);
+            break;
+        case FpsEvent::Type::VileBlast:   // A_VileAttack plays the barrel explosion
+            play("explode", 1.f); shakeT_ = 0.45f; rumble(0.9f, 0.6f, 300);
+            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke});
+            break;
         case FpsEvent::Type::Explosion:
             play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke});
@@ -2321,6 +2328,14 @@ void App::addFpsActors() {
         // models turn with it, so you can get round behind one, and corpses keep it).
         if (!key.empty()) actor(key, e.pos, art.metresPerPixel * corpseScale, tint, true, flip, e.yaw);
     }
+    // The arch-vile's flame: a fullbright column on the player's position, brighter as the clasp nears.
+    for (const Enemy& e : fps_.enemies()) {
+        if (e.state != Enemy::State::Attack || e.fireT < 0.f || assets_.vileFire.empty()) continue;
+        bool flip = false;
+        const std::string& key = animFrame(assets_.vileFire, e.fireT, true, &flip);
+        const float grow = std::min(1.f, 0.55f + 0.45f * e.fireT / 2.1f);
+        billboard(key, e.firePos, 0.034f * grow, glm::vec4(2.2f, 1.6f, 1.0f, 0.95f), false, flip);
+    }
     for (const Projectile& p : fps_.projectiles()) {
         bool flip = false;
         const SpriteAnim& anim = assets_.projectile[std::clamp(p.type, 0, kProjectileTypes - 1)];
@@ -2417,8 +2432,13 @@ void App::addLights() {
         }
         for (const Pickup& p : fps_.pickups())
             if (p.landed) cands.push_back({glm::length(p.pos - cam), {p.pos + glm::vec3(0.f, 0.4f, 0.f), 1.5f, {0.6f, 0.8f, 1.f}, 0.5f}});
-        for (const Enemy& e : fps_.enemies())
+        for (const Enemy& e : fps_.enemies()) {
             if (e.growT > 0.f) cands.push_back({-120.f, {e.pos + glm::vec3(0.f, 1.f, 0.f), 6.f, {1.f, 0.3f, 0.3f}, 4.f * e.growT}});
+            if (e.state == Enemy::State::Attack && e.fireT >= 0.f) {   // the vile's flame lights the player's surroundings
+                const float flicker = 0.85f + 0.15f * std::sin(time_ * 37.f);
+                cands.push_back({-170.f, {e.firePos + glm::vec3(0.f, 0.9f, 0.f), 5.f, {1.f, 0.6f, 0.25f}, (0.8f + 1.0f * std::min(1.f, e.fireT / 2.1f)) * flicker}});
+            }
+        }
         if (muzzleLight_ > 0.f && mode_ == Mode::Fps) {
             glm::vec3 mc = fps_.currentWeapon() == kPlasmaRifle ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 0.8f, 0.4f);
             cands.push_back({-200.f, {fps_.eye() + fps_.forward() * 1.2f, 7.f, mc, 3.f * muzzleLight_}});

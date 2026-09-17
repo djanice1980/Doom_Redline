@@ -35,7 +35,7 @@ struct EnemyArt {
 };
 
 constexpr int kEnemyTiers = 7;        // the difficulty ladder: zombie, imp, demon, cacodemon, baron, cyberdemon, spider
-constexpr int kEnemyKinds = 12;       // + Doom 2 variants: chaingunner, hell knight, revenant, mancubus, arachnotron
+constexpr int kEnemyKinds = 13;       // + Doom 2 variants: chaingunner, hell knight, revenant, mancubus, arachnotron, arch-vile
 constexpr int kProjectileTypes = 8;   // imp / cacodemon / baron fireballs, rocket, plasma, revenant missile, mancubus fireball, arachnotron plasma
 constexpr int kWeaponArt = 4;         // shotgun, chaingun, rocket launcher, plasma rifle
 constexpr int kPickupArt = 8;         // stim, medikit, bullets, rockets, cells, chaingun, launcher, plasma gun
@@ -99,6 +99,7 @@ public:
     std::string white = "__white";
     std::string ring = "__ring";   // soft ring for the line-clear shockwave (procedural, always present)
     EnemyArt enemies[kEnemyKinds];
+    SpriteAnim vileFire;      // the arch-vile's flame (FIRE A-H, Doom 2)
     SpriteAnim projectile[kProjectileTypes], projectileHit[kProjectileTypes];
     WeaponArt weapons[kWeaponArt];
     SpriteAnim pickups[kPickupArt];

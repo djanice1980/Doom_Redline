@@ -40,7 +40,20 @@ const EnemyStats kStats[] = {
     {"REVENANT",    300.f, 0.50f, 2.2f, AttackKind::Projectile, kProjRevenant,1.6f, false, 2.8f, 18.f, 7.f,  700,  4.0f, 0, 0.f, 1, true},
     {"MANCUBUS",    600.f, 0.85f, 2.0f, AttackKind::Projectile, kProjMancubus,0.9f, false, 3.0f, 16.f, 10.f, 900,  3.0f, 1, 0.f, 3, false},
     {"ARACHNOTRON", 500.f, 0.90f, 1.6f, AttackKind::Projectile, kProjArach,   1.1f, false, 0.35f, 8.f, 14.f, 900,  4.0f, 1, 0.f},
+    {"ARCH-VILE",   700.f, 0.45f, 2.2f, AttackKind::Vile,       -1,           2.0f, false, 4.0f, 20.f, 0.f,  1100, 3.0f, 1, 0.f, 1, false, 0.12f},   // the flame attack; hardly ever staggers
 };
+// The arch-vile's attack, from Doom's state table: arms go up and the scream plays (A_VileStart),
+// the flame appears on the target a third of a second later (A_VileTarget) and follows them
+// while the vile can see them (A_Fire), the hands clasp about 2.4 s in (A_VileAttack): 20
+// direct, then the flame's blast for 70 that throws the target upward. No line of sight at
+// that moment and nothing happens at all. Range 896 map units, about 28 m.
+constexpr float kVileFireDelay = 0.3f;
+constexpr float kVileWindup = 2.4f;
+constexpr float kVileHold = 0.6f;      // the clasped frame before it goes back to chasing
+constexpr float kVileRange = 28.f;
+constexpr float kVileBlastRadius = 1.8f;
+constexpr float kVileBlastDamage = 70.f;
+constexpr float kVileJump = 5.5f;      // m/s upward, about 1.5 m of air
 
 float absorbPeriodForLevel(float base, int level) { return std::max(8.f, base - 1.f * static_cast<float>(level - 1)); }
 
@@ -129,10 +142,14 @@ int FpsMode::pickKind(int tier) {
     std::uniform_real_distribution<float> u(0.f, 1.f);
     const int* variants = nullptr;
     int n = 0;
-    static const int forImp[] = {7}, forCaco[] = {8, 9}, forBaron[] = {10, 11};
+    static const int forImp[] = {7}, forCaco[] = {8, 9}, forBaron[] = {10, 11, 12};
+    if (const char* forced = std::getenv("REDLINE_KIND")) {   // test knob: every monster is this kind when its art is loaded
+        const int k = std::atoi(forced);
+        if (k >= 0 && k < kMonsterKinds && kindAvailable_[k]) return k;
+    }
     if (tier == 1) { variants = forImp; n = 1; }
     else if (tier == 3) { variants = forCaco; n = 2; }
-    else if (tier == 4) { variants = forBaron; n = 2; }
+    else if (tier == 4) { variants = forBaron; n = 3; }
     if (!variants || u(rng_) > 0.5f) return tier;
     const int pick = variants[static_cast<int>(u(rng_) * static_cast<float>(n)) % n];
     return kindAvailable_[pick] ? pick : tier;
@@ -482,10 +499,12 @@ void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir, 
         if (brutal_ && std::getenv("REDLINE_LOG_DEATHS")) std::fprintf(stderr, "[brutal] tier %d killed by weapon %d%s: %s kind %d\n", e.tier, weapon, head ? " (head)" : "", e.gibbed ? "gibbed" : "death", e.deathKind);
         push(FpsEvent::Type::EnemyDied, e.pos, e.tier, e.gibbed ? 1 : 0, e.kind);
         dropLoot(e);
-    } else if (e.state != Enemy::State::Emerging) {
+    } else if (e.state != Enemy::State::Emerging && std::uniform_real_distribution<float>(0.f, 1.f)(rng_) < enemyStats(e.kind).painChance) {
+        // A stagger cancels whatever it was doing (the arch-vile's flame goes out with it).
         e.state = Enemy::State::Pain;
         e.stateT = 0.f;
         e.attacked = false;
+        e.fireT = -1.f;
         // Wounded monsters sometimes shed ammo (for the gun you are holding).
         std::uniform_real_distribution<float> u(0.f, 1.f);
         if (e.ammoDropCooldown <= 0.f && u(rng_) < 0.12f) {
@@ -881,6 +900,11 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     if (glm::length(move) > 1.f) move = glm::normalize(move);
     if (health_ > 0.f && !in.warmup) moveWithCollision(playerPos_, move * kMoveSpeed * (in.run ? kRunMultiplier : 1.f) * dt, kPlayerRadius, game);
     playerPos_.y = 0.f;
+    if (jumpY_ > 0.f || jumpVy_ > 0.f) {   // thrown into the air: the view rises and falls back
+        jumpVy_ -= 10.f * dt;
+        jumpY_ = std::max(0.f, jumpY_ + jumpVy_ * dt);
+        if (jumpY_ <= 0.f) jumpVy_ = 0.f;
+    }
     damageFlash_ = std::max(0.f, damageFlash_ - dt * 2.5f);
     pickupFlash_ = std::max(0.f, pickupFlash_ - dt * 3.f);
     if (!in.warmup) invulnT_ = std::max(0.f, invulnT_ - dt);
@@ -971,12 +995,15 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
             bool canAttack = health_ > 0.f && e.attackTimer <= 0.f;
             if (st.attack == AttackKind::Melee) canAttack = canAttack && dist < 1.3f;
             else canAttack = canAttack && los;
+            if (st.attack == AttackKind::Vile) canAttack = canAttack && dist < kVileRange;
             if (canAttack) {
                 e.state = Enemy::State::Attack;
                 e.stateT = 0.f;
                 e.animT = 0.f;
                 e.attacked = false;
                 if (dist > 1e-3f) e.yaw = std::atan2(dir.x, dir.z);   // A_FaceTarget
+                e.fireT = -1.f;
+                if (st.attack == AttackKind::Vile) push(FpsEvent::Type::EnemyAttack, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, 0, e.kind);   // A_VileStart: the scream as the arms go up
             } else if (e.attackTimer <= 0.f && !los && st.speed == 0.f) {
                 e.attackTimer = 0.4f;   // stationary and no line of sight: retry soon
             }
@@ -985,6 +1012,35 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         case Enemy::State::Attack: {
             e.pos.y = restY;
             if (dist > 1e-3f) turnTowards(e.yaw, std::atan2(dir.x, dir.z), kChaseTurnRate * dt);   // keeps its aim through the attack frames
+            if (st.attack == AttackKind::Vile) {
+                const glm::vec3 vileEye = e.pos + glm::vec3(0.f, 1.2f, 0.f);
+                const bool sight = lineOfSight(vileEye, playerCentre, game);
+                if (e.stateT >= kVileFireDelay && !e.attacked) {
+                    if (e.fireT < 0.f) {
+                        e.fireT = 0.f;
+                        e.firePos = playerPos_;
+                        push(FpsEvent::Type::VileFire, e.firePos, e.tier, 0, e.kind);
+                    } else {
+                        if (e.fireT < 1.f && e.fireT + dt >= 1.f) push(FpsEvent::Type::VileFire, e.firePos, e.tier, 1, e.kind);   // A_FireCrackle
+                        e.fireT += dt;
+                    }
+                    if (sight) e.firePos = playerPos_;   // the flame follows while it can see you; break sight and it stays put
+                }
+                if (e.stateT >= kVileWindup && !e.attacked) {
+                    e.attacked = true;
+                    e.attackTimer = st.attackInterval * (0.7f + 0.6f * u(rng_)) * crowd * cadence;
+                    if (sight) {
+                        hurtPlayer(st.damage, e.pos);   // the clasp
+                        const float pd = glm::length((playerPos_ + glm::vec3(0.f, 0.6f, 0.f)) - (e.firePos + glm::vec3(0.f, 0.3f, 0.f)));
+                        enemyBlast(e.firePos + glm::vec3(0.f, 0.3f, 0.f), kVileBlastRadius, kVileBlastDamage, game);
+                        if (pd < kVileBlastRadius && health_ > 0.f) jumpVy_ = std::max(jumpVy_, kVileJump);   // the arch-vile jump
+                        push(FpsEvent::Type::VileBlast, e.firePos, e.tier, 0, e.kind);
+                        if (std::getenv("REDLINE_LOG_VILE")) std::fprintf(stderr, "[vile] clasp at %.2fs: hit, blast %.2f m from the player\n", e.stateT, pd);
+                    } else if (std::getenv("REDLINE_LOG_VILE")) std::fprintf(stderr, "[vile] clasp at %.2fs: no line of sight, nothing happens\n", e.stateT);
+                }
+                if (e.stateT >= kVileWindup + kVileHold) { e.state = Enemy::State::Idle; e.stateT = 0.f; e.fireT = -1.f; }
+                break;
+            }
             if (e.stateT >= 0.35f && !e.attacked) {
                 e.attacked = true;
                 e.attackTimer = st.attackInterval * (0.7f + 0.6f * u(rng_)) * crowd * cadence;
@@ -1017,6 +1073,8 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 case AttackKind::Melee:
                     if (dist < 1.5f) hurtPlayer(st.damage, e.pos);
                     break;
+                case AttackKind::Vile:
+                    break;   // handled above
                 }
             }
             if (e.stateT >= 0.6f) { e.state = Enemy::State::Idle; e.stateT = 0.f; }
