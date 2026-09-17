@@ -228,6 +228,15 @@ fireball volleys, plasma streams) and voxel models from the bundled pack.
 Without doom2.wad the original seven classes play as before. If doom2.wad
 is the chosen WAD everything is in it already.
 
+## Menu text
+
+Doom's STCFN font is 8 pixels tall, and the HUD draws it four to six times
+larger. Every glyph also goes into the atlas upscaled 4x with xBR (Hyllian's
+edge-directed interpolation), and any text drawn at 3x or more uses that
+copy: stair-steps become smooth, anti-aliased diagonals and curves while flat
+edges and corners stay crisp. Small text (the hints, the status line) keeps
+the original pixels.
+
 ## Display scaling
 
 OPTIONS > RESOLUTION means physical pixels. On a scaled desktop (KDE or
@@ -374,7 +383,11 @@ Up/Down or W/S to pick, Enter or click to confirm.
   Afterwards any clump of blocks left with nothing under it falls until it
   lands (sticky gravity), and rows it completes on the way clear as a chain.
 - **Corruption.** Once the stack is 9 rows high, normal blocks start turning
-  evil. Within four rows of the top it goes into overdrive (at least six
+  evil. A warning sign lights up in the empty column right of the board:
+  it flickers like a failing lamp, jolts every time a block turns, bleeds
+  from its letters, and shakes once the board is about to overflow.
+  Announcements (prizes, trophies, evil spawns) stack up under it while you
+  play, so nothing is ever drawn over the play field. Within four rows of the top it goes into overdrive (at least six
   events a second, bigger bursts, evil spawns just as fast): a board about to
   overflow is driven into a fight instead, which is your way out. Two thirds of the time an event goes after a hole in an almost-full
   row (two empties or fewer, something solid above it): the blocks above and

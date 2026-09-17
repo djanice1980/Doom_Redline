@@ -119,6 +119,8 @@ public:
 
     // Font: char -> atlas key. Doom's STCFN font is uppercase only.
     std::map<char, std::string> font;
+    std::map<char, std::string> fontBig;   // the same glyphs upscaled fontBigScale times with smoothed edges, for large text
+    int fontBigScale = 1;
     int fontHeight = 8;
     int textWidth(const std::string& s, float scale) const;
 

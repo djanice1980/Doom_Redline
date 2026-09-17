@@ -21,7 +21,7 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Core rules library (no dependencies)
-add_library(rl_core STATIC src/core/tetris.cpp src/core/inflate.cpp src/core/png_read.cpp)
+add_library(rl_core STATIC src/core/tetris.cpp src/core/inflate.cpp src/core/png_read.cpp src/core/pixel_scale.cpp)
 target_include_directories(rl_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 if(REDLINE_BUILD_TESTS)

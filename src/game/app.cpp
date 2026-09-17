@@ -1475,7 +1475,7 @@ void App::handleGameEvents() {
             if (ev.a >= 10) trophy("level10");
             break;   // the level card handles the celebration
         case core::EventType::CellCorrupting: play("redline", 0.35f, 1.6f, 250); break;
-        case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f, 120); shakeT_ = std::max(shakeT_, 0.1f); break;
+        case core::EventType::CellTurnedRed: play("lock", 0.9f, 0.55f, 120); shakeT_ = std::max(shakeT_, 0.1f); evilJolt_ = 1.f; break;
         case core::EventType::EvilSpawning: play("redline", 0.5f, 0.7f, 250); break;
         case core::EventType::EvilSpawned: play("explode", 0.5f, 1.4f); shakeT_ = std::max(shakeT_, 0.15f); announce("EVIL SPAWNED", glm::vec4(1.f, 0.3f, 0.2f, 1.f), 1.f); break;
         default: break;
@@ -1675,6 +1675,28 @@ void App::update(float dt) {
     }
     for (size_t i = 0; i < rings_.size();) { rings_[i].t += dt; if (rings_[i].t > 0.55f) { rings_[i] = rings_.back(); rings_.pop_back(); } else ++i; }
     clearFlash_ = std::max(0.f, clearFlash_ - dt * 3.f);
+    evilJolt_ = std::max(0.f, evilJolt_ - dt * 4.f);
+    {
+        // Blood running off the evil banner: more of it the higher the stack.
+        const float H = static_cast<float>(renderer_->extent().height);
+        const float s = std::max(1.f, std::round(H / 300.f));
+        const float d = (mode_ == Mode::Blocks && game_) ? game_->danger() : 0.f;
+        if (d > 0.f && bannerX1_ > bannerX0_) {
+            dripT_ += dt * (1.5f + 8.f * d);
+            std::uniform_real_distribution<float> u(0.f, 1.f);
+            while (dripT_ >= 1.f) {
+                dripT_ -= 1.f;
+                drips_.push_back({bannerX0_ + u(rng_) * (bannerX1_ - bannerX0_), bannerY_, bannerY_, 0.f, 1.2f + 1.2f * u(rng_), 3.f + 2.5f * u(rng_)});
+            }
+        } else dripT_ = 0.f;
+        for (size_t i = 0; i < drips_.size();) {
+            Drip& dr = drips_[i];
+            dr.ttl -= dt;
+            dr.vy = std::min(dr.vy + dt * 18.f * s, 16.f * s);   // slow, viscous
+            dr.y += dr.vy * dt;
+            if (dr.ttl <= 0.f || dr.y0 > H) { dr = drips_.back(); drips_.pop_back(); } else ++i;
+        }
+    }
     if (game_ && game_->active()) { lastPieceCells_.clear(); for (int i = 0; i < 4; ++i) lastPieceCells_.push_back(game_->active()->cells()[i]); }
     for (size_t i = 0; i < bursts_.size();) {
         bursts_[i].t += dt;
@@ -2577,7 +2599,10 @@ void App::text(float x, float y, const std::string& s, float scale, glm::vec4 co
         if (it == assets_.font.end()) { cx += (assets_.fontHeight / 2 + 1) * scale; continue; }
         const render::AtlasRegion& r = assets_.region(it->second);
         float gy = y + (assets_.usingWad() ? -r.offsetY * scale : 0.f);
-        screenSprite(it->second, cx, gy, scale, color, 0.f, 1.f);
+        // Large text uses the upscaled glyphs (same metrics, smoother edges).
+        auto big = scale >= 3.f ? assets_.fontBig.find(c) : assets_.fontBig.end();   // never minified below 3/4
+        if (big != assets_.fontBig.end()) screenSprite(big->second, cx, gy, scale / static_cast<float>(assets_.fontBigScale), color, 0.f, 1.f);
+        else screenSprite(it->second, cx, gy, scale, color, 0.f, 1.f);
         cx += (r.w + 1) * scale;
     }
 }
@@ -2635,9 +2660,39 @@ void App::addHud() {
         float f = 0.5f + 0.5f * std::sin(time_ * (3.f + 6.f * d));
         panel(0.f, 0.f, W, lh * 0.5f, glm::vec4(1.f, 0.1f, 0.05f, 0.35f * d * f));
         panel(0.f, H - lh * 0.5f, W, lh * 0.5f, glm::vec4(1.f, 0.1f, 0.05f, 0.35f * d * f));
-        const char* banner = game_->panic() ? "OVERRUN  -  EVIL SURGES" : (d < 0.5f ? "THE STACK IS TURNING EVIL" : "EVIL RISING");
-        text(W * 0.5f, H * 0.2f, banner, s * (game_->panic() ? 1.2f : 0.9f), glm::vec4(1.f, 0.3f + 0.4f * f, 0.2f, 0.4f + 0.6f * d), 1);
-    }
+        // The banner sits in the empty column right of the board, two lines, and
+        // behaves like a failing sign: it flickers, jolts when a block turns, and
+        // bleeds. In panic it shakes.
+        const bool panic = game_->panic();
+        const float colL = W * 0.5f + H * 0.3f, cx = (colL + W - 24.f) * 0.5f;
+        const char* l1 = panic ? "OVERRUN" : d < 0.5f ? "THE STACK IS" : "EVIL";
+        const char* l2 = panic ? "EVIL SURGES" : d < 0.5f ? "TURNING EVIL" : "RISING";
+        const float fs = s * (panic ? 1.6f : 1.1f + 0.3f * d) * (1.f + 0.2f * evilJolt_);
+        uint32_t hsh = static_cast<uint32_t>(time_ * 19.f) * 2654435761u; hsh ^= hsh >> 13; hsh *= 0x27d4eb2du; hsh ^= hsh >> 15;
+        const float flick = (hsh % 100u) < static_cast<uint32_t>(4 + 18 * d) ? 0.3f : 1.f;   // brief dropouts, more of them as it gets worse
+        const float shake = panic ? 1.f : evilJolt_;
+        const float jx = ((static_cast<float>((hsh >> 8) % 7u) - 3.f) * 0.6f * s) * shake, jy = ((static_cast<float>((hsh >> 16) % 5u) - 2.f) * 0.6f * s) * shake;
+        const float y1 = H * 0.36f, y2 = y1 + fs * (assets_.fontHeight + 3);
+        for (const Drip& dr : drips_) {   // blood first, so the letters sit on top of where it starts
+            const float a = std::min(1.f, dr.ttl / 1.f);
+            const float w = dr.w * s, run = std::max(0.f, dr.y - dr.y0);
+            // The run thins and dries towards the letter it came from; the head stays a fat bead.
+            panel(dr.x - w * 0.2f, dr.y0, w * 0.4f, run, glm::vec4(0.45f, 0.02f, 0.02f, 0.45f * a));
+            panel(dr.x - w * 0.35f, dr.y0 + run * 0.5f, w * 0.7f, run * 0.5f, glm::vec4(0.55f, 0.03f, 0.02f, 0.6f * a));
+            panel(dr.x - w * 0.5f, dr.y - w * 0.7f, w, w * 1.4f, glm::vec4(0.65f, 0.04f, 0.02f, 0.95f * a));
+        }
+        const glm::vec4 halo(0.9f, 0.05f, 0.f, (0.08f + 0.1f * f) * (0.5f + 0.5f * d) * flick);
+        for (int k = 0; k < 8; ++k) {
+            const float ang = static_cast<float>(k) * 0.7854f, ox = std::cos(ang) * s * 1.6f, oy = std::sin(ang) * s * 1.6f;
+            text(cx + jx + ox, y1 + jy + oy, l1, fs, halo, 1);
+            text(cx + jx + ox, y2 + jy + oy, l2, fs, halo, 1);
+        }
+        const glm::vec4 col(1.f, 0.3f + 0.4f * f, 0.2f, (0.55f + 0.45f * d) * flick);
+        text(cx + jx, y1 + jy, l1, fs, col, 1);
+        text(cx + jx, y2 + jy, l2, fs, col, 1);
+        const float bw = static_cast<float>(std::max(assets_.textWidth(l1, fs), assets_.textWidth(l2, fs)));
+        bannerX0_ = cx - bw * 0.45f; bannerX1_ = cx + bw * 0.45f; bannerY_ = y2 + fs * assets_.fontHeight;
+    } else bannerX1_ = bannerX0_ = 0.f;
     if (clearFlash_ > 0.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.95f, 0.8f, 0.22f * clearFlash_));
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 16.f);
@@ -2772,15 +2827,23 @@ void App::addHud() {
     if (bfgFlash_ > 0.f) panel(0.f, 0.f, W, H, glm::vec4(0.6f, 1.f, 0.6f, 0.5f * bfgFlash_));
     if (bfgUsed_ && !inFps && mode_ != Mode::Title) text(24.f, H - lh * 1.2f, "BFG SPENT", s * 0.7f, glm::vec4(0.5f, 0.8f, 0.5f, 0.8f));
 
-    // Announcements: rise and fade from just above the centre.
+    // Announcements: rise and fade. While stacking they sit in the column right
+    // of the board (under the evil banner) so they never cover the play field.
     {
-        float y = H * 0.24f;
+        const bool side = mode_ == Mode::Blocks || mode_ == Mode::Alert;
+        const float colL = W * 0.5f + H * 0.3f;
+        const float ax = side ? (colL + W - 24.f) * 0.5f : W * 0.5f;
+        const float avail = side ? W - 24.f - colL : W - 48.f;
+        float y = side ? H * 0.58f : H * 0.24f;
         for (Announcement& a : announcements_) {
             float alpha = a.t < 1.2f ? 1.f : std::max(0.f, 1.f - (a.t - 1.2f) / 0.8f);
             float rise = 30.f * s * std::min(1.f, a.t / 2.f);
             glm::vec4 col = a.color;
             col.a *= alpha;
-            text(W * 0.5f, y - rise, a.text, s * a.scale, col, 1);
+            float sc = s * a.scale;
+            const int tw = assets_.textWidth(a.text, sc);
+            if (tw > avail) sc *= avail / static_cast<float>(tw);   // shrink long lines to the column
+            text(ax, y - rise, a.text, sc, col, 1);
             y += lh * a.scale;
         }
     }

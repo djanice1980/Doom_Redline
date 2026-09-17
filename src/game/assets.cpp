@@ -1,6 +1,7 @@
 #include "game/assets.h"
 
 #include "core/png_read.h"
+#include "core/pixel_scale.h"
 #include "audio/oggstream.h"
 
 #include <algorithm>
@@ -522,6 +523,21 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     }
 
     font.clear();
+    fontBig.clear();
+    fontBigScale = 4;
+    // Each glyph goes in twice: as is for small text, and upscaled with smoothed
+    // edges for the menus and banners, where the HUD would otherwise show the
+    // 8-pixel letters blown up four to six times.
+    auto addGlyph = [&](char ch, const Image& img) {
+        const std::string id = std::to_string(static_cast<int>(static_cast<unsigned char>(ch)));
+        atlas_.add("font_" + id, img);
+        font[ch] = "font_" + id;
+        Image big = scalePixelArt(img, fontBigScale);
+        big.offsetX = img.offsetX * fontBigScale;
+        big.offsetY = img.offsetY * fontBigScale;
+        atlas_.add("fontb_" + id, big);
+        fontBig[ch] = "fontb_" + id;
+    };
     auto glyphs = wad::loadFont(*wad, *pal, "STCFN");
     int maxH = 0;
     for (auto& [ch, img] : glyphs) {
@@ -531,17 +547,11 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
             uint8_t v = std::max({p[0], p[1], p[2]});
             p[0] = p[1] = p[2] = v;
         }
-        std::string key = std::string("font_") + std::to_string(static_cast<int>(static_cast<unsigned char>(ch)));
-        atlas_.add(key, img);
-        font[ch] = key;
+        addGlyph(ch, img);
         maxH = std::max(maxH, img.height);
     }
     if (font.empty()) {
-        for (auto& [ch, img] : proc::font(1)) {
-            std::string key = std::string("font_") + std::to_string(static_cast<int>(ch));
-            atlas_.add(key, img);
-            font[ch] = key;
-        }
+        for (auto& [ch, img] : proc::font(1)) addGlyph(ch, img);
         maxH = 7;
     }
     fontHeight = maxH > 0 ? maxH : 8;

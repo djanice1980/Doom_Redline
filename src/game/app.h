@@ -290,6 +290,13 @@ private:
     int countdownLast_ = -1;
     struct Announcement { std::string text; glm::vec4 color; float scale; float t; };
     std::vector<Announcement> announcements_;
+    // The evil banner beside the board: blood runs off its letters, and each
+    // block that turns jolts it.
+    struct Drip { float x, y0, y, vy, w, ttl; };   // a run of blood from y0 (the letter) down to its head at y
+    std::vector<Drip> drips_;
+    float dripT_ = 0.f;
+    float evilJolt_ = 0.f;
+    float bannerX0_ = 0.f, bannerX1_ = 0.f, bannerY_ = 0.f;   // extent of the last banner drawn (drip origins)
     bool keyB_ = false, keyF_ = false, keyG_ = false;   // the secret chord
     float bfgHoldT_ = 0.f;       // seconds B+F+G have been held together
     bool bfgUsed_ = false;       // the BFG9000 fires once per playthrough

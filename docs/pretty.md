@@ -45,6 +45,14 @@ Effort is a rough estimate. Tick items off here as they land, with the commit.
 - [x] **Colour grading** (done 2026-09-16: warm grade in the composite pass). A lookup-table
       pass toward Doom's warm palette.
 
+## Later additions
+
+- [x] **Menu text** (done 2026-09-16): xBR-upscaled font glyphs for anything drawn at 3x or
+      more, so the 8-pixel Doom font stops looking blown up.
+- [x] **Evil banner** (done 2026-09-16): moved to the empty column beside the board, with a
+      red halo, flicker, a jolt per corrupted block, blood dripping off the letters and a
+      shake in panic. Announcements stack under it during play.
+
 ## Bugs found on the way
 
 - [x] Shotgun flash floated beside the gun: the flash sprite is cut for frame A but
