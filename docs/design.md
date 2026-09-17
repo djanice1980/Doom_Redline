@@ -414,7 +414,12 @@ it server-side. `stats_test` covers the round trip across two machines.
   (`Audio::setMasterGain`), music on, stick sensitivity, invert, rumble,
   display, resolution, models, Doom WAD, soundtrack WAD, email, Doom art with
   BRUTAL as a sub-row, ray tracing, anti-aliasing, bloom & haze; BACK is the
-  last row, `n - 1`), Trophies, Players, Name entry (keyboard text
+  last row, `n - 1`). The option rows are built as a list and only the slice
+  that fits between the title and the pinned BACK is drawn (`optionsScroll_`;
+  "N MORE ABOVE/BELOW" markers); keyboard and pad moves keep the selection in
+  view (`optionsFollow_`), the wheel scrolls three rows and turns that off
+  until the next key, and BACK scrolls to the end. Rows off screen register
+  no hotspots), Trophies, Players, Name entry (keyboard text
   input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
   both keyboard and pad input mapped to key codes.
 - Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks

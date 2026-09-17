@@ -221,6 +221,8 @@ private:
     enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
+    int optionsScroll_ = 0;        // first option row in view (the list scrolls when the window is short)
+    bool optionsFollow_ = true;    // scroll to keep the selected row in view (keyboard/pad); the wheel turns it off
     std::string nameEntry_;
     int nameChar_ = 0;                 // gamepad letter picker position
     std::vector<std::string> profileList_;

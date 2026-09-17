@@ -766,6 +766,8 @@ void App::pollGamepad(float dt) {
 void App::openScreen(int screen) {
     screen_ = screen;
     screenIndex_ = 0;
+    optionsScroll_ = 0;
+    optionsFollow_ = true;
     if (screen == kScreenProfiles) profileList_ = listProfiles();
     if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; SDL_StartTextInput(window_); }
     if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
@@ -824,8 +826,8 @@ void App::screenKey(int key, bool fromPad) {
     case kScreenOptions: {
         const int n = 19;   // 18 options + BACK (the last index)
         const int back = n - 1;
-        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; optionsFollow_ = true; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; optionsFollow_ = true; play("menu", 0.6f); }
         else if (key == SDLK_LEFT) { if (screenIndex_ < back) adjustOption(-1); }
         else if (key == SDLK_RIGHT) { if (screenIndex_ < back) adjustOption(1); }
         else if (key == SDLK_RETURN || key == SDLK_SPACE) { if (screenIndex_ == back) closeScreen(); else adjustOption(1); }
@@ -1304,7 +1306,8 @@ void App::handleEvents() {
             if (e.button.button == SDL_BUTTON_LEFT) fpsIn_.fire = false;
             break;
         case SDL_EVENT_MOUSE_WHEEL:
-            if (mode_ == Mode::Fps) fpsIn_.wheel += (e.wheel.y > 0.f) ? 1 : (e.wheel.y < 0.f ? -1 : 0);
+            if (screen_ == kScreenOptions) { optionsScroll_ -= (e.wheel.y > 0.f ? 3 : e.wheel.y < 0.f ? -3 : 0); optionsFollow_ = false; }   // clamped when drawn
+            else if (mode_ == Mode::Fps) fpsIn_.wheel += (e.wheel.y > 0.f) ? 1 : (e.wheel.y < 0.f ? -1 : 0);
             break;
         case SDL_EVENT_KEY_DOWN: {
             SDL_Keycode k = e.key.key;
@@ -2950,33 +2953,59 @@ void App::addHud() {
         };
         if (screen_ == kScreenOptions) {
             text(W * 0.5f, H * 0.05f, "OPTIONS", s * 1.5f, white, 1);
-            float y = H * 0.125f;
             char buf[80];
-            row(y, "MUSIC", musicSetName(), screenIndex_ == 0); y += lh * 1.08f;
+            // The rows first, then the slice of them that fits between the title and
+            // the pinned BACK; the list scrolls to the selection (keyboard, pad) or
+            // with the wheel.
+            struct OptRow { std::string label, value; bool enabled = true, sub = false; };
+            std::vector<OptRow> rows;
+            rows.push_back({"MUSIC", musicSetName()});
             std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(music_.volume() * 100.f)));
-            row(y, "MUSIC VOLUME", buf, screenIndex_ == 1); y += lh * 1.08f;
+            rows.push_back({"MUSIC VOLUME", buf});
             std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(sfxVolume_ * 100.f)));
-            row(y, "SFX VOLUME", buf, screenIndex_ == 2); y += lh * 1.08f;
-            row(y, "MUSIC ENABLED", music_.enabled() ? "ON" : "OFF", screenIndex_ == 3); y += lh * 1.08f;
+            rows.push_back({"SFX VOLUME", buf});
+            rows.push_back({"MUSIC ENABLED", music_.enabled() ? "ON" : "OFF"});
             std::snprintf(buf, sizeof buf, "%.1f", padSens_);
-            row(y, "STICK SENSITIVITY", buf, screenIndex_ == 4); y += lh * 1.08f;
-            row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.08f;
-            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 6); y += lh * 1.08f;
-            row(y, "DISPLAY", displayModeName(), screenIndex_ == 7); y += lh * 1.08f;
+            rows.push_back({"STICK SENSITIVITY", buf});
+            rows.push_back({"INVERT LOOK", padInvertY_ ? "ON" : "OFF"});
+            rows.push_back({"RUMBLE", padRumble_ ? "ON" : "OFF"});
+            rows.push_back({"DISPLAY", displayModeName()});
             std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
-            row(y, "RESOLUTION", buf, screenIndex_ == 8); y += lh * 1.08f;
-            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 9); y += lh * 1.08f;
-            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 10); y += lh * 1.08f;
-            row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)", screenIndex_ == 11); y += lh * 1.08f;
-            row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 12); y += lh * 1.08f;
-            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 13); y += lh * 1.0f;
-            row(y, "BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 14, assets_.usingWad(), true); y += lh * 1.08f;
-            row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 15); y += lh * 1.08f;
-            row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 16); y += lh * 1.08f;
-            row(y, "BLOOM & HAZE", bloom_ ? "ON" : "OFF", screenIndex_ == 17); y += lh * 1.3f;
-            hotText(W * 0.5f, y, screenIndex_ == 18 ? "> BACK <" : "BACK", s, screenIndex_ == 18 ? yellow : dim, 1, kHotBack, 0);
+            rows.push_back({"RESOLUTION", buf});
+            rows.push_back({"MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)"});
+            rows.push_back({"DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)"});
+            rows.push_back({"SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)"});
+            rows.push_back({"PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)")});
+            rows.push_back({"DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON"});
+            rows.push_back({"BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", assets_.usingWad(), true});
+            rows.push_back({"RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS"});
+            rows.push_back({"ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF"});
+            rows.push_back({"BLOOM & HAZE", bloom_ ? "ON" : "OFF"});
+            const int nRows = static_cast<int>(rows.size());   // BACK is index nRows (see screenKey)
+            const float rowH = lh * 1.08f, top = H * 0.125f;
+            const float bottom = H - lh * 1.1f - lh * 1.2f - lh * 1.3f;   // above the hint line, the status line and BACK
+            int visible = std::max(3, static_cast<int>((bottom - top) / rowH));
+            if (visible >= nRows) { visible = nRows; optionsScroll_ = 0; }
+            optionsScroll_ = std::clamp(optionsScroll_, 0, nRows - visible);
+            if (optionsFollow_) {
+                if (screenIndex_ >= nRows) optionsScroll_ = nRows - visible;   // BACK: show the end of the list above it
+                else if (screenIndex_ < optionsScroll_) optionsScroll_ = screenIndex_;
+                else if (screenIndex_ >= optionsScroll_ + visible) optionsScroll_ = screenIndex_ - visible + 1;
+            }
+            const glm::vec4 marker(0.7f, 0.65f, 0.5f, 1.f);
+            if (optionsScroll_ > 0) text(W * 0.5f, top - lh * 0.75f, "^  " + std::to_string(optionsScroll_) + " MORE ABOVE  ^", s * 0.6f, marker, 1);
+            float y = top;
+            for (int i = optionsScroll_; i < optionsScroll_ + visible; ++i) {
+                rowIndex = i;
+                row(y, rows[static_cast<size_t>(i)].label, rows[static_cast<size_t>(i)].value, screenIndex_ == i, rows[static_cast<size_t>(i)].enabled, rows[static_cast<size_t>(i)].sub);
+                y += rowH;
+            }
+            const int below = nRows - optionsScroll_ - visible;
+            if (below > 0) text(W * 0.5f, y - lh * 0.3f, "v  " + std::to_string(below) + " MORE BELOW  v", s * 0.6f, marker, 1);
+            y += lh * 0.35f;
+            hotText(W * 0.5f, y, screenIndex_ == nRows ? "> BACK <" : "BACK", s, screenIndex_ == nRows ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
-            text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
+            text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   WHEEL OR UP/DOWN SCROLL   ALT+ENTER FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
             text(W * 0.5f, H * 0.12f, "TROPHIES  " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total()), s * 1.6f, yellow, 1);
             const auto& all = trophyCatalogue();
