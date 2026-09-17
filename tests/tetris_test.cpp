@@ -591,7 +591,31 @@ static void testFightCleansesBoard() {
     CHECK(g.level() == 2);
 }
 
+// Sticky gravity: a clump with nothing under it falls after a clear; an overhang that
+// connects to a supported column stays where it is, as in classic Tetris.
+static void testFloatingGroupFalls() {
+    Game g(1, fastRules());
+    fill(g, 19, CellKind::Normal, 0);
+    g.setCell(3, 15, Cell{CellKind::Normal, 1});   // floating pair, nothing below until row 19
+    g.setCell(4, 15, Cell{CellKind::Normal, 1});
+    g.setCell(7, 18, Cell{CellKind::Normal, 2});   // a supported column with an overhang to its right
+    g.setCell(7, 17, Cell{CellKind::Normal, 2});
+    g.setCell(8, 17, Cell{CellKind::Normal, 2});
+    g.forcePiece(Shape::I, {});
+    g.spawnNow();
+    g.rotateCW();
+    for (int i = 0; i < 6; ++i) g.moveLeft();
+    g.hardDrop();                           // fills column 0 of row 19: a clear, then settling
+    runUntil(g, Phase::Falling);
+    CHECK(g.lines() == 1);
+    CHECK(g.at(3, 15).empty() && g.at(4, 15).empty());
+    CHECK(g.at(3, 19).kind == CellKind::Normal && g.at(4, 19).kind == CellKind::Normal);   // the pair fell to the floor (row 19 shifted away)
+    CHECK(g.at(7, 19).kind == CellKind::Normal && g.at(7, 18).kind == CellKind::Normal);   // the column dropped one row with the clear
+    CHECK(g.at(8, 18).kind == CellKind::Normal && g.at(8, 19).empty());                    // the overhang came with it and still hangs
+}
+
 int main() {
+    testFloatingGroupFalls();
     testFightCleansesBoard();
     testPrizes();
     testPanicAndPurge();

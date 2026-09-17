@@ -52,7 +52,7 @@ struct Options {
     std::vector<Click> clicks;         // testing: left-clicks at window coordinates on given frames
     int stackRows = 0;                 // pre-fill this many holey rows of normal blocks (blocks scenario)
     bool noMusic = false;
-    float musicVolume = 0.45f;
+    float musicVolume = 0.5f;          // music and effects start at the same level (see sfxVolume_)
     std::string musicSet;              // "classic" | "sc55" | "modern" (empty = saved preference, default modern when available)
     std::string profile;               // player profile to use (skips the name prompt)
     std::string reloadWad;             // testing: swap to this WAD after 30 frames
@@ -182,6 +182,7 @@ private:
     bool useVoxels_ = false;
     bool doomArtOff_ = false;          // play on the placeholder art even though a WAD is known
     bool brutal_ = true;               // OPTIONS > DOOM ART > BRUTAL: blood, gibs, casings, bullet holes, screen blood
+    float sfxVolume_ = 0.5f;           // OPTIONS > SFX VOLUME (master gain on every effect)
     bool brutalActive() const { return brutal_ && assets_.usingWad(); }   // the preference only applies on Doom art
     struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
     std::vector<ScreenBlood> screenBlood_;

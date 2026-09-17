@@ -85,7 +85,7 @@ private:
     float fadeTarget_ = 1.f;
     float fadeRate_ = 2.f;      // per second
     bool stopWhenFaded_ = false;
-    float volume_ = 0.45f;
+    float volume_ = 0.5f;
     bool enabled_ = true;
     std::vector<float> scratch_;
     // REDLINE_MUSIC_DUMP=<file.wav>: the first dumpSeconds of the mix are written out (verification aid).

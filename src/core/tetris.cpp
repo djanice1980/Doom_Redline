@@ -1,3 +1,4 @@
+#include <vector>
 #include "core/tetris.h"
 
 #include <algorithm>
@@ -312,18 +313,62 @@ void Game::finishClear() {
 // Move every unsupported red cell down by one row. Bottom-up so a stack of
 // red cells moves together.
 bool Game::settleStep() {
-    if (!rules_.redCellsSettle && !collapseAll_) return false;
     bool moved = false;
-    for (int r = kBoardH - 2; r >= 0; --r) {
-        for (int c = 0; c < kBoardW; ++c) {
-            bool loose = grid_[r][c].red() || (collapseAll_ && !grid_[r][c].empty());
-            if (loose && grid_[r + 1][c].empty()) {
+    if (rules_.redCellsSettle || collapseAll_) {
+        for (int r = kBoardH - 2; r >= 0; --r) {
+            for (int c = 0; c < kBoardW; ++c) {
+                bool loose = grid_[r][c].red() || (collapseAll_ && !grid_[r][c].empty());
+                if (loose && grid_[r + 1][c].empty()) {
+                    grid_[r + 1][c] = grid_[r][c];
+                    grid_[r][c] = Cell{};
+                    push(EventType::RedCellFell, c, r + 1);
+                    moved = true;
+                }
+            }
+        }
+    }
+    // Sticky gravity: any clump of connected blocks (4-neighbour, red included) with nothing
+    // under any of its cells falls a row per step. Overhangs that connect to something
+    // supported stay, like classic Tetris; blocks left hanging by a clear beside a red
+    // cell, a cleansed red cell or a removed block come down instead of floating.
+    if (!collapseAll_) {
+        int comp[kBoardH][kBoardW];
+        for (auto& row : comp) for (int& v : row) v = -1;
+        int n = 0;
+        std::vector<std::pair<int, int>> stack;
+        for (int r = 0; r < kBoardH; ++r)
+            for (int c = 0; c < kBoardW; ++c) {
+                if (grid_[r][c].empty() || comp[r][c] >= 0) continue;
+                comp[r][c] = n;
+                stack.push_back({r, c});
+                while (!stack.empty()) {
+                    auto [y, x] = stack.back();
+                    stack.pop_back();
+                    const int dy[4] = {1, -1, 0, 0}, dx[4] = {0, 0, 1, -1};
+                    for (int k = 0; k < 4; ++k) {
+                        const int ny = y + dy[k], nx = x + dx[k];
+                        if (ny < 0 || ny >= kBoardH || nx < 0 || nx >= kBoardW) continue;
+                        if (grid_[ny][nx].empty() || comp[ny][nx] >= 0) continue;
+                        comp[ny][nx] = n;
+                        stack.push_back({ny, nx});
+                    }
+                }
+                ++n;
+            }
+        std::vector<bool> supported(static_cast<size_t>(n), false);
+        for (int r = 0; r < kBoardH; ++r)
+            for (int c = 0; c < kBoardW; ++c) {
+                if (comp[r][c] < 0) continue;
+                if (r == kBoardH - 1 || (!grid_[r + 1][c].empty() && comp[r + 1][c] != comp[r][c])) supported[static_cast<size_t>(comp[r][c])] = true;
+            }
+        for (int r = kBoardH - 2; r >= 0; --r)   // bottom-up: the cell below is empty or moves first
+            for (int c = 0; c < kBoardW; ++c) {
+                if (comp[r][c] < 0 || supported[static_cast<size_t>(comp[r][c])]) continue;
                 grid_[r + 1][c] = grid_[r][c];
                 grid_[r][c] = Cell{};
                 push(EventType::RedCellFell, c, r + 1);
                 moved = true;
             }
-        }
     }
     if (!moved) collapseAll_ = false;
     return moved;

@@ -130,7 +130,8 @@ Doom's soundtrack plays from the WAD: the title fanfare and intermission
 theme on the menu, a level track while stacking (changing with the level),
 the boss-level themes during fights, and the ending music over game over.
 Press M to toggle it; `--music-volume 0.3` sets the level; `--no-music`
-keeps only the sound effects.
+keeps only the sound effects. OPTIONS has separate MUSIC VOLUME and SFX
+VOLUME sliders; both start at 50%.
 
 The 2024 rerelease ships two more soundtracks in `extras.wad` next to the
 IWAD, and the game streams them straight out of that file: **Modern** (Andrew
@@ -169,8 +170,8 @@ own table.
 
 The first launch asks for your name. Each player gets a profile (a folder
 under `~/.local/share/redline/redline/profiles/`) holding their own high
-scores, trophies and settings (music set and volume, stick sensitivity,
-inverted look, rumble). Switch or add players from the PLAYER item on the
+scores, trophies and settings (music set, music and effects volume, stick
+sensitivity, inverted look, rumble). Switch or add players from the PLAYER item on the
 title screen; the last player is remembered.
 
 Each profile also carries a random player id, an optional email address
@@ -370,6 +371,8 @@ Up/Down or W/S to pick, Enter or click to confirm.
   clears beneath them or when the board collapses after a fight.
 - When a full row clears, the shift-down happens **per column**. A column whose
   cell in that row is red keeps it (and everything stacked on it stays put).
+  Afterwards any clump of blocks left with nothing under it falls until it
+  lands (sticky gravity), and rows it completes on the way clear as a chain.
 - **Corruption.** Once the stack is 9 rows high, normal blocks start turning
   evil. Within four rows of the top it goes into overdrive (at least six
   events a second, bigger bursts, evil spawns just as fast): a board about to

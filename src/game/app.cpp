@@ -549,6 +549,7 @@ void App::loadSettings() {
     doomArtOff_ = false;
     music_.setEnabled(true);
     music_.setVolume(opts_.musicVolume);
+    bool sawSfx = false;
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "r")) {
         char key[64], val[64];
         while (std::fscanf(f, "%63[^=]=%63s\n", key, val) == 2) {
@@ -556,6 +557,7 @@ void App::loadSettings() {
             if (k == "music_set") musicSet_ = v == "classic" ? MusicSet::Classic : v == "sc55" ? MusicSet::Sc55 : MusicSet::Modern;
             else if (k == "music_on") music_.setEnabled(v != "0");
             else if (k == "music_volume") music_.setVolume(static_cast<float>(std::atof(v.c_str())));
+            else if (k == "sfx_volume") { sfxVolume_ = std::clamp(static_cast<float>(std::atof(v.c_str())), 0.f, 1.f); sawSfx = true; }
             else if (k == "pad_sens") padSens_ = std::clamp(static_cast<float>(std::atof(v.c_str())), 0.25f, 3.f);
             else if (k == "pad_invert") padInvertY_ = v != "0";
             else if (k == "pad_rumble") padRumble_ = v != "0";
@@ -566,6 +568,8 @@ void App::loadSettings() {
         std::fclose(f);
     }
     if (opts_.voxels >= 0) useVoxels_ = opts_.voxels == 1;   // --voxels / --sprites override the saved choice
+    if (!sawSfx) sfxVolume_ = music_.volume();   // first run with the slider: start level with the music
+    audio_.setMasterGain(sfxVolume_);
 }
 
 std::string App::profilesRoot() const {
@@ -779,21 +783,22 @@ void App::adjustOption(int dir) {
         break;
     }
     case 1: music_.setVolume(std::clamp(music_.volume() + 0.05f * static_cast<float>(dir), 0.f, 1.f)); break;
-    case 2: music_.setEnabled(!music_.enabled()); break;
-    case 3: padSens_ = std::clamp(padSens_ + 0.1f * static_cast<float>(dir), 0.3f, 3.f); break;
-    case 4: padInvertY_ = !padInvertY_; break;
-    case 5: padRumble_ = !padRumble_; if (padRumble_) rumble(0.5f, 0.5f, 150); break;
-    case 6: displayMode_ = (displayMode_ + 3 + dir) % 3; applyDisplay(); break;
-    case 8: if (voxels_.available()) useVoxels_ = !useVoxels_; break;
-    case 9: if (dir > 0) browseForWad(); break;
-    case 10: if (dir > 0) browseForWad(true); break;
-    case 11: if (dir > 0) openScreen(kScreenEmailEntry); break;
-    case 12: setDoomArt(doomArtOff_); break;   // toggles
-    case 13: if (assets_.usingWad()) { brutal_ = !brutal_; fps_.setBrutal(brutalActive()); saveSettings(); } break;   // sub-option of DOOM ART
-    case 14: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
-    case 15: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
-    case 16: bloom_ = !bloom_; saveDisplaySettings(); break;
-    case 7: {
+    case 2: sfxVolume_ = std::clamp(sfxVolume_ + 0.05f * static_cast<float>(dir), 0.f, 1.f); audio_.setMasterGain(sfxVolume_); break;
+    case 3: music_.setEnabled(!music_.enabled()); break;
+    case 4: padSens_ = std::clamp(padSens_ + 0.1f * static_cast<float>(dir), 0.3f, 3.f); break;
+    case 5: padInvertY_ = !padInvertY_; break;
+    case 6: padRumble_ = !padRumble_; if (padRumble_) rumble(0.5f, 0.5f, 150); break;
+    case 7: displayMode_ = (displayMode_ + 3 + dir) % 3; applyDisplay(); break;
+    case 9: if (voxels_.available()) useVoxels_ = !useVoxels_; break;
+    case 10: if (dir > 0) browseForWad(); break;
+    case 11: if (dir > 0) browseForWad(true); break;
+    case 12: if (dir > 0) openScreen(kScreenEmailEntry); break;
+    case 13: setDoomArt(doomArtOff_); break;   // toggles
+    case 14: if (assets_.usingWad()) { brutal_ = !brutal_; fps_.setBrutal(brutalActive()); saveSettings(); } break;   // sub-option of DOOM ART
+    case 15: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
+    case 16: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
+    case 17: bloom_ = !bloom_; saveDisplaySettings(); break;
+    case 8: {
         if (resolutions_.empty()) break;
         int idx = 0;
         for (size_t i = 0; i < resolutions_.size(); ++i) if (resolutions_[i].first == resW_ && resolutions_[i].second == resH_) idx = static_cast<int>(i);
@@ -814,7 +819,7 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 18;   // 17 options + BACK (the last index)
+        const int n = 19;   // 18 options + BACK (the last index)
         const int back = n - 1;
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
@@ -1043,9 +1048,9 @@ float App::pixelDensity() const {
 
 void App::saveSettings() const {
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
-        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\n",
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\nsfx_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\n",
                      musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0,
-                     music_.volume(), padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0);
+                     music_.volume(), sfxVolume_, padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0);
         std::fclose(f);
     }
 }
@@ -1241,7 +1246,7 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_MOUSE_MOTION:
             if ((mode_ == Mode::Fps || mode_ == Mode::Countdown) && screen_ == kScreenNone) { fpsIn_.dx += e.motion.xrel; fpsIn_.dy += e.motion.yrel; }
-            else if (const Hotspot* h = hotspotAt(e.motion.x * pixelDensity(), e.motion.y * pixelDensity())) {
+            else if (const Hotspot* h = hotspotAt(e.motion.x, e.motion.y)) {
                 // Hovering highlights the item the way the arrow keys would.
                 if (h->kind == kHotMenu && menu_.index != h->index) { menu_.index = h->index; play("menu", 0.4f); }
                 else if ((h->kind == kHotScreenItem || h->kind == kHotOptionRow) && screenIndex_ != h->index) { screenIndex_ = h->index; play("menu", 0.4f); }
@@ -1279,7 +1284,7 @@ void App::handleEvents() {
             stats_.addInput(InputDevice::Mouse);
             if (mode_ == Mode::Fps && screen_ == kScreenNone) { if (e.button.button == SDL_BUTTON_LEFT) fpsIn_.fire = true; break; }
             if (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT) {
-                const Hotspot* h = hotspotAt(e.button.x * pixelDensity(), e.button.y * pixelDensity());
+                const Hotspot* h = hotspotAt(e.button.x, e.button.y);
                 bool left = e.button.button == SDL_BUTTON_LEFT;
                 if (!opts_.clicks.empty()) {
                     std::fprintf(stderr, "[ui] click %.0f,%.0f -> %s (hotspots %zu)\n", e.button.x, e.button.y, h ? (std::to_string(h->kind) + "/" + std::to_string(h->index)).c_str() : "none", hotspots_.size());
@@ -2864,24 +2869,26 @@ void App::addHud() {
             row(y, "MUSIC", musicSetName(), screenIndex_ == 0); y += lh * 1.08f;
             std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(music_.volume() * 100.f)));
             row(y, "MUSIC VOLUME", buf, screenIndex_ == 1); y += lh * 1.08f;
-            row(y, "MUSIC ENABLED", music_.enabled() ? "ON" : "OFF", screenIndex_ == 2); y += lh * 1.08f;
+            std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(sfxVolume_ * 100.f)));
+            row(y, "SFX VOLUME", buf, screenIndex_ == 2); y += lh * 1.08f;
+            row(y, "MUSIC ENABLED", music_.enabled() ? "ON" : "OFF", screenIndex_ == 3); y += lh * 1.08f;
             std::snprintf(buf, sizeof buf, "%.1f", padSens_);
-            row(y, "STICK SENSITIVITY", buf, screenIndex_ == 3); y += lh * 1.08f;
-            row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 4); y += lh * 1.08f;
-            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.08f;
-            row(y, "DISPLAY", displayModeName(), screenIndex_ == 6); y += lh * 1.08f;
+            row(y, "STICK SENSITIVITY", buf, screenIndex_ == 4); y += lh * 1.08f;
+            row(y, "INVERT LOOK", padInvertY_ ? "ON" : "OFF", screenIndex_ == 5); y += lh * 1.08f;
+            row(y, "RUMBLE", padRumble_ ? "ON" : "OFF", screenIndex_ == 6); y += lh * 1.08f;
+            row(y, "DISPLAY", displayModeName(), screenIndex_ == 7); y += lh * 1.08f;
             std::snprintf(buf, sizeof buf, "%d X %d%s", resW_, resH_, displayMode_ == 1 ? "  (DESKTOP SIZE IN BORDERLESS)" : "");
-            row(y, "RESOLUTION", buf, screenIndex_ == 7); y += lh * 1.08f;
-            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 8); y += lh * 1.08f;
-            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 9); y += lh * 1.08f;
-            row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)", screenIndex_ == 10); y += lh * 1.08f;
-            row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 11); y += lh * 1.08f;
-            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 12); y += lh * 1.0f;
-            row(y, "BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 13, assets_.usingWad(), true); y += lh * 1.08f;
-            row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 14); y += lh * 1.08f;
-            row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 15); y += lh * 1.08f;
-            row(y, "BLOOM & HAZE", bloom_ ? "ON" : "OFF", screenIndex_ == 16); y += lh * 1.3f;
-            hotText(W * 0.5f, y, screenIndex_ == 17 ? "> BACK <" : "BACK", s, screenIndex_ == 17 ? yellow : dim, 1, kHotBack, 0);
+            row(y, "RESOLUTION", buf, screenIndex_ == 8); y += lh * 1.08f;
+            row(y, "MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)", screenIndex_ == 9); y += lh * 1.08f;
+            row(y, "DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)", screenIndex_ == 10); y += lh * 1.08f;
+            row(y, "SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)", screenIndex_ == 11); y += lh * 1.08f;
+            row(y, "PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)"), screenIndex_ == 12); y += lh * 1.08f;
+            row(y, "DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON", screenIndex_ == 13); y += lh * 1.0f;
+            row(y, "BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", screenIndex_ == 14, assets_.usingWad(), true); y += lh * 1.08f;
+            row(y, "RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS", screenIndex_ == 15); y += lh * 1.08f;
+            row(y, "ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF", screenIndex_ == 16); y += lh * 1.08f;
+            row(y, "BLOOM & HAZE", bloom_ ? "ON" : "OFF", screenIndex_ == 17); y += lh * 1.3f;
+            hotText(W * 0.5f, y, screenIndex_ == 18 ? "> BACK <" : "BACK", s, screenIndex_ == 18 ? yellow : dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 1.1f, "LEFT/RIGHT CHANGE   ESC OR B BACK   ALT+ENTER TOGGLES FULLSCREEN", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenTrophies) {
