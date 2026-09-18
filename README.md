@@ -13,17 +13,64 @@ shotgun. Every kill explodes and takes the neighbouring blocks with it. Then the
 board stands back up, the level goes up, and you keep stacking, faster.
 
 Native Vulkan 1.3 renderer (dynamic rendering, instanced cubes and billboards,
-one atlas). Art, sounds and music come straight out of your Doom IWAD when one
-is present, with procedural fallbacks so the game runs without it. The music
-is Doom's own MUS scores played through a built-in OPL3 (Adlib) synthesizer
-using the WAD's GENMIDI instrument bank, the way the game sounded in 1993.
+one atlas) with ray-traced shadows and reflections on GPUs that have ray
+queries, HDR bloom, volumetric light and optional voxel monsters. Art, sounds
+and music come straight out of your Doom IWAD when one is present, with
+procedural fallbacks so the game runs without it. The music is Doom's own MUS
+scores played through a built-in OPL3 (Adlib) synthesizer using the WAD's
+GENMIDI instrument bank, the way the game sounded in 1993, or the rerelease's
+recorded soundtracks when `extras.wad` is around.
+
+## Get it
+
+Download the latest build from the
+[Releases page](https://github.com/djanice1980/Doom_Redline/releases):
+`redline-<version>-win64.zip` for Windows, `redline-<version>-Linux.tar.gz`
+for Linux (Arch / CachyOS packages and installers are described under
+[Build](#build-arch--cachyos)). You need your own `doom.wad` or `doom2.wad`;
+the game finds Steam and GOG copies by itself and otherwise asks on first
+launch. Nothing else is required.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Title](docs/screenshots/title.jpg) The title screen: the stack behind, high scores, the arena's brawlers | ![The stack turning evil](docs/screenshots/evil-stack.jpg) Nine rows high: the stack is turning evil and the sign beside the board bleeds |
+| ![The board tips over](docs/screenshots/tip-over.jpg) A row is all red: the board tips onto the floor and the camera flies in | ![The fight](docs/screenshots/fight.jpg) Inside the board: chest-high blocks for cover, every red cluster a monster |
+| ![Arch-viles](docs/screenshots/arch-vile.jpg) Doom 2 monsters as variants when doom2.wad is around: arch-viles raising their arms | ![Trophies](docs/screenshots/trophies.jpg) A trophy card, and the fireworks for the last one |
+| ![Options](docs/screenshots/options.jpg) Options: music, controls, display, models, ray tracing, anti-aliasing | ![Players](docs/screenshots/players.jpg) Several people on one machine: profiles with their own scores, trophies and settings |
+
+## How to play
+
+1. **Stack.** Arrow keys or WASD move, Up rotates, Space hard-drops, Down
+   soft-drops (a gamepad works too, see [Gamepad](#gamepad)). Complete rows
+   to clear them and score; chains and combos pay more.
+2. **Watch the red.** Some minos are red. They never clear: when a row
+   completes, the normal blocks vanish and the red ones sink. The higher your
+   stack, the more normal blocks turn red on their own, and holes that red
+   blocks surround spawn evil of their own.
+3. **The red line.** When a row is entirely red the board tips over and you
+   land inside it with a shotgun. Every connected red cluster is a monster,
+   sized by the cluster: zombies and imps from small ones, demons, cacodemons,
+   barons, a cyberdemon or spider mastermind from big ones. Mouse look, WASD
+   move, Shift run, click to fire, 1-4 or the wheel to change weapons.
+4. **Clear the room.** Kills explode neighbouring blocks and drop health, ammo
+   and weapons. Monsters chew through your cover and grow if you leave one
+   alive too long. Clear them all and the board stands back up one level
+   higher; die and the run ends.
+5. **Bank prizes.** Lines you clear before a fight pay out as health, armour
+   and a chance at invulnerability for that fight.
+
+The full rules are under [Rules that differ from classic](#rules-that-differ-from-classic),
+the controls under [Controls](#controls).
 
 ## Windows
 
 Grab `redline-<version>-win64.zip` (from the GitHub release, or build it as
 described below), unzip it anywhere, and run `redline.exe`. The folder holds
-the game, `SDL3.dll`, the three ogg/vorbis DLLs, and a `voxels` folder with the
-3D model pack; nothing needs installing. Requirements:
+the game, `SDL3.dll`, the three ogg/vorbis DLLs, and the four optional data
+folders (`voxels`, `materials`, `brutal`, `font-hd`, see [Bundled third-party
+data](#bundled-third-party-data)); nothing needs installing. Requirements:
 
 - 64-bit Windows 10 or 11 with a Vulkan-capable GPU and a current graphics
   driver (NVIDIA, AMD and Intel drivers all ship the Vulkan loader; if the
