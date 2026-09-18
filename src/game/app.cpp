@@ -149,6 +149,8 @@ App::App(Options opts) : opts_(std::move(opts)) {
         if (last.empty() && opts_.scenario != "title") last = "PLAYER";   // scripted runs never see the prompt
         if (!last.empty()) switchProfile(last);
         else nameRequired_ = true;
+        // Several people may share this machine: ask who is playing on every launch.
+        if (!nameRequired_ && opts_.profile.empty() && opts_.scenario == "title" && (opts_.frames == 0 || std::getenv("REDLINE_ASK_PROFILE"))) profileRequired_ = true;   // scripted captures skip it unless asked
     }
     if (!opts_.musicSet.empty()) {
         if (opts_.musicSet == "classic") musicSet_ = MusicSet::Classic;
@@ -362,7 +364,7 @@ App::~App() {
 
 void App::play(const char* name, float gain, float pitch, int minIntervalMs) { audio_.play(name, gain, pitch, minIntervalMs); }
 
-void App::newGame() {
+void App::newGame(bool enter) {
     uint32_t seed = opts_.seed ? opts_.seed : static_cast<uint32_t>(std::chrono::steady_clock::now().time_since_epoch().count() & 0xFFFFFFFFu);
     game_ = std::make_unique<core::Game>(seed);
     fps_ = FpsMode();
@@ -381,7 +383,7 @@ void App::newGame() {
     keyB_ = keyF_ = keyG_ = false;
     keys_ = {};
     fpsIn_ = {};
-    enterMode(opts_.scenario == "title" ? Mode::Title : Mode::Blocks);
+    if (enter) enterMode(opts_.scenario == "title" ? Mode::Title : Mode::Blocks);
 }
 
 void App::applyScenario() {
@@ -479,6 +481,7 @@ void App::enterMode(Mode m) {
         menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "CREDITS", "QUIT"};
         refreshAllScores();
         if (nameRequired_ && profileName_.empty() && screen_ == kScreenNone) openScreen(kScreenNameEntry);
+        else if (profileRequired_ && screen_ == kScreenNone) openScreen(kScreenProfiles);
         break;
     case Mode::Alert:
         play("redline", 1.f);
@@ -522,11 +525,11 @@ void App::enterMode(Mode m) {
         lastRank_ = highScores_.add({game_->score(), game_->level(), redLinesSurvived_, game_->lines(), ""});
         if (lastRank_ > 0) std::fprintf(stderr, "[app] new high score rank %d: %d\n", lastRank_, game_->score());
         if (lastRank_ == 1) trophy("doom_slayer");
-        menu_.items = {"RESTART", "QUIT"};
+        menu_.items = {"RESTART", "MAIN MENU", "QUIT"};
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
     case Mode::Paused:
-        menu_.items = {"RESUME", "TROPHIES", "OPTIONS", "RESTART", "QUIT"};
+        menu_.items = {"RESUME", "TROPHIES", "OPTIONS", "RESTART", "MAIN MENU", "QUIT"};
         break;
     default:
         break;
@@ -600,6 +603,79 @@ void App::refreshAllScores() {
     }
     std::stable_sort(allProfileScores_.begin(), allProfileScores_.end(), [](const NamedScore& a, const NamedScore& b) { return a.score.score > b.score.score; });
     if (allProfileScores_.size() > 8) allProfileScores_.resize(8);
+}
+
+void App::loadProfileList() {
+    profileList_ = listProfiles();
+    profileInfo_.clear();
+    for (const std::string& p : profileList_) {
+        const std::string dir = profilesRoot() + p + "/";
+        ProfileInfo info;
+        HighScores hs; hs.load(dir + "highscores.txt"); info.best = hs.best();
+        Trophies t; t.load(dir + "trophies.txt"); info.trophies = t.unlockedCount();
+        PlayerStats ps; ps.load(dir, machine_); info.played = ps.lifetime().total(); info.email = !ps.email().empty();
+        profileInfo_.push_back(info);
+    }
+    profileConfirmDelete_ = -1;
+    screenIndex_ = 0;
+    for (size_t i = 0; i < profileList_.size(); ++i) if (profileList_[i] == profileName_) screenIndex_ = static_cast<int>(i);
+}
+
+bool App::renameProfile(const std::string& from, const std::string& to) {
+    std::error_code ec;
+    const std::string src = profilesRoot() + from, dst = profilesRoot() + to;
+    if (from == to) return true;
+    if (std::filesystem::exists(dst, ec)) { wadStatus_ = "THERE IS ALREADY A PLAYER CALLED " + to; return false; }
+    const bool current = from == profileName_;
+    if (current) { stats_.save(); stats_ = PlayerStats(); }   // detach before the folder moves
+    std::filesystem::rename(src, dst, ec);
+    if (ec) { wadStatus_ = "COULD NOT RENAME: " + ec.message(); if (current) stats_.load(src + "/", machine_); return false; }
+    if (current) switchProfile(to);
+    refreshAllScores();
+    return true;
+}
+
+void App::deleteProfile(const std::string& name) {
+    std::error_code ec;
+    const bool current = name == profileName_;
+    if (current) {
+        // Move to another profile first (switchProfile saves the old one), or to none.
+        std::string other;
+        for (const std::string& p : listProfiles()) if (p != name) { other = p; break; }
+        if (!other.empty()) switchProfile(other);
+        else {
+            stats_ = PlayerStats();
+            highScores_ = HighScores();
+            trophies_ = Trophies();
+            profileName_.clear();
+            std::filesystem::remove(prefDir_ + "profile.txt", ec);
+            if (mode_ == Mode::Title && menu_.items.size() > 1) menu_.items[1] = "PLAYER: NONE";
+        }
+    }
+    std::filesystem::remove_all(profilesRoot() + name, ec);
+    std::fprintf(stderr, "[app] profile %s deleted%s\n", name.c_str(), ec ? " (with errors)" : "");
+    refreshAllScores();
+    if (profileName_.empty()) { nameRequired_ = true; profileRequired_ = false; openScreen(kScreenNameEntry); }
+    else { loadProfileList(); if (mode_ == Mode::Title && menu_.items.size() > 1) menu_.items[1] = "PLAYER: " + profileName_; }
+}
+
+void App::profileAction(int action) {
+    if (screen_ != kScreenProfiles || screenIndex_ >= static_cast<int>(profileList_.size())) return;
+    const std::string sel = profileList_[static_cast<size_t>(screenIndex_)];
+    if (action == 0) {   // rename on the name screen
+        openScreen(kScreenNameEntry);   // resets the name state, so the rename flags come after
+        nameRename_ = true;
+        renameFrom_ = sel;
+        nameEntry_ = sel;
+    } else if (action == 1) {   // the email belongs to the loaded profile, so load it first
+        if (sel != profileName_) switchProfile(sel);
+        profileRequired_ = false;
+        if (mode_ == Mode::Title && menu_.items.size() > 1) menu_.items[1] = "PLAYER: " + profileName_;
+        openScreen(kScreenEmailEntry);
+    } else if (action == 2) {
+        if (profileConfirmDelete_ == screenIndex_) { play("menu_select", 0.7f); deleteProfile(sel); }
+        else { profileConfirmDelete_ = screenIndex_; play("menu", 0.6f); }
+    }
 }
 
 void App::switchProfile(const std::string& name) {
@@ -679,6 +755,8 @@ void App::padButton(int button, bool down) {
         case SDL_GAMEPAD_BUTTON_EAST: key(SDLK_BACKSPACE); break;
         case SDL_GAMEPAD_BUTTON_START: key(SDLK_TAB); break;      // name entry: confirm
         case SDL_GAMEPAD_BUTTON_BACK: key(SDLK_ESCAPE); break;
+        case SDL_GAMEPAD_BUTTON_WEST: if (screen_ == kScreenProfiles) key(SDLK_R); break;        // X: rename
+        case SDL_GAMEPAD_BUTTON_NORTH: if (screen_ == kScreenProfiles) key(SDLK_DELETE); break;  // Y: delete
         default: break;
         }
         return;
@@ -768,8 +846,8 @@ void App::openScreen(int screen) {
     screenIndex_ = 0;
     optionsScroll_ = 0;
     optionsFollow_ = true;
-    if (screen == kScreenProfiles) profileList_ = listProfiles();
-    if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; SDL_StartTextInput(window_); }
+    if (screen == kScreenProfiles) loadProfileList();
+    if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; nameRename_ = false; wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenEmailEntry) { emailEntry_ = stats_.email(); wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenWadSetup) wadStatus_.clear();
@@ -778,6 +856,7 @@ void App::openScreen(int screen) {
 void App::closeScreen() {
     if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath || screen_ == kScreenEmailEntry) SDL_StopTextInput(window_);
     if (nameRequired_ && profileName_.empty()) { openScreen(kScreenNameEntry); return; }   // no dodging the name
+    if (profileRequired_) { openScreen(kScreenProfiles); return; }                        // nor the choice of player
     screen_ = kScreenNone;
 }
 
@@ -882,14 +961,26 @@ void App::screenKey(int key, bool fromPad) {
     }
     case kScreenProfiles: {
         int n = static_cast<int>(profileList_.size()) + 1;   // + NEW PLAYER
+        const bool onProfile = screenIndex_ < static_cast<int>(profileList_.size());
+        if (profileConfirmDelete_ >= 0 && key != SDLK_RETURN && key != SDLK_DELETE && key != SDLK_SPACE) profileConfirmDelete_ = -1;   // anything else cancels
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
         else if (key == SDLK_RETURN || key == SDLK_SPACE) {
+            if (profileConfirmDelete_ == screenIndex_ && onProfile) { profileAction(2); break; }   // second ENTER confirms the delete
             play("menu_select", 0.7f);
-            if (screenIndex_ < static_cast<int>(profileList_.size())) { switchProfile(profileList_[static_cast<size_t>(screenIndex_)]); nameRequired_ = false; closeScreen(); }
+            if (onProfile) {
+                switchProfile(profileList_[static_cast<size_t>(screenIndex_)]);
+                nameRequired_ = false;
+                profileRequired_ = false;
+                if (mode_ == Mode::Title && menu_.items.size() > 1) menu_.items[1] = "PLAYER: " + profileName_;
+                closeScreen();
+            }
             else openScreen(kScreenNameEntry);
         }
-        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
+        else if (key == SDLK_R && onProfile) profileAction(0);
+        else if (key == SDLK_E && onProfile) profileAction(1);
+        else if (key == SDLK_DELETE && onProfile) profileAction(2);
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { if (!profileRequired_) closeScreen(); else play("menu", 0.4f); }
         break;
     }
     case kScreenNameEntry: {
@@ -901,23 +992,29 @@ void App::screenKey(int key, bool fromPad) {
             if (key == SDLK_RETURN) { if (nameEntry_.size() < 12) nameEntry_.push_back(kLetters[static_cast<size_t>(nameChar_)]); play("menu", 0.6f); return; }
             if (key == SDLK_BACKSPACE) { if (!nameEntry_.empty()) nameEntry_.pop_back(); return; }
             if (key == SDLK_TAB) key = SDLK_KP_ENTER;   // confirm
-            else if (key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) { SDL_StopTextInput(window_); screen_ = kScreenNone; } return; }
+            else if (key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) closeScreen(); return; }
         }
         if (key == SDLK_KP_ENTER || (!fromPad && key == SDLK_RETURN)) {
             std::string name = nameEntry_;
             while (!name.empty() && name.back() == ' ') name.pop_back();
             if (name.empty()) return;
             for (char& c : name) if (c == ' ') c = '_';
+            if (nameRename_) {   // renaming an existing player: back to the list either way
+                if (renameProfile(renameFrom_, name)) { play("menu_select", 0.8f); nameRename_ = false; SDL_StopTextInput(window_); openScreen(kScreenProfiles); }
+                else play("menu", 0.6f);
+                return;
+            }
             SDL_StopTextInput(window_);
             screen_ = kScreenNone;
             nameRequired_ = false;
+            profileRequired_ = false;
             switchProfile(name);
             play("menu_select", 0.8f);
             announce("WELCOME, " + name, glm::vec4(0.8f, 0.9f, 1.f, 1.f), 1.2f);
             if (mode_ == Mode::Title) menu_.items[1] = "PLAYER: " + name;
             openScreen(kScreenEmailEntry);   // optional; groundwork for the online leaderboard
         } else if (!fromPad && key == SDLK_BACKSPACE) { if (!nameEntry_.empty()) nameEntry_.pop_back(); }
-        else if (!fromPad && key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) { SDL_StopTextInput(window_); screen_ = kScreenNone; } }
+        else if (!fromPad && key == SDLK_ESCAPE) { if (!nameRequired_ || !profileName_.empty()) closeScreen(); }
         break;
     }
     default:
@@ -1168,6 +1265,7 @@ int App::run() {
                 SDL_Keycode k = SDLK_UNKNOWN;
                 if (std::isalpha(static_cast<unsigned char>(ch))) k = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
                 else if (ch == '_') k = SDLK_DOWN; else if (ch == '^') k = SDLK_UP; else if (ch == '<') k = SDLK_LEFT; else if (ch == '>') k = SDLK_RIGHT;
+                else if (ch == '#') k = SDLK_DELETE; else if (ch == '=') k = SDLK_RETURN; else if (ch == '~') k = SDLK_ESCAPE;
                 else if (ch == '~') k = SDLK_RETURN; else if (ch == '`') k = SDLK_ESCAPE; else if (ch == ' ') k = SDLK_SPACE;
                 if (k == SDLK_UNKNOWN) continue;
                 ev.key.key = k;
@@ -1227,6 +1325,7 @@ void App::menuSelect() {
     else if (item == "START") { if (profileName_.empty()) openScreen(kScreenNameEntry); else enterMode(Mode::Blocks); }
     else if (item == "RESUME") enterMode(pausedFrom_);
     else if (item == "RESTART") { newGame(); enterMode(Mode::Blocks); }
+    else if (item == "MAIN MENU") { newGame(false); enterMode(Mode::Title); }
 }
 
 void App::handleEvents() {
@@ -1297,6 +1396,7 @@ void App::handleEvents() {
                 }
                 if (h && h->kind == kHotMenu && left) { menu_.index = h->index; play("menu_select", 0.7f); menuSelect(); }
                 else if (h && h->kind == kHotScreenItem && left) { screenIndex_ = h->index; screenKey(SDLK_RETURN, false); }
+                else if (h && h->kind == kHotProfileAction && left) profileAction(h->index);
                 else if (h && h->kind == kHotOptionRow) { screenIndex_ = h->index; adjustOption(left ? 1 : -1); }   // right-click steps back
                 else if (h && h->kind == kHotBack && left) { play("menu", 0.6f); screenKey(SDLK_ESCAPE, false); }
                 else if (!h && left && mode_ == Mode::GameOver && gameOverT_ > 1.2f && screen_ == kScreenNone) { menu_.index = 0; play("menu_select", 0.7f); menuSelect(); }   // "press any key"
@@ -3019,17 +3119,40 @@ void App::addHud() {
             }
             hotText(W * 0.5f, H - lh * 1.5f, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
         } else if (screen_ == kScreenProfiles) {
-            text(W * 0.5f, H * 0.16f, "PLAYERS", s * 2.f, white, 1);
-            float y = H * 0.30f;
+            text(W * 0.5f, H * 0.10f, profileRequired_ ? "WHO IS PLAYING?" : "PLAYERS", s * 1.8f, white, 1);
+            const glm::vec4 warn(1.f, 0.35f, 0.25f, 1.f), grey(0.5f, 0.5f, 0.55f, 1.f);
+            // Each player: the name, then a line of what they have done; the selected one
+            // shows its actions (also clickable). Long lists get squeezed rather than cut.
+            const float rowH = std::min(lh * 2.f, (H * 0.72f - H * 0.20f) / static_cast<float>(std::max<size_t>(profileList_.size() + 1, 1)));
+            float y = H * 0.20f;
             for (size_t i = 0; i < profileList_.size(); ++i) {
-                bool sel = static_cast<int>(i) == screenIndex_;
-                hotText(W * 0.5f, y, (sel ? "> " : "") + profileList_[i] + (profileList_[i] == profileName_ ? "  (CURRENT)" : "") + (sel ? " <" : ""), s, sel ? yellow : dim, 1, kHotScreenItem, static_cast<int>(i));
-                y += lh * 1.4f;
+                const bool sel = static_cast<int>(i) == screenIndex_;
+                const bool current = profileList_[i] == profileName_;
+                const ProfileInfo& pi = profileInfo_[i];
+                hotText(W * 0.5f - 20.f, y, (sel ? "> " : "") + profileList_[i] + (current ? "  (CURRENT)" : ""), s, sel ? yellow : dim, 2, kHotScreenItem, static_cast<int>(i));
+                std::string info = "BEST " + std::to_string(pi.best) + "   " + std::to_string(pi.trophies) + "/" + std::to_string(trophies_.total()) + " TROPHIES   " + PlayerStats::formatDuration(pi.played) + (pi.email ? "   EMAIL SET" : "");
+                text(W * 0.5f + 20.f, y + lh * 0.15f, info, s * 0.6f, sel ? white : grey, 0);
+                if (sel && profileConfirmDelete_ == static_cast<int>(i)) {
+                    text(W * 0.5f + 20.f, y + lh * 0.85f, "DELETE " + profileList_[i] + " AND ALL ITS SCORES, TROPHIES AND STATS?   ENTER YES   ESC NO", s * 0.6f, warn, 0);
+                } else if (sel) {
+                    float ax = W * 0.5f + 20.f;
+                    const char* acts[3] = {"RENAME", "EMAIL", "DELETE"};
+                    const char* keys[3] = {pad_ ? "X" : "R", pad_ ? "" : "E", pad_ ? "Y" : "DEL"};
+                    for (int a = 0; a < 3; ++a) {
+                        if (pad_ && a == 1) continue;   // no pad shortcut for the email screen; click or use OPTIONS
+                        std::string t = std::string("[") + keys[a] + "] " + acts[a];
+                        hotText(ax, y + lh * 0.85f, t, s * 0.6f, a == 2 ? warn : dim, 0, kHotProfileAction, a);
+                        ax += static_cast<float>(assets_.textWidth(t, s * 0.6f)) + 24.f * s * 0.6f;
+                    }
+                }
+                y += rowH;
             }
-            bool selNew = screenIndex_ == static_cast<int>(profileList_.size());
-            hotText(W * 0.5f, y, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1, kHotScreenItem, static_cast<int>(profileList_.size()));
-            hotText(W * 0.5f, y + lh * 1.6f, "BACK", s, dim, 1, kHotBack, 0);
-            text(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES AND SETTINGS", s * 0.7f, dim, 1);
+            const bool selNew = screenIndex_ == static_cast<int>(profileList_.size());
+            hotText(W * 0.5f, y + lh * 0.2f, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1, kHotScreenItem, static_cast<int>(profileList_.size()));
+            if (!profileRequired_) hotText(W * 0.5f, y + lh * 1.8f, "BACK", s, dim, 1, kHotBack, 0);
+            if (!wadStatus_.empty()) text(W * 0.5f, H - lh * 3.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
+            text(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES, SETTINGS AND PLAY TIME", s * 0.7f, dim, 1);
+            text(W * 0.5f, H - lh * 1.1f, pad_ ? "A PLAY   X RENAME   Y DELETE   B BACK" : "ENTER PLAY   R RENAME   E EMAIL   DEL DELETE   ESC BACK", s * 0.7f, dim, 1);
         } else if (screen_ == kScreenCredits) {
             text(W * 0.5f, H * 0.12f, "REDLINE", s * 2.6f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
             float y = H * 0.12f + lh * 3.2f;
@@ -3087,7 +3210,8 @@ void App::addHud() {
             if (!wadStatus_.empty()) text(W * 0.5f, H * 0.58f, wadStatus_, s * 0.9f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
         } else if (screen_ == kScreenNameEntry) {
             static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
-            text(W * 0.5f, H * 0.22f, "WHAT IS YOUR NAME, MARINE?", s * 1.4f, white, 1);
+            text(W * 0.5f, H * 0.22f, nameRename_ ? "NEW NAME FOR " + renameFrom_ + "?" : "WHAT IS YOUR NAME, MARINE?", s * 1.4f, white, 1);
+            if (!wadStatus_.empty()) text(W * 0.5f, H * 0.72f, wadStatus_, s * 0.8f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
             float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
             text(W * 0.5f, H * 0.36f, nameEntry_ + (f > 0.5f ? "_" : " "), s * 2.2f, yellow, 1);
             if (pad_) {
@@ -3135,7 +3259,7 @@ void App::addHud() {
         }
         drawMenu(H * 0.3f + lh * 6.8f);
         if (!highScores_.entries().empty()) {
-            float ty = H * 0.3f + lh * 6.8f + lh * 1.5f * 2.f + lh * 0.6f;
+            float ty = H * 0.3f + lh * 6.8f + lh * 1.5f * 3.f + lh * 0.6f;
             int shown = 0;
             for (const HighScore& h : highScores_.entries()) {
                 if (shown++ >= 5) break;

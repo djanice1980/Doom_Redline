@@ -419,7 +419,15 @@ it server-side. `stats_test` covers the round trip across two machines.
   "N MORE ABOVE/BELOW" markers); keyboard and pad moves keep the selection in
   view (`optionsFollow_`), the wheel scrolls three rows and turns that off
   until the next key, and BACK scrolls to the end. Rows off screen register
-  no hotspots), Trophies, Players, Name entry (keyboard text
+  no hotspots), Trophies, Players (the profile manager: `loadProfileList`
+  reads each profile's high scores, trophies and stats into `profileInfo_`;
+  `profileAction` 0/1/2 = rename via the name screen with `nameRename_`,
+  email via `switchProfile` + the email screen, delete with a second
+  confirmation (`profileConfirmDelete_`); `renameProfile` detaches `stats_`
+  before moving the folder; `deleteProfile` switches away first or, with no
+  profile left, resets to the name prompt. `profileRequired_` keeps the
+  screen up at start-up until a player is chosen; scripted runs skip it
+  unless `REDLINE_ASK_PROFILE=1`), Name entry (keyboard text
   input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
   both keyboard and pad input mapped to key codes.
 - Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks

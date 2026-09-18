@@ -177,8 +177,15 @@ own table.
 The first launch asks for your name. Each player gets a profile (a folder
 under `~/.local/share/redline/redline/profiles/`) holding their own high
 scores, trophies and settings (music set, music and effects volume, stick
-sensitivity, inverted look, rumble). Switch or add players from the PLAYER item on the
-title screen; the last player is remembered.
+sensitivity, inverted look, rumble). Every launch after that asks **who is
+playing**: the PLAYERS screen lists each profile with its best score,
+trophies, play time and whether an email is set, with the last player
+preselected so Enter carries on. The same screen is behind the PLAYER item
+on the title screen and manages the profiles: Enter plays as one, R renames
+it, E edits its email, Delete removes it (asked twice; a removed current
+player drops you to another or back to the name prompt), NEW PLAYER adds
+one. On a gamepad A plays, X renames, Y deletes. The game-over and pause
+menus have MAIN MENU next to RESTART and QUIT.
 
 Each profile also carries a random player id, an optional email address
 (OPTIONS > PLAYER EMAIL, or the prompt after a new name) that stays unused

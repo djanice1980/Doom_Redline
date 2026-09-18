@@ -75,7 +75,7 @@ private:
     struct Camera { glm::vec3 eye{0.f}; glm::vec3 target{0.f}; float fov = 50.f; glm::vec3 up{0.f, 1.f, 0.f}; };
     struct Menu { std::vector<std::string> items; int index = 0; };
 
-    void newGame();
+    void newGame(bool enter = true);   // enter = false: reset only, the caller picks the mode
     void applyScenario();
     void handleEvents();
     void menuKey(int key);
@@ -104,7 +104,7 @@ private:
     void addLights();
     void text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align = 0);
     // Mouse: every menu item, option row and BACK/CANCEL label registers a hotspot as it is drawn.
-    enum { kHotMenu = 0, kHotScreenItem, kHotOptionRow, kHotBack };
+    enum { kHotMenu = 0, kHotScreenItem, kHotOptionRow, kHotBack, kHotProfileAction };   // profile action: index 0 rename, 1 email, 2 delete
     struct Hotspot { float x, y, w, h; int kind; int index; };
     std::vector<Hotspot> hotspots_;
     void hotText(float x, float y, const std::string& s, float scale, glm::vec4 color, int align, int kind, int index);
@@ -151,6 +151,10 @@ private:
     std::vector<NamedScore> allProfileScores_;
     void refreshAllScores();
     void switchProfile(const std::string& name);
+    void loadProfileList();
+    void profileAction(int action);   // 0 rename, 1 email, 2 delete, on the selected row
+    void deleteProfile(const std::string& name);
+    bool renameProfile(const std::string& from, const std::string& to);
     void openScreen(int screen);
     void closeScreen();
     void screenKey(int key, bool fromPad);
@@ -227,6 +231,13 @@ private:
     int nameChar_ = 0;                 // gamepad letter picker position
     std::vector<std::string> profileList_;
     bool nameRequired_ = false;        // first launch: no profile yet
+    // Profile manager (the PLAYERS screen): who is playing, plus rename / email / delete.
+    struct ProfileInfo { int best = 0, trophies = 0; double played = 0.0; bool email = false; };
+    std::vector<ProfileInfo> profileInfo_;   // parallel to profileList_
+    bool profileRequired_ = false;     // start-up: the picker stays up until someone is chosen
+    int profileConfirmDelete_ = -1;    // row awaiting a second confirmation
+    bool nameRename_ = false;          // the name screen renames renameFrom_ instead of creating
+    std::string renameFrom_;
     // Per-profile controller settings.
     float padSens_ = 1.f;
     bool padInvertY_ = false;
