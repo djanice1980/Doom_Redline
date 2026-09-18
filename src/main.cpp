@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
         else if (a == "--scenario") o.scenario = next();
         else if (a == "--screenshot") o.screenshot = next();
         else if (a == "--record") o.record = next();
+        else if (a == "--online-server") o.onlineServer = next();
         else if (a == "--record-every") o.recordEvery = std::max(1, std::atoi(next()));
         else if (a == "--frames") o.frames = std::atoi(next());
         else if (a == "--bot") o.bot = true;

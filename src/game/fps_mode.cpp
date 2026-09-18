@@ -450,7 +450,7 @@ void FpsMode::updateGore(float dt) {
     }
 }
 
-void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
+void FpsMode::hurtPlayer(float dmg, glm::vec3 from, int kind) {
     if (health_ <= 0.f || god_ || invulnT_ > 0.f) return;
     damageTaken_ += dmg;
     // Armour soaks half of any hit until it is spent.
@@ -461,8 +461,8 @@ void FpsMode::hurtPlayer(float dmg, glm::vec3 from) {
     }
     health_ = std::max(0.f, health_ - dmg);
     damageFlash_ = 1.f;
-    push(FpsEvent::Type::PlayerHit, from);
-    if (health_ <= 0.f) push(FpsEvent::Type::PlayerDead, from);
+    push(FpsEvent::Type::PlayerHit, from, std::max(0, kind), 0, std::max(0, kind));
+    if (health_ <= 0.f) push(FpsEvent::Type::PlayerDead, from, std::max(0, kind), 0, std::max(0, kind));
 }
 
 // ---------------------------------------------------------------------------
@@ -646,9 +646,9 @@ void FpsMode::rocketBlast(glm::vec3 pos, float radius, float damage, core::Game&
 }
 
 // A monster's rocket: hurts the player in range and blows the cover apart.
-void FpsMode::enemyBlast(glm::vec3 pos, float radius, float damage, core::Game& game) {
+void FpsMode::enemyBlast(glm::vec3 pos, float radius, float damage, core::Game& game, int kind) {
     float pd = glm::length((playerPos_ + glm::vec3(0.f, 0.6f, 0.f)) - pos);
-    if (pd < radius) hurtPlayer(damage * (1.f - pd / radius), pos);
+    if (pd < radius) hurtPlayer(damage * (1.f - pd / radius), pos, kind);
     int destroyed = 0;
     int c, r;
     if (flatToCell(glm::vec3(pos.x, 0.5f, pos.z), c, r)) {
@@ -1030,9 +1030,9 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                     e.attacked = true;
                     e.attackTimer = st.attackInterval * (0.7f + 0.6f * u(rng_)) * crowd * cadence;
                     if (sight) {
-                        hurtPlayer(st.damage, e.pos);   // the clasp
+                        hurtPlayer(st.damage, e.pos, e.kind);   // the clasp
                         const float pd = glm::length((playerPos_ + glm::vec3(0.f, 0.6f, 0.f)) - (e.firePos + glm::vec3(0.f, 0.3f, 0.f)));
-                        enemyBlast(e.firePos + glm::vec3(0.f, 0.3f, 0.f), kVileBlastRadius, kVileBlastDamage, game);
+                        enemyBlast(e.firePos + glm::vec3(0.f, 0.3f, 0.f), kVileBlastRadius, kVileBlastDamage, game, e.kind);
                         if (pd < kVileBlastRadius && health_ > 0.f) jumpVy_ = std::max(jumpVy_, kVileJump);   // the arch-vile jump
                         push(FpsEvent::Type::VileBlast, e.firePos, e.tier, 0, e.kind);
                         if (std::getenv("REDLINE_LOG_VILE")) std::fprintf(stderr, "[vile] clasp at %.2fs: hit, blast %.2f m from the player\n", e.stateT, pd);
@@ -1048,7 +1048,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 switch (st.attack) {
                 case AttackKind::Hitscan: {
                     e.flashT = 1.f;
-                    if (lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game) && u(rng_) < 0.65f) hurtPlayer(st.damage, e.pos);
+                    if (lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game) && u(rng_) < 0.65f) hurtPlayer(st.damage, e.pos, e.kind);
                     break;
                 }
                 case AttackKind::Projectile: {
@@ -1066,12 +1066,13 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                         p.damage = st.damage;
                         p.blast = st.projBlast;
                         p.homing = st.homing;
+                        p.ownerKind = e.kind;
                         projectiles_.push_back(p);
                     }
                     break;
                 }
                 case AttackKind::Melee:
-                    if (dist < 1.5f) hurtPlayer(st.damage, e.pos);
+                    if (dist < 1.5f) hurtPlayer(st.damage, e.pos, e.kind);
                     break;
                 case AttackKind::Vile:
                     break;   // handled above
@@ -1118,7 +1119,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         } else {
             glm::vec3 dp = p.pos - playerCentre;
             if (std::fabs(dp.x) < 0.45f && std::fabs(dp.z) < 0.45f && dp.y > -0.7f && dp.y < 0.8f) {
-                hurtPlayer(p.damage, p.pos);
+                hurtPlayer(p.damage, p.pos, p.ownerKind);
                 remove = true;
             }
         }
@@ -1126,7 +1127,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
             if (p.fromPlayer && p.blast > 0.f) {
                 rocketBlast(prev, p.blast, p.damage, game);
             } else if (!p.fromPlayer && p.blast > 0.f) {
-                enemyBlast(prev, p.blast, p.damage, game);
+                enemyBlast(prev, p.blast, p.damage, game, p.ownerKind);
             } else {
                 Explosion ex;
                 ex.pos = prev;

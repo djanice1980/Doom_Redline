@@ -1,5 +1,9 @@
 #include "game/app.h"
 
+#include <cstring>
+
+#include "version.h"
+
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
@@ -149,6 +153,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
         if (last.empty() && !profiles.empty()) last = profiles.front();
         if (!last.empty()) switchProfile(last);
         else nameRequired_ = true;
+        loadOnlineConfig();
         // Several people may share this machine: ask who is playing on every launch.
         if (!nameRequired_ && opts_.profile.empty() && opts_.scenario == "title" && (opts_.frames == 0 || std::getenv("REDLINE_ASK_PROFILE"))) profileRequired_ = true;   // scripted captures skip it unless asked
     }
@@ -383,6 +388,12 @@ void App::newGame(bool enter) {
     keyB_ = keyF_ = keyG_ = false;
     keys_ = {};
     fpsIn_ = {};
+    run_ = {};
+    run_.startedAt = isoNowUtc();
+    run_.kb0 = stats_.lifetime().keyboardActions; run_.mouse0 = stats_.lifetime().mouseActions; run_.pad0 = stats_.lifetime().padActions;
+    runRecorded_ = false;
+    onlineStatus_.clear();
+    onlineRank_ = 0;
     if (enter) enterMode(opts_.scenario == "title" ? Mode::Title : Mode::Blocks);
 }
 
@@ -478,7 +489,7 @@ void App::enterMode(Mode m) {
     menu_ = {};
     switch (m) {
     case Mode::Title:
-        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "CREDITS", "QUIT"};
+        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "LEADERBOARD", "CREDITS", "QUIT"};
         refreshAllScores();
         if (nameRequired_ && profileName_.empty() && screen_ == kScreenNone) openScreen(kScreenNameEntry);
         else if (profileRequired_ && screen_ == kScreenNone) openScreen(kScreenProfiles);
@@ -487,6 +498,7 @@ void App::enterMode(Mode m) {
         play("redline", 1.f);
         break;
     case Mode::FlyIn:
+        ++run_.fights;
         ambient_.clear();   // the brawlers leave when the real fight starts
         flyFrom_ = blocksCamera();
         fps_.setAbsorbPeriod(opts_.absorbPeriod);
@@ -525,6 +537,7 @@ void App::enterMode(Mode m) {
         lastRank_ = highScores_.add({game_->score(), game_->level(), redLinesSurvived_, game_->lines(), ""});
         if (lastRank_ > 0) std::fprintf(stderr, "[app] new high score rank %d: %d\n", lastRank_, game_->score());
         if (lastRank_ == 1) trophy("doom_slayer");
+        recordRun();
         menu_.items = {"RESTART", "MAIN MENU", "QUIT"};
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
@@ -553,6 +566,7 @@ void App::loadSettings() {
     padRumble_ = true;
     useVoxels_ = voxels_.available();   // default on when the pack is present
     doomArtOff_ = false;
+    onlineOn_ = false;
     music_.setEnabled(true);
     music_.setVolume(opts_.musicVolume);
     bool sawSfx = false;
@@ -570,6 +584,7 @@ void App::loadSettings() {
             else if (k == "voxels") useVoxels_ = v != "0";
             else if (k == "doom_art") doomArtOff_ = v == "0";
             else if (k == "brutal") brutal_ = v != "0";
+            else if (k == "online") onlineOn_ = v != "0";
         }
         std::fclose(f);
     }
@@ -702,8 +717,212 @@ void App::switchProfile(const std::string& name) {
     updateMusic();
 }
 
+// --- online ------------------------------------------------------------------
+std::string App::runsDir() const { return profileName_.empty() ? std::string() : profilesRoot() + profileName_ + "/runs"; }
+
+std::string App::machineLabel() const {
+    std::string gpu = machine_.gpu;
+    for (const char* strip : {"AMD ", "NVIDIA ", "Intel(R) ", "Radeon ", "GeForce "}) { const size_t p = gpu.find(strip); if (p == 0) gpu.erase(0, std::strlen(strip)); }
+    std::string label = machine_.platform;
+    for (char& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    for (char& c : gpu) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (gpu.size() > 28) gpu.resize(28);
+    return gpu.empty() ? label : label + " / " + gpu;
+}
+
+// The service URL: --online-server, REDLINE_ONLINE_URL, <pref>/online.txt "server=", redline.cfg "server=" next to the exe, or the default.
+void App::loadOnlineConfig() {
+    std::string url = "https://doom-redline.vercel.app";
+    auto readServer = [&](const std::string& path) {
+        if (std::FILE* f = std::fopen(path.c_str(), "r")) {
+            char line[512];
+            while (std::fgets(line, sizeof line, f)) {
+                std::string l = line;
+                while (!l.empty() && (l.back() == '\n' || l.back() == '\r' || l.back() == ' ')) l.pop_back();
+                if (l.rfind("server=", 0) == 0 && l.size() > 7) url = l.substr(7);
+            }
+            std::fclose(f);
+        }
+    };
+    if (!baseDir_.empty()) readServer(baseDir_ + "/redline.cfg");
+    readServer(prefDir_ + "online.txt");
+    if (const char* e = std::getenv("REDLINE_ONLINE_URL")) if (*e) url = e;
+    if (!opts_.onlineServer.empty()) url = opts_.onlineServer;
+    online_.setServer(url);
+    onlineServer_ = online_.server();
+    std::fprintf(stderr, "[online] %s (%s, %s)\n", onlineServer_.c_str(), OnlineClient::available() ? "http available" : "no http in this build", onlineOn_ ? "on" : "off");
+    if (onlineOn_ && !stats_.token().empty()) submitPendingRuns();
+}
+
+void App::startRegistration() {
+    if (!OnlineClient::available() || stats_.email().empty()) return;
+    registerEmail_ = stats_.email();
+    registerBusy_ = false;
+    openScreen(kScreenRegister);
+}
+
+void App::openLeaderboard(int tab) {
+    static const char* boards[] = {"global", "week", "fights", "level", "kills"};
+    leaderboardTab_ = std::clamp(tab, 0, 4);
+    if (screen_ != kScreenLeaderboard) openScreen(kScreenLeaderboard);
+    leaderboard_ = Json();
+    leaderboardError_.clear();
+    leaderboardFetched_.clear();
+    // The cached copy first, so the screen is never empty offline.
+    if (std::FILE* f = std::fopen((prefDir_ + "leaderboard-" + boards[leaderboardTab_] + ".json").c_str(), "rb")) {
+        std::string text; char buf[4096]; size_t n;
+        while ((n = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
+        std::fclose(f);
+        Json cached;
+        if (Json::parse(text, cached)) { leaderboard_ = cached["reply"]; leaderboardFetched_ = "EARLIER (" + cached["fetched"].asString("?") + ")"; }
+    }
+    if (OnlineClient::available() && onlineOn_) { leaderboardLoading_ = true; online_.leaderboard(boards[leaderboardTab_], stats_.playerId()); }
+}
+
+// Every finished game becomes a run record on disk; with online on and a registered
+// player it is uploaded from runs/pending and moved to runs/ once the server has it.
+void App::recordRun() {
+    if (runRecorded_ || !game_ || profileName_.empty()) return;
+    runRecorded_ = true;
+    RunRecord r;
+    r.runId = newUuid();
+    r.playerId = stats_.playerId();
+    r.installId = machine_.installId;
+    r.displayName = profileName_;
+    r.version = REDLINE_VERSION;
+    r.platform = machine_.platform;
+    r.startedAt = run_.startedAt;
+    r.endedAt = isoNowUtc();
+    r.durationS = run_.duration;
+    r.score = game_->score(); r.level = game_->level(); r.lines = game_->lines(); r.redLines = redLinesSurvived_;
+    r.fights = run_.fights; r.pieces = run_.pieces; r.tetrises = run_.tetrises; r.bestChain = run_.bestChain;
+    for (int k = 0; k < kRunKinds; ++k) { r.killsByKind[k] = run_.killsByKind[k]; r.kills += run_.killsByKind[k]; if (run_.killsByKind[k] > 0) r.highestKind = std::max(r.highestKind, k); }
+    r.blocksDestroyed = gameBlocks_; r.pickups = gamePickups_;
+    for (int w = 0; w < kRunWeapons; ++w) { r.weaponsOwned[w] = fps_.weapon(w).owned; r.shots[w] = run_.shots[w]; }
+    r.damageTaken = run_.damage + (diedInFps_ ? fps_.damageTaken() : 0.0);
+    r.bfgUsed = bfgUsed_;
+    r.deathCause = diedInFps_ ? "killed" : "stack";
+    r.killedBy = diedInFps_ ? run_.killedBy : -1;
+    r.seed = game_->seed();
+    r.voxels = useVoxels_ && voxels_.available();
+    r.brutal = brutalActive();
+    r.keyboardActions = static_cast<int>(stats_.lifetime().keyboardActions - run_.kb0);
+    r.mouseActions = static_cast<int>(stats_.lifetime().mouseActions - run_.mouse0);
+    r.padActions = static_cast<int>(stats_.lifetime().padActions - run_.pad0);
+    r.trophies = run_.trophies;
+    r.machineOs = machine_.os; r.machineGpu = machine_.gpu; r.machineCores = machine_.cpuCores; r.machineRamMb = machine_.ramMb; r.padModel = pad_ ? padName_ : "";
+    // Scripted and cheat runs (scenarios, --bot, --god, --arsenal, --level, --stack, --seed, --keys) stay local.
+    const bool scripted = opts_.scenario != "title" || opts_.bot || opts_.god || opts_.arsenal >= 0 || opts_.level > 1 || opts_.stackRows > 0 || opts_.seed != 0 || !opts_.keys.empty() || opts_.frames > 0;
+    const bool allowScripted = std::getenv("REDLINE_ONLINE_ALLOW_SCRIPTED") != nullptr;   // for testing the upload against a local server
+    const bool upload = OnlineClient::available() && onlineOn_ && !stats_.token().empty() && (!scripted || allowScripted);
+    const std::string path = r.write(runsDir() + (upload ? "/pending" : ""));
+    std::fprintf(stderr, "[online] run record %s (%s)\n", path.c_str(), upload ? "queued for upload" : "kept locally");
+    if (upload && !path.empty()) {
+        onlineStatus_ = "POSTING YOUR SCORE...";
+        online_.submitRun(r.toJson().dump(), stats_.token(), path);
+    } else if (scripted && OnlineClient::available() && onlineOn_) {
+        onlineStatus_ = "TEST RUN: NOT POSTED";
+    } else if (OnlineClient::available() && !onlineOn_) {
+        onlineStatus_ = "TURN ON ONLINE UNDER OPTIONS TO POST SCORES";
+    } else if (OnlineClient::available() && stats_.token().empty()) {
+        onlineStatus_ = "REGISTER YOUR EMAIL UNDER OPTIONS TO POST SCORES";
+    }
+}
+
+void App::submitPendingRuns() {
+    if (!OnlineClient::available() || !onlineOn_ || stats_.token().empty() || runsDir().empty()) return;
+    std::error_code ec;
+    int n = 0;
+    for (const auto& e : std::filesystem::directory_iterator(runsDir() + "/pending", ec)) {
+        if (e.path().extension() != ".json") continue;
+        std::string text;
+        if (std::FILE* f = std::fopen(e.path().string().c_str(), "rb")) { char buf[4096]; size_t k; while ((k = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, k); std::fclose(f); }
+        if (text.empty()) continue;
+        online_.submitRun(text, stats_.token(), e.path().string());
+        ++n;
+    }
+    if (n) std::fprintf(stderr, "[online] %d pending run(s) queued for upload\n", n);
+}
+
+void App::pollOnline() {
+    for (const OnlineClient::Result& res : online_.poll()) {
+        switch (res.kind) {
+        case OnlineClient::Kind::Register:
+            registerBusy_ = false;
+            if (res.ok) { wadStatus_.clear(); openScreen(kScreenCode); play("menu_select", 0.7f); }
+            else { wadStatus_ = "COULD NOT SEND: " + (res.error.empty() ? std::string("NO REPLY") : res.error); play("menu", 0.6f); }
+            for (char& c : wadStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            break;
+        case OnlineClient::Kind::Confirm:
+            registerBusy_ = false;
+            if (res.ok && !res.body["token"].asString().empty()) {
+                stats_.setVerified(res.body["token"].asString());
+                announce("REGISTERED: " + registerEmail_, glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
+                play("pickup_weapon", 1.f);
+                closeScreen();
+                submitPendingRuns();
+            } else {
+                wadStatus_ = res.error.empty() ? "WRONG CODE" : res.error;
+                for (char& c : wadStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                codeEntry_.clear();
+                play("menu", 0.6f);
+            }
+            break;
+        case OnlineClient::Kind::SubmitRun: {
+            std::error_code ec;
+            if (res.ok) {
+                // Uploaded: the record moves out of pending.
+                const std::filesystem::path p(res.tag);
+                std::filesystem::rename(p, p.parent_path().parent_path() / p.filename(), ec);
+                onlineRank_ = res.body["rank"].asInt();
+                onlineTotal_ = res.body["total_players"].asInt();
+                onlineTier_ = res.body["tier"].asString();
+                if (onlineRank_ > 0) onlineStatus_ = "WORLD RANK #" + std::to_string(onlineRank_) + (onlineTotal_ > 0 ? " OF " + std::to_string(onlineTotal_) : "") + (onlineTier_.empty() ? "" : "   " + onlineTier_);
+                else onlineStatus_ = "SCORE POSTED";
+                if (res.body["best_rank"].asInt() > 0 && res.body["best_rank"].asInt() < onlineRank_) onlineStatus_ += "   (YOUR BEST: #" + std::to_string(res.body["best_rank"].asInt()) + ")";
+            } else if (res.status == 401 || res.status == 403) {
+                onlineStatus_ = "THE SERVER DOES NOT KNOW THIS PLAYER: REGISTER AGAIN UNDER OPTIONS";
+                stats_.setVerified("");   // the token is stale
+            } else if (res.status >= 400 && res.status < 500 && res.status != 429) {
+                // Refused for good (an implausible record): out of the queue, kept for inspection.
+                const std::filesystem::path p(res.tag);
+                std::filesystem::create_directories(p.parent_path().parent_path() / "rejected", ec);
+                std::filesystem::rename(p, p.parent_path().parent_path() / "rejected" / p.filename(), ec);
+                onlineStatus_ = "NOT POSTED: " + (res.error.empty() ? std::string("REFUSED") : res.error);
+                for (char& c : onlineStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            } else {
+                onlineStatus_ = "COULD NOT POST (" + (res.error.empty() ? std::string("NO REPLY") : res.error) + "), WILL RETRY NEXT LAUNCH";
+                for (char& c : onlineStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            std::fprintf(stderr, "[online] submit %s: %s\n", res.tag.c_str(), onlineStatus_.c_str());
+            break;
+        }
+        case OnlineClient::Kind::Leaderboard: {
+            leaderboardLoading_ = false;
+            static const char* boards[] = {"global", "week", "fights", "level", "kills"};
+            if (res.tag != boards[leaderboardTab_]) break;   // a stale reply for another tab
+            if (res.ok) {
+                leaderboard_ = res.body;
+                leaderboardError_.clear();
+                leaderboardFetched_ = "JUST NOW";
+                Json cached = Json::object();
+                cached.set("fetched", isoNowUtc()).set("reply", res.body);
+                if (std::FILE* f = std::fopen((prefDir_ + "leaderboard-" + res.tag + ".json").c_str(), "wb")) { const std::string t = cached.dump(); std::fwrite(t.data(), 1, t.size(), f); std::fclose(f); }
+            } else {
+                leaderboardError_ = res.error.empty() ? "NO REPLY" : res.error;
+                for (char& c : leaderboardError_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            break;
+        }
+        case OnlineClient::Kind::Player:
+            break;
+        }
+    }
+}
+
 void App::trophy(const char* id) {
     if (!trophies_.unlock(id)) return;
+    if (mode_ != Mode::Title) run_.trophies.push_back(id);
     for (const TrophyDef& d : trophyCatalogue())
         if (std::string(id) == d.id) { showTrophy(d, false); std::fprintf(stderr, "[app] trophy unlocked: %s\n", d.name); }
     // The ultimate trophy: everything else in the cabinet.
@@ -863,11 +1082,13 @@ void App::openScreen(int screen) {
     if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; nameRename_ = false; wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenEmailEntry) { emailEntry_ = stats_.email(); wadStatus_.clear(); SDL_StartTextInput(window_); }
+    if (screen == kScreenCode) { codeEntry_.clear(); codeChar_ = 0; wadStatus_.clear(); SDL_StartTextInput(window_); }
+    if (screen == kScreenRegister) wadStatus_.clear();
     if (screen == kScreenWadSetup) wadStatus_.clear();
 }
 
 void App::closeScreen() {
-    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath || screen_ == kScreenEmailEntry) SDL_StopTextInput(window_);
+    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath || screen_ == kScreenEmailEntry || screen_ == kScreenCode) SDL_StopTextInput(window_);
     if (nameRequired_ && profileName_.empty()) { openScreen(kScreenNameEntry); return; }   // no dodging the name
     if (profileRequired_) { openScreen(kScreenProfiles); return; }                        // nor the choice of player
     screen_ = kScreenNone;
@@ -890,11 +1111,18 @@ void App::adjustOption(int dir) {
     case 10: if (dir > 0) browseForWad(); break;
     case 11: if (dir > 0) browseForWad(true); break;
     case 12: if (dir > 0) openScreen(kScreenEmailEntry); break;
-    case 13: setDoomArt(doomArtOff_); break;   // toggles
-    case 14: if (assets_.usingWad()) { brutal_ = !brutal_; fps_.setBrutal(brutalActive()); saveSettings(); } break;   // sub-option of DOOM ART
-    case 15: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
-    case 16: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
-    case 17: bloom_ = !bloom_; saveDisplaySettings(); break;
+    case 13:   // ONLINE: opt in per profile; turning it on with an unverified address starts the registration
+        if (!OnlineClient::available()) break;
+        onlineOn_ = !onlineOn_;
+        if (onlineOn_ && !stats_.email().empty() && !stats_.emailVerified()) startRegistration();
+        else if (onlineOn_ && stats_.email().empty()) openScreen(kScreenEmailEntry);
+        else if (onlineOn_) submitPendingRuns();
+        break;
+    case 14: setDoomArt(doomArtOff_); break;   // toggles
+    case 15: if (assets_.usingWad()) { brutal_ = !brutal_; fps_.setBrutal(brutalActive()); saveSettings(); } break;   // sub-option of DOOM ART
+    case 16: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
+    case 17: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
+    case 18: bloom_ = !bloom_; saveDisplaySettings(); break;
     case 8: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -916,7 +1144,7 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 19;   // 18 options + BACK (the last index)
+        const int n = 20;   // 19 options + BACK (the last index)
         const int back = n - 1;
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; optionsFollow_ = true; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; optionsFollow_ = true; play("menu", 0.6f); }
@@ -953,9 +1181,51 @@ void App::screenKey(int key, bool fromPad) {
             stats_.setEmail(e);
             play("menu_select", 0.7f);
             closeScreen();
+            if (onlineOn_ && !e.empty() && !stats_.emailVerified()) startRegistration();
         }
         else if (key == SDLK_BACKSPACE) { if (!emailEntry_.empty()) emailEntry_.pop_back(); }
         else if (key == SDLK_ESCAPE) closeScreen();
+        break;
+    }
+    case kScreenRegister: {
+        if (registerBusy_) break;
+        if (key == SDLK_RETURN || key == SDLK_KP_ENTER || key == SDLK_SPACE) {
+            registerBusy_ = true;
+            wadStatus_ = "SENDING THE CODE...";
+            online_.registerEmail(stats_.playerId(), machine_.installId, registerEmail_, profileName_, machineLabel(), REDLINE_VERSION);
+            play("menu_select", 0.7f);
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
+        break;
+    }
+    case kScreenCode: {
+        if (registerBusy_) break;
+        if (fromPad) {   // digit picker, like the name screen
+            if (key == SDLK_UP || key == SDLK_RIGHT) { codeChar_ = (codeChar_ + 1) % 10; return; }
+            if (key == SDLK_DOWN || key == SDLK_LEFT) { codeChar_ = (codeChar_ + 9) % 10; return; }
+            if (key == SDLK_RETURN) { if (codeEntry_.size() < 6) codeEntry_.push_back(static_cast<char>('0' + codeChar_)); play("menu", 0.6f); return; }
+            if (key == SDLK_BACKSPACE) { if (!codeEntry_.empty()) codeEntry_.pop_back(); return; }
+            if (key == SDLK_TAB) key = SDLK_KP_ENTER;
+            else if (key == SDLK_ESCAPE) { closeScreen(); return; }
+        }
+        if (key == SDLK_KP_ENTER || (!fromPad && key == SDLK_RETURN)) {
+            if (codeEntry_.size() != 6) { wadStatus_ = "THE CODE HAS SIX DIGITS"; play("menu", 0.6f); return; }
+            registerBusy_ = true;
+            wadStatus_ = "CHECKING...";
+            online_.confirm(stats_.playerId(), codeEntry_);
+        }
+        else if (!fromPad && key == SDLK_BACKSPACE) { if (!codeEntry_.empty()) codeEntry_.pop_back(); }
+        else if (key == SDLK_R) { registerBusy_ = true; wadStatus_ = "SENDING A NEW CODE..."; online_.registerEmail(stats_.playerId(), machine_.installId, registerEmail_, profileName_, machineLabel(), REDLINE_VERSION); }
+        else if (!fromPad && key == SDLK_ESCAPE) closeScreen();
+        break;
+    }
+    case kScreenLeaderboard: {
+        static const char* boards[] = {"global", "week", "fights", "level", "kills"};
+        if (key == SDLK_LEFT) openLeaderboard((leaderboardTab_ + 4) % 5);
+        else if (key == SDLK_RIGHT) openLeaderboard((leaderboardTab_ + 1) % 5);
+        else if (key == SDLK_R || key == SDLK_RETURN || key == SDLK_SPACE) openLeaderboard(leaderboardTab_);
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
+        (void)boards;
         break;
     }
     case kScreenWadPath: {
@@ -1036,6 +1306,7 @@ void App::screenKey(int key, bool fromPad) {
 }
 
 void App::beginLevelCard() {
+    run_.damage += fps_.damageTaken();
     levelCardT_ = 0.f;
     levelCard_.level = game_->level();
     levelCard_.kills = fightStats_.kills;
@@ -1163,9 +1434,9 @@ float App::pixelDensity() const {
 
 void App::saveSettings() const {
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
-        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\nsfx_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\n",
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\nsfx_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\nonline=%d\n",
                      musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0,
-                     music_.volume(), sfxVolume_, padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0);
+                     music_.volume(), sfxVolume_, padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0, onlineOn_ ? 1 : 0);
         std::fclose(f);
     }
 }
@@ -1343,6 +1614,7 @@ void App::menuSelect() {
     if (item == "QUIT") running_ = false;
     else if (item == "OPTIONS") openScreen(kScreenOptions);
     else if (item == "TROPHIES") openScreen(kScreenTrophies);
+    else if (item == "LEADERBOARD") openLeaderboard(leaderboardTab_);
     else if (item == "CREDITS") openScreen(kScreenCredits);
     else if (item.rfind("PLAYER: ", 0) == 0) openScreen(kScreenProfiles);
     else if (item == "START") { if (profileName_.empty()) openScreen(kScreenNameEntry); else enterMode(Mode::Blocks); }
@@ -1392,6 +1664,10 @@ void App::handleEvents() {
             padButton(e.gbutton.button, false);
             break;
         case SDL_EVENT_TEXT_INPUT:
+            if (screen_ == kScreenCode && e.text.text) {
+                for (const char* c = e.text.text; *c; ++c) if (*c >= '0' && *c <= '9' && codeEntry_.size() < 6) codeEntry_.push_back(*c);
+                break;
+            }
             if (screen_ == kScreenNameEntry && e.text.text) {
                 for (const char* c = e.text.text; *c; ++c) {
                     char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(*c)));
@@ -1418,7 +1694,10 @@ void App::handleEvents() {
                     if (!h) for (const Hotspot& hs : hotspots_) std::fprintf(stderr, "[ui]   hotspot kind %d index %d at %.0f,%.0f size %.0fx%.0f\n", hs.kind, hs.index, hs.x, hs.y, hs.w, hs.h);
                 }
                 if (h && h->kind == kHotMenu && left) { menu_.index = h->index; play("menu_select", 0.7f); menuSelect(); }
-                else if (h && h->kind == kHotScreenItem && left) { screenIndex_ = h->index; screenKey(SDLK_RETURN, false); }
+                else if (h && h->kind == kHotScreenItem && left) {
+                    if (screen_ == kScreenLeaderboard) openLeaderboard(h->index);
+                    else { screenIndex_ = h->index; screenKey(SDLK_RETURN, false); }
+                }
                 else if (h && h->kind == kHotProfileAction && left) profileAction(h->index);
                 else if (h && h->kind == kHotOptionRow) { screenIndex_ = h->index; adjustOption(left ? 1 : -1); }   // right-click steps back
                 else if (h && h->kind == kHotBack && left) { play("menu", 0.6f); screenKey(SDLK_ESCAPE, false); }
@@ -1550,6 +1829,7 @@ void App::handleGameEvents() {
         case core::EventType::PieceMoved: play("move", 0.5f, 1.f, 70); break;
         case core::EventType::PieceRotated: play("rotate", 0.6f, 1.f, 80); break;
         case core::EventType::PieceLocked:
+            ++run_.pieces;
             play("lock", 0.8f);
             if (std::getenv("REDLINE_LOG_FX")) std::fprintf(stderr, "[fx] piece locked: %zu remembered cells, smoke frames %zu\n", lastPieceCells_.size(), assets_.brSmoke.frames.size());
             // Dust where the piece lands: a puff under each cell that has nothing of the piece below it.
@@ -1565,6 +1845,8 @@ void App::handleGameEvents() {
             for (auto& cell : lastPieceCells_) cell.second += ev.a;   // the drop and the lock land in one tick: move the remembered cells down
             break;
         case core::EventType::LinesCleared: {
+            if (ev.a >= 4) ++run_.tetrises;
+            run_.bestChain = std::max(run_.bestChain, game_->chain());
             play("clear", 0.9f, ev.a >= 4 ? 1.3f : 1.f);
             // Flash, a shockwave ring per row, dust along it and a few sparks.
             clearFlash_ = std::min(1.f, 0.5f + 0.15f * static_cast<float>(ev.a));
@@ -1617,6 +1899,7 @@ void App::handleFpsEvents() {
         const EnemyArt& art = assets_.enemies[std::clamp(ev.kind, 0, kEnemyKinds - 1)];
         switch (ev.type) {
         case FpsEvent::Type::Shoot:
+            ++run_.shots[std::clamp(ev.a, 0, kRunWeapons - 1)];
             if (brutalActive() && assets_.brWeaponSounds) play(std::string("br_") + assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
             else play(assets_.weapons[std::clamp(ev.a, 0, kWeaponArt - 1)].fireSound, 1.f);
             muzzleLight_ = 1.f;
@@ -1651,6 +1934,7 @@ void App::handleFpsEvents() {
         case FpsEvent::Type::Score:
             announce(art.name + "  +" + std::to_string(ev.a), ev.tier >= 4 ? glm::vec4(1.f, 0.9f, 0.3f, 1.f) : glm::vec4(1.f), ev.tier >= 4 ? 1.5f : 1.1f);
             ++fightStats_.kills;
+            ++run_.killsByKind[std::clamp(ev.kind, 0, kRunKinds - 1)];
             trophy("first_blood");
             if (ev.tier >= 4) trophy("boss");
             if (ev.tier == 5) trophy("cyber");
@@ -1714,7 +1998,7 @@ void App::handleFpsEvents() {
             break;
         case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f, 1.f, 80); break;
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
-        case FpsEvent::Type::PlayerDead: diedInFps_ = true; break;
+        case FpsEvent::Type::PlayerDead: diedInFps_ = true; run_.killedBy = ev.kind; break;
         case FpsEvent::Type::EnemySight: {
             // Announce the biggest monster in the room and log the roster.
             if (brutalActive() && ev.kind == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.9f);
@@ -1733,6 +2017,8 @@ void App::handleFpsEvents() {
 
 void App::update(float dt) {
     modeT_ += dt;
+    if (mode_ == Mode::Blocks || mode_ == Mode::Alert || mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut) run_.duration += dt;
+    pollOnline();
     if (dialogDone_) {
         std::vector<std::string> files;
         { std::lock_guard<std::mutex> lock(dialogMutex_); files.swap(dialogFiles_); dialogDone_ = false; }
@@ -3180,7 +3466,8 @@ void App::addHud() {
             rows.push_back({"MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)"});
             rows.push_back({"DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)"});
             rows.push_back({"SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)"});
-            rows.push_back({"PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (VERIFIED)" : "  (NOT VERIFIED YET)")});
+            rows.push_back({"PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (REGISTERED)" : onlineOn_ ? "  (NOT REGISTERED, ENTER)" : "  (NOT REGISTERED)")});
+            rows.push_back({"ONLINE", !OnlineClient::available() ? "NOT IN THIS BUILD" : !onlineOn_ ? "OFF  (SCORES STAY ON THIS MACHINE)" : !stats_.emailVerified() ? "ON  (REGISTER YOUR EMAIL TO POST SCORES)" : "ON  (POSTING SCORES)", OnlineClient::available()});
             rows.push_back({"DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON"});
             rows.push_back({"BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", assets_.usingWad(), true});
             rows.push_back({"RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS"});
@@ -3303,6 +3590,85 @@ void App::addHud() {
             y += lh * 1.1f;
             line("ENTER SAVES   LEAVE EMPTY TO SKIP   ESC CANCELS", 0.7f, dim);
             if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 0.5f, wadStatus_, s * 0.9f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
+        } else if (screen_ == kScreenRegister) {
+            text(W * 0.5f, H * 0.16f, "REGISTER ONLINE", s * 1.5f, white, 1);
+            float y = H * 0.16f + lh * 2.2f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap = 1.0f) { text(W * 0.5f, y, t, s * sc, c, 1); y += lh * gap; };
+            line("A SIX-DIGIT CODE WILL BE EMAILED TO", 0.8f, dim, 1.1f);
+            line(registerEmail_, 1.1f, yellow, 1.6f);
+            line("CONFIRMING IT ATTACHES THE PLAYER " + profileName_ + " ON THIS MACHINE (" + machineLabel() + ")", 0.7f, dim);
+            line("TO THAT ADDRESS. FROM THEN ON, WHEN ONLINE IS ON, EACH FINISHED GAME IS POSTED:", 0.7f, dim);
+            line("YOUR PLAYER NAME, THE SCORE AND GAME STATISTICS, AND WHAT THIS MACHINE IS", 0.7f, dim);
+            line("(OS, GPU, CORES, MEMORY, GAMEPAD MODEL). THE ADDRESS IS STORED ENCRYPTED AND", 0.7f, dim);
+            line("NEVER SHOWN TO OTHER PLAYERS. EACH PLAYER AND EACH MACHINE IS ASKED SEPARATELY.", 0.7f, dim, 1.6f);
+            hotText(W * 0.5f - 40.f, y, registerBusy_ ? "SENDING..." : "SEND THE CODE", 0.95f * s, yellow, 2, kHotScreenItem, 0);
+            hotText(W * 0.5f + 40.f, y, "NOT NOW", 0.95f * s, dim, 0, kHotBack, 0);
+            y += lh * 1.2f;
+            if (!wadStatus_.empty()) text(W * 0.5f, y, wadStatus_, s * 0.8f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
+            text(W * 0.5f, H - lh * 1.5f, "ENTER SENDS   ESC NOT NOW   (YOU CAN REGISTER LATER UNDER OPTIONS > PLAYER EMAIL)", s * 0.65f, dim, 1);
+        } else if (screen_ == kScreenCode) {
+            text(W * 0.5f, H * 0.18f, "ENTER THE CODE FROM THE EMAIL", s * 1.4f, white, 1);
+            text(W * 0.5f, H * 0.18f + lh * 1.6f, "SENT TO " + registerEmail_ + "   (CHECK THE SPAM FOLDER TOO)", s * 0.7f, dim, 1);
+            float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
+            std::string shown;
+            for (int i = 0; i < 6; ++i) { shown += i < static_cast<int>(codeEntry_.size()) ? codeEntry_[static_cast<size_t>(i)] : (i == static_cast<int>(codeEntry_.size()) && f > 0.5f ? '_' : '-'); shown += ' '; }
+            text(W * 0.5f, H * 0.38f, shown, s * 2.4f, yellow, 1);
+            if (pad_) text(W * 0.5f, H * 0.52f, "GAMEPAD: UP/DOWN PICK A DIGIT  [" + std::to_string(codeChar_) + "]  A ADD  B DELETE  START DONE", s * 0.75f, dim, 1);
+            hotText(W * 0.5f - 40.f, H * 0.60f, registerBusy_ ? "CHECKING..." : "CONFIRM", 0.95f * s, yellow, 2, kHotScreenItem, 0);
+            hotText(W * 0.5f + 40.f, H * 0.60f, "CANCEL", 0.95f * s, dim, 0, kHotBack, 0);
+            if (!wadStatus_.empty()) text(W * 0.5f, H * 0.60f + lh * 1.3f, wadStatus_, s * 0.85f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
+            text(W * 0.5f, H - lh * 1.5f, "TYPE THE SIX DIGITS AND PRESS ENTER   R SENDS A NEW CODE   ESC CANCELS", s * 0.65f, dim, 1);
+        } else if (screen_ == kScreenLeaderboard) {
+            static const char* tabs[] = {"GLOBAL", "THIS WEEK", "FIGHTS", "LEVEL", "DEMONS SLAIN"};
+            text(W * 0.5f, H * 0.06f, "LEADERBOARD", s * 1.5f, white, 1);
+            float tx = W * 0.5f - 0.f;
+            float widths[5]; float total = 0.f;
+            for (int i = 0; i < 5; ++i) { widths[i] = static_cast<float>(assets_.textWidth(tabs[i], s * 0.8f)) + 30.f * s * 0.8f; total += widths[i]; }
+            tx = W * 0.5f - total * 0.5f;
+            for (int i = 0; i < 5; ++i) {
+                hotText(tx + widths[i] * 0.5f, H * 0.06f + lh * 1.9f, std::string(i == leaderboardTab_ ? "[ " : "") + tabs[i] + (i == leaderboardTab_ ? " ]" : ""), s * 0.8f, i == leaderboardTab_ ? yellow : dim, 1, kHotScreenItem, i);
+                tx += widths[i];
+            }
+            float y = H * 0.06f + lh * 3.6f;
+            const float colRank = W * 0.12f, colName = W * 0.18f, colScore = W * 0.58f, colLevel = W * 0.70f, colTier = W * 0.80f;
+            const char* what = leaderboardTab_ == 2 ? "FIGHTS" : leaderboardTab_ == 3 ? "LEVEL" : leaderboardTab_ == 4 ? "DEMONS" : "SCORE";
+            text(colRank, y, "#", s * 0.65f, dim, 0); text(colName, y, "PLAYER", s * 0.65f, dim, 0); text(colScore, y, what, s * 0.65f, dim, 2); text(colLevel, y, "LVL", s * 0.65f, dim, 2); text(colTier, y, "RANK", s * 0.65f, dim, 0);
+            y += lh * 0.9f;
+            if (!OnlineClient::available()) text(W * 0.5f, y + lh, "THIS BUILD HAS NO ONLINE SUPPORT", s * 0.9f, dim, 1);
+            else if (!onlineOn_) text(W * 0.5f, y + lh, "TURN ON ONLINE UNDER OPTIONS TO SEE THE BOARD", s * 0.9f, dim, 1);
+            else if (leaderboardLoading_ && leaderboard_.isNull()) text(W * 0.5f, y + lh, "LOADING...", s * 0.9f, dim, 1);
+            else if (!leaderboardError_.empty() && leaderboard_.isNull()) text(W * 0.5f, y + lh, "COULD NOT REACH THE SERVER: " + leaderboardError_, s * 0.8f, glm::vec4(1.f, 0.6f, 0.4f, 1.f), 1);
+            else {
+                const Json& rows = leaderboard_["rows"];
+                const float rowH = lh * 0.95f;
+                const int maxRows = std::max(5, static_cast<int>((H - lh * 4.5f - y) / rowH));
+                if (rows.size() == 0) text(W * 0.5f, y + lh, "NOBODY HAS POSTED A SCORE YET. BE THE FIRST.", s * 0.9f, dim, 1);
+                for (size_t i = 0; i < rows.size() && static_cast<int>(i) < maxRows; ++i) {
+                    const Json& r = rows[i];
+                    const bool me = r["player_id"].asString() == stats_.playerId();
+                    const glm::vec4 c = me ? yellow : (i < 3 ? white : dim);
+                    text(colRank, y, std::to_string(r["rank"].asInt()), s * 0.75f, c, 0);
+                    text(colName, y, r["name"].asString("?"), s * 0.75f, c, 0);
+                    text(colScore, y, std::to_string(r["value"].asInt()), s * 0.75f, c, 2);
+                    text(colLevel, y, std::to_string(r["level"].asInt()), s * 0.75f, c, 2);
+                    text(colTier, y, r["tier"].asString(""), s * 0.65f, c, 0);
+                    y += rowH;
+                }
+                const Json& me = leaderboard_["me"];
+                if (me.isObject()) {
+                    y += lh * 0.3f;
+                    text(colRank, y, std::to_string(me["rank"].asInt()), s * 0.75f, yellow, 0);
+                    text(colName, y, "YOU  (" + profileName_ + ")", s * 0.75f, yellow, 0);
+                    text(colScore, y, std::to_string(me["value"].asInt()), s * 0.75f, yellow, 2);
+                    text(colLevel, y, std::to_string(me["level"].asInt()), s * 0.75f, yellow, 2);
+                    text(colTier, y, me["tier"].asString(""), s * 0.65f, yellow, 0);
+                }
+                std::string foot = leaderboardFetched_.empty() ? "" : "FETCHED " + leaderboardFetched_;
+                if (leaderboardLoading_) foot = "UPDATING...";
+                if (leaderboard_["total"].asInt() > 0) foot += (foot.empty() ? "" : "   ") + std::to_string(leaderboard_["total"].asInt()) + " PLAYERS";
+                if (!foot.empty()) text(W * 0.5f, H - lh * 2.6f, foot, s * 0.65f, dim, 1);
+            }
+            hotText(W * 0.5f, H - lh * 1.5f, "< BACK   (ESC)     LEFT/RIGHT BOARDS     R REFRESH", s * 0.8f, yellow, 1, kHotBack, 0);
         } else if (screen_ == kScreenWadPath) {
             text(W * 0.5f, H * 0.22f, "TYPE THE FULL PATH TO DOOM.WAD", s * 1.4f, white, 1);
             float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
@@ -3362,6 +3728,7 @@ void App::addHud() {
             float f = 0.6f + 0.4f * std::sin(time_ * 5.f);
             text(W * 0.5f, H * 0.3f + lh * 5.3f, lastRank_ == 1 ? "NEW HIGH SCORE!" : "HIGH SCORE #" + std::to_string(lastRank_), s * 1.2f, glm::vec4(1.f, 0.9f * f + 0.1f, 0.3f, 1.f), 1);
         }
+        if (!onlineStatus_.empty()) text(W * 0.5f, H * 0.3f + lh * 6.2f, onlineStatus_, s * 0.8f, onlineRank_ > 0 ? glm::vec4(0.7f, 0.9f, 1.f, 1.f) : dim, 1);
         drawMenu(H * 0.3f + lh * 6.8f);
         if (!highScores_.entries().empty()) {
             float ty = H * 0.3f + lh * 6.8f + lh * 1.5f * 3.f + lh * 0.6f;

@@ -26,7 +26,7 @@ echo "== tarball"
 
 echo "== deb"
 (cd build && cpack -G DEB -D CPACK_DEBIAN_PACKAGE_SHLIBDEPS=OFF -D CPACK_DEBIAN_PACKAGE_ARCHITECTURE=amd64 \
-  -D CPACK_DEBIAN_PACKAGE_DEPENDS="libsdl3-0, libvorbisfile3, libvulkan1" \
+  -D CPACK_DEBIAN_PACKAGE_DEPENDS="libsdl3-0, libvorbisfile3, libvulkan1, libcurl4t64 | libcurl4" \
   -D CPACK_DEBIAN_PACKAGE_MAINTAINER="David Janice <djanice1980@gmail.com>" -D CPACK_DEBIAN_FILE_NAME=DEB-DEFAULT)
 
 if command -v makepkg >/dev/null; then

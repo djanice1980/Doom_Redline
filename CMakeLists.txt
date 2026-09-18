@@ -21,7 +21,8 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Core rules library (no dependencies)
-add_library(rl_core STATIC src/core/tetris.cpp src/core/inflate.cpp src/core/png_read.cpp src/core/pixel_scale.cpp)
+add_library(rl_core STATIC src/core/tetris.cpp src/core/inflate.cpp src/core/png_read.cpp src/core/pixel_scale.cpp src/core/json.cpp)
+configure_file(src/version.h.in ${CMAKE_BINARY_DIR}/version.h @ONLY)
 target_include_directories(rl_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
 if(REDLINE_BUILD_TESTS)
@@ -95,6 +96,9 @@ if(REDLINE_BUILD_GAME)
       src/game/kvx.cpp
       src/game/voxels.cpp
       src/game/playerstats.cpp
+      src/game/runrecord.cpp
+      src/game/online.cpp
+      src/net/http.cpp
       src/audio/audio.cpp
       src/audio/opl3.cpp
       src/audio/opl_driver.cpp
@@ -105,6 +109,19 @@ if(REDLINE_BUILD_GAME)
   add_dependencies(redline rl_shaders)
   target_include_directories(redline PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR})
   target_link_libraries(redline PRIVATE rl_core Vulkan::Vulkan SDL3::SDL3 glm::glm)
+  # HTTP for the online service: WinHTTP on Windows (ships with the OS), libcurl elsewhere when present.
+  if(WIN32)
+    target_link_libraries(redline PRIVATE winhttp)
+  else()
+    find_package(CURL QUIET)
+    if(CURL_FOUND)
+      target_link_libraries(redline PRIVATE CURL::libcurl)
+      target_compile_definitions(redline PRIVATE REDLINE_HAS_CURL=1)
+      message(STATUS "Online: libcurl ${CURL_VERSION_STRING}")
+    else()
+      message(STATUS "Online: libcurl not found, the online features are disabled in this build")
+    endif()
+  endif()
   if(WIN32)
     # GUI subsystem (no console window); SDL_main.h in main.cpp supplies WinMain.
     enable_language(RC)
@@ -206,6 +223,10 @@ if(REDLINE_BUILD_GAME)
   endif()
   if(REDLINE_BUILD_TESTS)
     add_executable(stats_test tests/stats_test.cpp src/game/playerstats.cpp)
+    add_executable(json_test tests/json_test.cpp src/game/runrecord.cpp)
+    target_include_directories(json_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(json_test PRIVATE rl_core)
+    add_test(NAME json_test COMMAND json_test)
     target_include_directories(stats_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
     add_test(NAME stats_test COMMAND stats_test)
     add_executable(kvx_test tests/kvx_test.cpp src/game/kvx.cpp)

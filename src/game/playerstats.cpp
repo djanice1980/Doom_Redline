@@ -82,6 +82,7 @@ void PlayerStats::load(const std::string& profileDir, const MachineInfo& machine
     if (playerId_.size() != 36) playerId_ = newUuid();
     email_ = id.count("email") ? id["email"] : "";
     emailVerified_ = id.count("email_verified") && id["email_verified"] == "1";
+    token_ = id.count("token") ? id["token"] : "";
 
     auto st = readKv(fs::path(dir_) / "stats.txt");
     readCounters(st, lifetime_);
@@ -103,7 +104,7 @@ void PlayerStats::load(const std::string& profileDir, const MachineInfo& machine
 void PlayerStats::save() const {
     if (dir_.empty()) return;
     if (std::FILE* f = std::fopen((fs::path(dir_) / "identity.txt").string().c_str(), "w")) {
-        std::fprintf(f, "player_id=%s\nemail=%s\nemail_verified=%d\n", playerId_.c_str(), email_.c_str(), emailVerified_ ? 1 : 0);
+        std::fprintf(f, "player_id=%s\nemail=%s\nemail_verified=%d\ntoken=%s\n", playerId_.c_str(), email_.c_str(), emailVerified_ ? 1 : 0, token_.c_str());
         std::fclose(f);
     }
     if (std::FILE* f = std::fopen((fs::path(dir_) / "stats.txt").string().c_str(), "w")) {
@@ -148,7 +149,14 @@ void PlayerStats::setPadModel(const std::string& model) { padModel_ = model; }
 void PlayerStats::setEmail(const std::string& email) {
     if (email == email_) return;
     email_ = email;
-    emailVerified_ = false;   // a new address has to be verified again (by the future account feature)
+    emailVerified_ = false;
+        token_.clear();   // a new address has to be verified again (by the future account feature)
+    save();
+}
+
+void PlayerStats::setVerified(const std::string& token) {
+    token_ = token;
+    emailVerified_ = !token.empty();
     save();
 }
 

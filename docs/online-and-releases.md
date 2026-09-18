@@ -261,6 +261,20 @@ Ranking scheme, so a player has one standing rather than a pile of tables:
 - **Seasons** later, if there is a player base: a quarterly reset of the
   windowed boards with the season's #1 getting a permanent trophy.
 
+## 10. Status (2026-09-18)
+
+Built: the game side (run records as JSON in `<profile>/runs`, the ONLINE
+option, registration by code under PLAYER EMAIL, uploads with a pending
+queue, the LEADERBOARD screen with a cached copy; `src/game/online.*`,
+`src/game/runrecord.*`, `src/net/http.*` with libcurl on Linux and WinHTTP on
+Windows) and the service in `web/` (Next.js on Vercel, Postgres on Supabase
+via the pooler with RLS closing the REST API, HMAC blind index and AES-GCM
+for addresses, machine facts and the Graph credentials, the admin page with
+write-only Graph settings and a mail log, boards, player and stats pages,
+nightly ratings). `web/README.md` is the set-up guide; `npm run smoke` drives
+the whole flow against a local Postgres. Not built: the replay verifier
+(section 5), seasons, the in-game PLAYERS tab.
+
 ## 8. Order of work when you pick this up
 
 1. Clean-ups in section 1, push, tag `v0.1.0`, and get the release workflow

@@ -143,6 +143,7 @@ struct Projectile {
     float blast = 0.f;       // splash radius (player rockets)
     bool fromPlayer = false;
     bool homing = false;
+    int ownerKind = -1;      // the monster that fired it (for the run record)
     float ttl = 5.f;
     float animT = 0.f;
 };
@@ -296,10 +297,10 @@ private:
     void tryAbsorb(Enemy& e, core::Game& game);
     void breakCell(int c, int r, core::Game& game);
     void rocketBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
-    void enemyBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
+    void enemyBlast(glm::vec3 pos, float radius, float damage, core::Game& game, int kind = -1);
     void moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, const core::Game& game) const;
     bool lineOfSight(glm::vec3 a, glm::vec3 b, const core::Game& game) const;
-    void hurtPlayer(float dmg, glm::vec3 from);
+    void hurtPlayer(float dmg, glm::vec3 from, int kind = -1);   // kind: the monster responsible, for the run record
     void push(FpsEvent::Type t, glm::vec3 p = {}, int tier = 0, int a = 0, int kind = -1) { events_.push_back({t, p, tier, a, kind < 0 ? tier : kind}); }
     int pickKind(int tier);
     bool kindAvailable_[kMonsterKinds] = {true, true, true, true, true, true, true, false, false, false, false, false, false};

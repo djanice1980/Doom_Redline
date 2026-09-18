@@ -20,6 +20,8 @@
 #include "game/ambient.h"
 #include "game/voxels.h"
 #include "game/playerstats.h"
+#include "game/online.h"
+#include "game/runrecord.h"
 #include "render/renderer.h"
 #include "render/vk_context.h"
 
@@ -40,6 +42,7 @@ struct Options {
     std::string screenshot;            // path; taken after `frames` frames, then exit
     int frames = 0;
     std::string record;                // raw RGBA frames appended here every `recordEvery` frames (scripted runs; encode with ffmpeg)
+    std::string onlineServer;          // --online-server: overrides the service URL for this run
     int recordEvery = 2;
     bool bot = false;                  // auto-aim/fire in FPS mode (smoke testing)
     bool mute = false;
@@ -207,6 +210,38 @@ private:
     Trophies trophies_;
     MachineInfo machine_;              // this save folder's install id and hardware facts
     PlayerStats stats_;                // per-profile identity, play time and input counters
+    // Online service (docs/online-and-releases.md): opt-in per profile, registration by
+    // emailed code, run records uploaded at game over, leaderboard fetches.
+    OnlineClient online_;
+    bool onlineOn_ = false;            // per-profile setting (settings.txt online=)
+    std::string onlineServer_;         // <pref>/online.txt server=, REDLINE_ONLINE_URL, --online-server, or the default
+    std::string onlineStatus_;         // last upload result for the game-over screen
+    int onlineRank_ = 0, onlineTotal_ = 0;
+    std::string onlineTier_;
+    std::string registerEmail_;        // address being registered
+    bool registerBusy_ = false;        // a register/confirm request is in flight
+    std::string codeEntry_;            // the six digits being typed
+    int codeChar_ = 0;                 // gamepad digit picker
+    Json leaderboard_;                 // last reply for the board on screen
+    std::string leaderboardFetched_;   // "just now", "3 minutes ago", or "" (never)
+    int leaderboardTab_ = 0;
+    bool leaderboardLoading_ = false;
+    std::string leaderboardError_;
+    // Per-run counters for the run record.
+    struct RunCounters {
+        std::string startedAt; double duration = 0; int pieces = 0, tetrises = 0, bestChain = 0, fights = 0;
+        int killsByKind[kRunKinds] = {}; int shots[kRunWeapons] = {}; double damage = 0; int killedBy = -1;
+        int64_t kb0 = 0, mouse0 = 0, pad0 = 0; std::vector<std::string> trophies;
+    } run_;
+    bool runRecorded_ = false;
+    void loadOnlineConfig();
+    void pollOnline();
+    void recordRun();
+    void submitPendingRuns();
+    void startRegistration();
+    void openLeaderboard(int tab);
+    std::string runsDir() const;
+    std::string machineLabel() const;
     float statsSaveT_ = 0.f;
     std::string emailEntry_;
     int lastRank_ = 0;
@@ -224,7 +259,8 @@ private:
     bool dialogDone_ = false, dialogOpen_ = false, dialogForExtras_ = false;
     std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
-    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry };
+    enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry,
+                  kScreenRegister, kScreenCode, kScreenLeaderboard };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     int optionsScroll_ = 0;        // first option row in view (the list scrolls when the window is short)
