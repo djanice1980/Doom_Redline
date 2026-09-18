@@ -23,13 +23,21 @@ recorded soundtracks when `extras.wad` is around.
 
 ## Get it
 
-Download the latest build from the
+Download from the
 [Releases page](https://github.com/djanice1980/Doom_Redline/releases):
-`redline-<version>-win64.zip` for Windows, `redline-<version>-Linux.tar.gz`
-for Linux (Arch / CachyOS packages and installers are described under
-[Build](#build-arch--cachyos)). You need your own `doom.wad` or `doom2.wad`;
-the game finds Steam and GOG copies by itself and otherwise asks on first
-launch. Nothing else is required.
+
+| Platform | File | Notes |
+|---|---|---|
+| Windows 10/11 | `redline-<version>-setup.exe` | Installer: Start menu and desktop shortcuts, asks where your Doom WAD is, uninstaller |
+| Windows 10/11 | `redline-<version>-win64.zip` | Portable: unzip anywhere and run `redline.exe` |
+| Arch / CachyOS / Manjaro | `redline-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U <file>` |
+| Debian / Ubuntu | `redline_<version>_amd64.deb` | `sudo apt install ./<file>` (needs a distro with SDL3 packages: Debian 13, Ubuntu 25.04 or later) |
+| Any Linux | `redline-<version>-x86_64.AppImage` | `chmod +x` and run; SDL3 and libvorbis travel inside |
+| Any Linux | `redline-<version>-Linux.tar.gz` | Portable tree; `bin/redline` |
+
+You need your own `doom.wad` or `doom2.wad`; the game finds Steam and GOG
+copies by itself and otherwise asks on first launch. Nothing else is required.
+`packaging/build-release.sh` builds all of the above from a checkout.
 
 ## Screenshots
 

@@ -1,0 +1,65 @@
+REDLINE community gore pack
+===========================
+
+Everything in this folder was taken from two community projects and is used
+by REDLINE's Brutal mode (OPTIONS > BRUTAL). None of it is covered by
+REDLINE's MIT licence. It is bundled with credit, under each project's own
+terms, so the game works out of the box; the folder is self-contained and can
+be deleted or left out of a release at any time. Without it the game falls
+back to the blood, pool and puff sprites of the player's own Doom WAD. Should
+any author object, the folder will be removed.
+
+sprites/  (from the Brutal Doom Community Expansion, GPLv3)
+    https://github.com/BLOODWOLF333/Brutal-Doom-Community-Expansion
+    BSP1  blood splat that spreads and dries       (SPRITES/GORE_GENERIC/BLOOD)
+    BLOR  blood pool spreading on the floor        (SPRITES/GORE_GENERIC/BLOOD)
+    BLHT  blood cloud at the point of impact       (SPRITES/GORE_GENERIC/BLOOD)
+    XDB1  small meat chunks                        (SPRITES/GORE_GENERIC/BLOOD)
+    XME1  larger gibs                              (SPRITES/GORE_GENERIC/BLOOD)
+    BSP5, BLOG, BLHG, XDB5, XME5  the same in green (SPRITES/GORE_GENERIC/GREENBLOOD)
+    BSP3, BLOB, BLHB, XDB3, XME3  the same in blue  (SPRITES/GORE_GENERIC/BLUEBLOOD)
+    PUF2  smoke puff                               (SPRITES/SMOKE)
+    C4S1  bullet casing                            (SPRITES/WEAPONS/CASINGS)
+    C4S2  shotgun shell                            (SPRITES/WEAPONS/CASINGS)
+    EXP4  rocket / BFG fireball, 25 frames         (SPRITES/EXPLOSIONS)
+    SHTN/SHTA, CHAG/CHAF, RLNG/RLNF, PLSN/PLST  shotgun, minigun, rocket launcher and plasma gun (SPRITES/WEAPONS)
+    PLX6  plasma bolt burst, 25 frames             (SPRITES/EXPLOSIONS)
+    Per-weapon death animations (SPRITES/MONSTERS): zombieman POS4, 12DG, XBRN, ZXZ1, ZZD6, POSL, POSR;
+      imp TROO V-Y, TR06, IZD1, PBR1, TROH, TRO3, TR97; demon SAAR, SARH, CRB7, S2RG, SARC;
+      cacodemon CCD1, CACB, CCD3, H3D2; baron KSA8, BOSC, BADH, BOH3, BADD
+    SPKN  sparks, 26 frames                        (SPRITES/PARTICLES)
+    LENR, LENY, LENB, LENG, LENW  soft light discs for the torches and lamps (SPRITES/FLARES)
+    FLAR  muzzle flare                             (SPRITES/FLARES)
+    The expansion is maintained by BLOODWOLF333 and the Brutal Doom community
+    on top of Brutal Doom by Sergeant_Mark_IV; its DetailedCredits.txt lists the
+    artists of the individual resources where known. The repository is
+    licensed under the GNU General Public License v3
+    (https://www.gnu.org/licenses/gpl-3.0.html).
+
+sounds/  (from the Brutal Doom Community Expansion, GPLv3, same source)
+    DSXDTH1A-F  gib death squelches                (SOUNDS/GORE)
+    DSSHELL1-3  shotgun shell hitting the floor    (SOUNDS/COMBAT/CASING)
+    DSCASIN1-3  bullet casing hitting the floor    (SOUNDS/COMBAT/CASING)
+    LQDRIP1-3   blood drips                        (SOUNDS/GORE)
+    SPARKS1-4   sparks                             (SOUNDS/WORLD)
+    RICOCHE2/3/5  ricochets                        (SOUNDS/COMBAT)
+    BHITDIR1-3  bullets hitting the floor          (SOUNDS/COMBAT)
+    SGFIRE, CHGNSHOT, DSRFIRE, DSPLASMA  shotgun, chaingun, rocket and plasma fire (SOUNDS/COMBAT/WEAPONS)
+    Explode1-2  rocket blasts                      (SOUNDS/COMBAT/EXPLOSIONS)
+    PAIN1       the player's pain                  (SOUNDS/DOOMGUY)
+    HEDBON1-3, BONECR1-2  head shots and bone crunches (SOUNDS/GORE)
+    IMPCLAW1-2, ZCSIT1-3, PINKIDL1-2, CYBPAIN, SPIPAIN1-2  monster voices (SOUNDS/MONSTERS)
+
+voxels/  (from the Brutal Voxel Cyber Horror Monster Mix, MIT)
+    https://github.com/RENEGADE-ANDROiD/Brutal_Voxel_Cyber_Horror_Monster_Mix
+    GIB0A-GIB9B  voxel gib chunks (NashGore NEXT voxels)
+    bluda-c      voxel blood drops
+    cpos*, bos2*, skel*, fatt*, bspi*  voxel chaingunner, hell knight, revenant, mancubus and
+                 arachnotron (Cheello's Voxel Doom models as shipped in the mix)
+    Copyright (c) 2026 RENEGADE ANDROiD, MIT License; the pack's credits.txt
+    names the further contributors (Nash Muhandes' NashGore, Cheello's Voxel
+    Doom and others).
+
+Loading: REDLINE looks for this folder next to the executable ("brutal"), in
+share/redline/brutal, or in assets/brutal of a source checkout; the
+REDLINE_BRUTAL_PACK environment variable points it elsewhere.

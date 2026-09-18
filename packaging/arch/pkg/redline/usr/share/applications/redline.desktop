@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=REDLINE
+Comment=Falling blocks that refuse to die: when a row turns red, the board tips over and the demons come out
+Exec=redline
+Icon=redline
+Terminal=false
+Categories=Game;ArcadeGame;
+Keywords=tetris;doom;blocks;fps;
