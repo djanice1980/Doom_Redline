@@ -144,9 +144,9 @@ App::App(Options opts) : opts_(std::move(opts)) {
             std::fclose(f);
         }
         std::vector<std::string> profiles = listProfiles();
+        if (opts_.scenario != "title" || opts_.bot) last = "PLAYER";   // scripted runs and the bot never touch a real player's scores or play time
         if (!opts_.profile.empty()) last = opts_.profile;
         if (last.empty() && !profiles.empty()) last = profiles.front();
-        if (last.empty() && opts_.scenario != "title") last = "PLAYER";   // scripted runs never see the prompt
         if (!last.empty()) switchProfile(last);
         else nameRequired_ = true;
         // Several people may share this machine: ask who is playing on every launch.
