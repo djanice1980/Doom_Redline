@@ -1,9 +1,9 @@
 npm notice run redline-online@0.1.0 npx
 npm notice run 'next' build
-   ▲ Next.js 15.5.4
+   ▲ Next.js 15.5.25
 
    Creating an optimized production build ...
- ✓ Compiled successfully in 1025ms
+ ✓ Compiled successfully in 2.8s
    Linting and checking validity of types ...
    Collecting page data ...
    Generating static pages (0/11) ...
@@ -16,26 +16,26 @@ npm notice run 'next' build
 
 Route (app)                                 Size  First Load JS
 ┌ ƒ /                                      163 B         106 kB
-├ ○ /_not-found                            999 B         103 kB
-├ ○ /admin                               1.69 kB         104 kB
-├ ƒ /api/admin/settings                    150 B         102 kB
-├ ƒ /api/admin/testmail                    150 B         102 kB
-├ ƒ /api/confirm                           150 B         102 kB
-├ ƒ /api/cron/ratings                      150 B         102 kB
-├ ƒ /api/leaderboard                       150 B         102 kB
-├ ƒ /api/player/[id]                       150 B         102 kB
-├ ƒ /api/register                          150 B         102 kB
-├ ƒ /api/runs                              150 B         102 kB
-├ ƒ /player/[id]                           150 B         102 kB
-├ ƒ /stats                                 150 B         102 kB
-└ ƒ /trophies                              150 B         102 kB
-+ First Load JS shared by all             102 kB
-  ├ chunks/255-4efeec91c7871d79.js       45.9 kB
+├ ○ /_not-found                            999 B         104 kB
+├ ○ /admin                               1.69 kB         105 kB
+├ ƒ /api/admin/settings                    150 B         103 kB
+├ ƒ /api/admin/testmail                    150 B         103 kB
+├ ƒ /api/confirm                           150 B         103 kB
+├ ƒ /api/cron/ratings                      150 B         103 kB
+├ ƒ /api/leaderboard                       150 B         103 kB
+├ ƒ /api/player/[id]                       150 B         103 kB
+├ ƒ /api/register                          150 B         103 kB
+├ ƒ /api/runs                              150 B         103 kB
+├ ƒ /player/[id]                           150 B         103 kB
+├ ƒ /stats                                 150 B         103 kB
+└ ƒ /trophies                              150 B         103 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/255-37e0f0325134c4d7.js       46.6 kB
   ├ chunks/4bd1b696-c023c6e3521b1417.js  54.4 kB
   └ other shared chunks (total)          1.89 kB
 
 
-ƒ Middleware                               34 kB
+ƒ Middleware                             34.3 kB
 
 ○  (Static)   prerendered as static content
 ƒ  (Dynamic)  server-rendered on demand

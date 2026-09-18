@@ -98,7 +98,7 @@ Linux tools are involved. Total download is a few GB.
 6. **Inno Setup 6**: https://jrsoftware.org/isdl.php. Install it, open
    `packaging\windows\redline.iss` and press *Compile* (or run
    `"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\redline.iss`).
-   The result is `build-win\redline-0.1.0-setup.exe`.
+   The result is `build-win\redline-0.2.0-setup.exe`.
 
 What the installer does: copies the staged files to `C:\Program Files\REDLINE`,
 adds Start-menu and optional desktop shortcuts, and shows a **Doom game data**
@@ -163,7 +163,7 @@ Packages, from the build folder:
 
 ```bash
 cd build
-cpack -G TGZ          # redline-0.1.0-Linux.tar.gz (bin/, share/ layout; unpack anywhere)
+cpack -G TGZ          # redline-0.2.0-Linux.tar.gz (bin/, share/ layout; unpack anywhere)
 cpack -G DEB          # on Debian/Ubuntu: dependencies are computed by dpkg-shlibdeps
 cpack -G RPM          # on Fedora, needs rpm-build
 ```
