@@ -303,6 +303,16 @@ private:
     int countdownLast_ = -1;
     struct Announcement { std::string text; glm::vec4 color; float scale; float t; };
     std::vector<Announcement> announcements_;
+    // Trophy toasts: a console-style card that slides in at the top, one at a time,
+    // and the celebration for the last trophy (fireworks and confetti over everything).
+    struct Toast { std::string name, desc; int count = 0, total = 0; float t = 0.f; bool ultimate = false; };
+    std::vector<Toast> toasts_;
+    struct Spark { glm::vec2 pos, vel; float ttl, life, size; glm::vec3 col; int kind; };   // kind 0 rocket, 1 spark, 2 confetti
+    std::vector<Spark> sparks_;
+    float celebrateT_ = -1.f;      // >= 0 while the RIP AND TEAR celebration runs
+    float celebrateNext_ = 0.f;    // next rocket
+    void showTrophy(const TrophyDef& d, bool ultimate);
+    void startCelebration();
     // The evil banner beside the board: blood runs off its letters, and each
     // block that turns jolts it.
     struct Drip { float x, y0, y, vy, w, ttl; };   // a run of blood from y0 (the letter) down to its head at y

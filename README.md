@@ -198,8 +198,13 @@ screen and the pause menu show your play time. None of this leaves the
 machine: this build has no network code.
 
 Trophies are one-time achievements (20 of them, from FIRST BLOOD to DOOM
-SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one pops a gold banner with a
-jingle; the full list with unlock dates is under TROPHIES on the title screen
+SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one slides a console-style
+card down from the top of the screen (the menu skull, TROPHY UNLOCKED,
+the name, what you did, and the count), with a jingle and a rumble; it
+never takes the controls away, and several unlocks queue up one after
+another. RIP AND TEAR!!! is the exception: eight seconds of fireworks and
+confetti over whatever is happening, a gold flash, the title slammed across
+the screen and a fanfare. The full list with unlock dates is under TROPHIES on the title screen
 (or press T). The pause menu shows the run so far (score, level, lines, red
 lines, your best and trophy count, demons left during a fight) and has its
 own TROPHIES entry; CREDITS on the title screen names the authors.

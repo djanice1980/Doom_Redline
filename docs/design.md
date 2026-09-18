@@ -431,7 +431,14 @@ it server-side. `stats_test` covers the round trip across two machines.
   input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
   both keyboard and pad input mapped to key codes.
 - Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks
-  once with a banner, jingle and rumble. Hooks: kills (first blood, boss
+  once and calls `showTrophy` (a `Toast` queue: one card at a time, slides in
+  over 0.35 s, holds 5 s (8 s for the ultimate), slides out; the jingle and
+  rumble play when a card appears) and, for `rip_and_tear`, `startCelebration`
+  (`celebrateT_` runs 8 s: rockets from the bottom edge every 0.2-0.5 s that
+  burst into 40-70 sparks with gravity, three confetti pieces a frame from
+  the top, rumble pulses, a gold panel pulse, the title slammed in with a
+  halo; `Spark` particles are drawn as HDR screen quads so they bloom).
+  `REDLINE_TROPHY_DEMO=1` fires both at frame 60 without unlocking. Hooks: kills (first blood, boss
   tiers, grown), fights survived (red line, untouchable, survivor), clears
   (tetris, combo x3, chain), pickups (collector, arsenal), BFG, invulnerable,
   level-ups, blocks destroyed, a #1 high score (doom_slayer), and

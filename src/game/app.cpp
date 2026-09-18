@@ -705,24 +705,37 @@ void App::switchProfile(const std::string& name) {
 void App::trophy(const char* id) {
     if (!trophies_.unlock(id)) return;
     for (const TrophyDef& d : trophyCatalogue())
-        if (std::string(id) == d.id) {
-            announce(std::string("TROPHY: ") + d.name, glm::vec4(1.f, 0.85f, 0.2f, 1.f), 1.5f);
-            announce(d.description, glm::vec4(1.f, 0.95f, 0.7f, 1.f), 0.8f);
-            std::fprintf(stderr, "[app] trophy unlocked: %s\n", d.name);
-        }
-    play("pickup_weapon", 1.f, 1.3f);
-    rumble(0.3f, 0.6f, 200);
+        if (std::string(id) == d.id) { showTrophy(d, false); std::fprintf(stderr, "[app] trophy unlocked: %s\n", d.name); }
     // The ultimate trophy: everything else in the cabinet.
     if (std::string(id) != "rip_and_tear" && !trophies_.unlocked("rip_and_tear") && trophies_.unlockedCount() == trophies_.total() - 1) {
         trophies_.unlock("rip_and_tear");
-        announce("RIP AND TEAR!!!", glm::vec4(1.f, 0.2f, 0.1f, 1.f), 2.6f);
-        announce("ULTIMATE TROPHY: EVERY TROPHY EARNED", glm::vec4(1.f, 0.85f, 0.2f, 1.f), 1.1f);
+        for (const TrophyDef& d : trophyCatalogue()) if (std::string("rip_and_tear") == d.id) showTrophy(d, true);
         std::fprintf(stderr, "[app] trophy unlocked: RIP AND TEAR!!!\n");
-        play("levelup", 1.f, 0.8f);
-        play("bfg", 0.8f);
-        shakeT_ = 0.8f;
-        rumble(1.f, 1.f, 900);
+        startCelebration();
     }
+}
+
+// The console-style toast: queued, one card at a time, with its jingle when it appears.
+void App::showTrophy(const TrophyDef& d, bool ultimate) {
+    Toast t;
+    t.name = d.name;
+    t.desc = d.description;
+    t.count = trophies_.unlockedCount();
+    t.total = trophies_.total();
+    t.ultimate = ultimate;
+    toasts_.push_back(t);
+    if (toasts_.size() == 1) { play("pickup_weapon", 1.f, 1.3f); rumble(0.3f, 0.6f, 200); }
+}
+
+// RIP AND TEAR: the cabinet is full. Fanfare, a shake, fireworks and confetti over
+// whatever is happening, for eight seconds, without taking the controls away.
+void App::startCelebration() {
+    celebrateT_ = 0.f;
+    celebrateNext_ = 0.f;
+    play("levelup", 1.f, 0.8f);
+    play("bfg", 0.8f);
+    shakeT_ = 0.8f;
+    rumble(1.f, 1.f, 900);
 }
 
 // --- gamepad -----------------------------------------------------------------
@@ -1789,6 +1802,88 @@ void App::update(float dt) {
     for (size_t i = 0; i < rings_.size();) { rings_[i].t += dt; if (rings_[i].t > 0.55f) { rings_[i] = rings_.back(); rings_.pop_back(); } else ++i; }
     clearFlash_ = std::max(0.f, clearFlash_ - dt * 3.f);
     evilJolt_ = std::max(0.f, evilJolt_ - dt * 4.f);
+    // Trophy toasts: the front card runs its course, then the next one plays its jingle.
+    if (!toasts_.empty()) {
+        toasts_.front().t += dt;
+        if (toasts_.front().t > (toasts_.front().ultimate ? 8.f : 5.f)) {
+            toasts_.erase(toasts_.begin());
+            if (!toasts_.empty()) { play("pickup_weapon", 1.f, 1.3f); rumble(0.3f, 0.6f, 200); }
+        }
+    }
+    if (celebrateT_ >= 0.f) {
+        const float W = static_cast<float>(renderer_->extent().width), H = static_cast<float>(renderer_->extent().height);
+        const float s = std::max(1.f, std::round(H / 300.f));
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        const float before = celebrateT_;
+        celebrateT_ += dt;
+        for (float beat : {1.5f, 3.f, 4.5f, 6.f}) if (before < beat && celebrateT_ >= beat) rumble(0.8f, 0.5f, 250);   // pulses with the rockets
+        if (celebrateT_ < 6.5f) {
+            celebrateNext_ -= dt;
+            if (celebrateNext_ <= 0.f) {   // a rocket from the bottom edge
+                celebrateNext_ = 0.22f + 0.25f * u(rng_);
+                Spark r;
+                r.pos = glm::vec2(W * (0.1f + 0.8f * u(rng_)), H + 4.f);
+                r.vel = glm::vec2((u(rng_) - 0.5f) * 0.12f * H, -(0.75f + 0.35f * u(rng_)) * H);
+                r.life = r.ttl = 0.75f + 0.3f * u(rng_);
+                r.size = 2.f * s;
+                const float hue = u(rng_);
+                r.col = hue < 0.4f ? glm::vec3(1.f, 0.85f, 0.3f) : hue < 0.7f ? glm::vec3(1.f, 0.3f, 0.2f) : hue < 0.85f ? glm::vec3(1.f, 1.f, 1.f) : glm::vec3(0.4f, 0.8f, 1.f);
+                r.kind = 0;
+                sparks_.push_back(r);
+            }
+            for (int i = 0; i < 3; ++i) {   // confetti drifting down from the top
+                Spark c;
+                c.pos = glm::vec2(W * u(rng_), -6.f);
+                c.vel = glm::vec2((u(rng_) - 0.5f) * 40.f * s, (35.f + 40.f * u(rng_)) * s);
+                c.life = c.ttl = 3.f + 2.f * u(rng_);
+                c.size = (1.2f + 1.2f * u(rng_)) * s;
+                const float hue = u(rng_);
+                c.col = hue < 0.3f ? glm::vec3(1.f, 0.8f, 0.2f) : hue < 0.55f ? glm::vec3(1.f, 0.25f, 0.2f) : hue < 0.75f ? glm::vec3(0.3f, 0.9f, 0.4f) : hue < 0.9f ? glm::vec3(0.4f, 0.6f, 1.f) : glm::vec3(1.f, 1.f, 1.f);
+                c.kind = 2;
+                sparks_.push_back(c);
+            }
+        }
+        if (celebrateT_ > 9.f && sparks_.empty()) celebrateT_ = -1.f;
+    }
+    if (!sparks_.empty()) {
+        const float H = static_cast<float>(renderer_->extent().height);
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        std::vector<Spark> born;
+        for (size_t i = 0; i < sparks_.size();) {
+            Spark& p = sparks_[i];
+            p.ttl -= dt;
+            const float g = p.kind == 2 ? 0.f : (p.kind == 0 ? 0.35f : 0.9f) * H;
+            p.vel.y += g * dt;
+            if (p.kind == 2) p.vel.x = std::sin(p.ttl * 3.f + p.size) * 30.f * (H / 900.f);
+            p.pos += p.vel * dt;
+            if (p.ttl <= 0.f) {
+                if (p.kind == 0) {   // burst
+                    play("explode", 0.35f, 1.4f + 0.4f * u(rng_));
+                    const int n = 40 + static_cast<int>(30.f * u(rng_));
+                    for (int k = 0; k < n; ++k) {
+                        Spark q;
+                        const float a = 6.2831853f * u(rng_), v = (0.12f + 0.32f * u(rng_)) * H;
+                        q.pos = p.pos;
+                        q.vel = glm::vec2(std::cos(a) * v, std::sin(a) * v * 0.9f);
+                        q.life = q.ttl = 1.f + 0.9f * u(rng_);
+                        q.size = p.size * (0.7f + 0.7f * u(rng_));
+                        q.col = u(rng_) < 0.8f ? p.col : glm::vec3(1.f);
+                        q.kind = 1;
+                        born.push_back(q);
+                    }
+                }
+                p = sparks_.back(); sparks_.pop_back();
+            } else if (p.pos.y > H + 20.f) { p = sparks_.back(); sparks_.pop_back(); }
+            else ++i;
+        }
+        sparks_.insert(sparks_.end(), born.begin(), born.end());
+    }
+    if (std::getenv("REDLINE_TROPHY_DEMO") && frameCount_ == 60) {   // test knob: the toast and the celebration without earning them
+        const auto& all = trophyCatalogue();
+        showTrophy(all[0], false);
+        showTrophy(all.back(), true);
+        startCelebration();
+    }
     {
         // Blood running off the evil banner: more of it the higher the stack.
         const float H = static_cast<float>(renderer_->extent().height);
@@ -3270,6 +3365,78 @@ void App::addHud() {
             }
         }
     }
+    // Trophy toast and the RIP AND TEAR celebration: over everything, menus included.
+    if (celebrateT_ >= 0.f) {
+        const float ct = celebrateT_;
+        const float fade = std::clamp((8.f - ct) / 1.f, 0.f, 1.f);
+        // Gold pulse over the whole view for the opening seconds.
+        if (ct < 3.f) panel(0.f, 0.f, W, H, glm::vec4(1.f, 0.8f, 0.3f, 0.18f * (1.f - ct / 3.f) * (0.6f + 0.4f * std::sin(time_ * 12.f))));
+        // Fireworks and confetti bloom with the scene (HDR pass), everything else on top.
+        hdrQuads_ = true;
+        for (const Spark& p : sparks_) {
+            const float a = std::clamp(p.ttl / std::max(0.05f, p.life * 0.6f), 0.f, 1.f);
+            if (p.kind == 2) panel(p.pos.x, p.pos.y, p.size, p.size * 1.6f, glm::vec4(p.col * 1.6f, 0.9f * a * fade));
+            else {
+                const float sz = p.kind == 0 ? p.size * 1.5f : p.size;
+                // A short trail back along the motion, then the bright head.
+                const glm::vec2 step = p.vel * (p.kind == 0 ? 0.03f : 0.022f);
+                for (int k = 3; k >= 1; --k) {
+                    const glm::vec2 q = p.pos - step * static_cast<float>(k);
+                    const float ts = sz * (1.f - 0.2f * static_cast<float>(k));
+                    panel(q.x - ts * 0.5f, q.y - ts * 0.5f, ts, ts, glm::vec4(p.col * 1.6f, a * fade * (0.55f - 0.12f * static_cast<float>(k))));
+                }
+                panel(p.pos.x - sz * 0.5f, p.pos.y - sz * 0.5f, sz, sz, glm::vec4(p.col * (p.kind == 0 ? 3.5f : 2.8f), a * fade));
+            }
+        }
+        hdrQuads_ = false;
+        if (ct > 0.2f) {
+            const float slam = 1.f - std::clamp((ct - 0.2f) / 0.5f, 0.f, 1.f);
+            panel(0.f, H * 0.30f - lh * 1.4f, W, lh * 7.2f, glm::vec4(0.f, 0.f, 0.f, 0.62f * fade));   // a band so the words read over anything
+            const float pulse = 0.75f + 0.25f * std::sin(time_ * 9.f);
+            const float ts = s * (2.6f + 3.f * slam * slam);
+            const glm::vec4 col(1.f, 0.25f + 0.6f * pulse, 0.15f, fade);
+            for (int k = 0; k < 8; ++k) {   // gold halo
+                const float ang = static_cast<float>(k) * 0.7854f;
+                text(W * 0.5f + std::cos(ang) * s * 2.f, H * 0.30f + std::sin(ang) * s * 2.f, "RIP AND TEAR!!!", ts, glm::vec4(1.f, 0.8f, 0.2f, 0.25f * fade), 1);
+            }
+            text(W * 0.5f, H * 0.30f, "RIP AND TEAR!!!", ts, col, 1);
+            if (ct > 0.7f) {
+                const float in = std::min(1.f, (ct - 0.7f) / 0.3f);
+                text(W * 0.5f, H * 0.30f + lh * 3.2f, "EVERY TROPHY EARNED", s * 1.3f, glm::vec4(1.f, 0.9f, 0.4f, in * fade), 1);
+                text(W * 0.5f, H * 0.30f + lh * 4.6f, std::to_string(trophies_.total()) + " / " + std::to_string(trophies_.total()) + "   THE CABINET IS FULL", s * 0.85f, glm::vec4(1.f, 1.f, 1.f, in * fade), 1);
+            }
+        }
+    }
+    if (!toasts_.empty()) {
+        // A card slides down from the top edge, waits, and slides back up.
+        const Toast& t = toasts_.front();
+        const float hold = t.ultimate ? 8.f : 5.f;
+        float slide = t.t < 0.35f ? t.t / 0.35f : t.t > hold - 0.4f ? std::max(0.f, (hold - t.t) / 0.4f) : 1.f;
+        slide = slide * slide * (3.f - 2.f * slide);
+        const float fs = s * 0.95f;
+        const float icon = lh * 2.2f;
+        const float nameW = static_cast<float>(assets_.textWidth(t.name, fs)), descW = static_cast<float>(assets_.textWidth(t.desc, s * 0.6f));
+        const float cardW = std::max(nameW, std::max(descW, static_cast<float>(assets_.textWidth("TROPHY UNLOCKED   20 / 20", s * 0.55f)))) + icon + lh * 2.2f;
+        const float cardH = lh * 3.1f;
+        const float x0 = W * 0.5f - cardW * 0.5f, y0 = -cardH - 8.f + slide * (cardH + 8.f + 18.f);
+        const glm::vec4 gold = t.ultimate ? glm::vec4(1.f, 0.35f, 0.2f, 1.f) : glm::vec4(1.f, 0.8f, 0.25f, 1.f);
+        const float glow = 0.5f + 0.5f * std::sin(time_ * 6.f);
+        panel(x0 - 3.f * s * 0.5f, y0 - 3.f * s * 0.5f, cardW + 3.f * s, cardH + 3.f * s, glm::vec4(gold.r, gold.g, gold.b, 0.55f + 0.35f * glow));   // border
+        panel(x0, y0, cardW, cardH, glm::vec4(0.03f, 0.02f, 0.04f, 0.94f));
+        // Icon: the menu skull, or a plain badge without Doom art.
+        const float ix = x0 + lh * 0.7f, iy = y0 + (cardH - icon) * 0.5f;
+        panel(ix, iy, icon, icon, glm::vec4(gold.r, gold.g, gold.b, 0.18f));
+        if (!assets_.skull.empty()) {
+            const render::AtlasRegion& r = assets_.region(assets_.skull);
+            const float sc = icon * 0.8f / static_cast<float>(std::max(r.w, r.h));
+            screenSprite(assets_.skull, ix + (icon - r.w * sc) * 0.5f, iy + (icon - r.h * sc) * 0.5f, sc, glm::vec4(1.f, 1.f, 1.f, 1.f), 0.f, 1.f);
+        }
+        const float tx = ix + icon + lh * 0.7f;
+        text(tx, y0 + lh * 0.35f, std::string(t.ultimate ? "ULTIMATE TROPHY" : "TROPHY UNLOCKED") + "   " + std::to_string(t.count) + " / " + std::to_string(t.total), s * 0.55f, gold, 0);
+        text(tx, y0 + lh * 1.05f, t.name, fs, white, 0);
+        text(tx, y0 + lh * 2.25f, t.desc, s * 0.6f, dim, 0);
+    }
+
 }
 
 void App::buildScene() {

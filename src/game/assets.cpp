@@ -528,6 +528,10 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         atlas_.add("title_doom", *pic);
         title = "title_doom";
     }
+    if (auto pic = wad::loadPatch(*wad, *pal, "M_SKULL1")) {
+        atlas_.add("skull", *pic);
+        skull = "skull";
+    }
 
     font.clear();
     fontBig.clear();
