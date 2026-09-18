@@ -270,3 +270,117 @@ Ranking scheme, so a player has one standing rather than a pile of tables:
    few JSON files to build the pages before the game can submit).
 4. `libcurl` submit with opt-in, pending queue, rank on the game-over screen.
 5. Replay log for the block phase and the verified badge, if wanted.
+
+## 9. Registration, consent, machines and mail (notes, 2026-09-18)
+
+Written as notes, not a spec; nothing here is coded yet.
+
+### Consent before anything is saved online
+
+- The game collects a **profile name** and an optional **email address**.
+  Nothing about a profile leaves the machine until the owner of that address
+  has said yes.
+- **Register, don't just store.** When a profile has an email address the
+  game has not seen confirmed before (a new profile, or an existing one whose
+  address changed), the server sends a **registration email** to that
+  address: "someone playing REDLINE as *NAME* on a machine called *X* wants
+  to attach that profile to this address; confirm or ignore". Until the
+  confirmation comes back the online side holds nothing for that profile
+  except the pending request (address, profile id, code, expiry, sent-at),
+  which is deleted when it expires (24 h) or is declined.
+- **Every new profile + address combination asks again**, even when the
+  address is already verified for another profile. A confirmed address is
+  never a blanket permission; each profile that wants to hang off it is a
+  separate yes. Same for an address that moves to a new machine (see below).
+- Confirmation is a **six-digit code typed into the game** (the game is not a
+  browser) plus a link in the email for people who prefer to click; either
+  one completes the registration. The email says plainly what will be stored
+  once confirmed: display name, gameplay statistics, the machine facts from
+  section 6, and the address itself (encrypted, per section 7).
+- Declining or ignoring keeps the profile fully playable offline; the game
+  shows NOT VERIFIED under OPTIONS > PLAYER EMAIL and never asks the server
+  again until the player changes something.
+- Keep a **consent record** per registration: address (blind index), profile
+  id, machine id, the text version the player agreed to, timestamp, and how
+  it was confirmed (code or link). This is what answers "did we have
+  permission to hold this" later, and it is what gets deleted on request.
+
+### Unique machines
+
+- The goal is to know **how many different computers** a player plays on,
+  and to keep each machine's metrics apart, not to fingerprint hardware.
+  The **`install_id`** from section 7 does this already: a random UUID
+  written once into the save folder of each machine (`<pref>/install.txt`).
+  It survives reinstalling the game as long as the save folder does; a wiped
+  machine simply becomes a new one, which is acceptable.
+- Section 6's rule stands: **no MAC addresses, serial numbers or hostnames
+  as identifiers.** A "machine name" for the registration email and the
+  player's own machine list can be the player-typed label (asked once,
+  defaulting to something like "LINUX / RADEON 8060S") rather than the
+  hostname. The hardware facts already recorded per machine (platform, OS
+  family, GPU, cores, RAM, pad model) travel with the machine row and are
+  encrypted at rest.
+- Linking a machine to an address is itself a registration (the email above
+  names the machine), so an address cannot be silently attached to a second
+  computer.
+
+### Data model: one address, many profiles, many machines
+
+```
+accounts        one per verified email address (Supabase Auth user; the
+                address lives there, our tables hold the blind index only)
+players         one per profile: player_id, display_name, account (nullable
+                until registered), created_at
+machines        one per install_id: label, platform/OS/GPU/cores/RAM/pad
+                (encrypted), first_seen, last_seen
+registrations   consent records: account, player, machine, code, status
+                (pending / confirmed / declined / expired), agreed_text_version,
+                confirmed_at, method
+runs            one per game over: player, machine, version, the RunRecord
+                from section 3
+sessions        one per launch: machine, player, duration, input mix
+```
+
+- Metrics are kept **per player and per machine** (`runs` and `sessions`
+  carry both ids), so the site can show one address's total picture, each
+  profile's own boards, and each machine's own hours, input mix and hardware.
+  Leaderboards rank *players* (profiles); the account page aggregates them.
+- An address with three profiles and two machines is therefore one account,
+  three players, two machines and up to six confirmed registrations. Removing
+  the account deletes all of them together (section 7's deletion path).
+
+### Sending mail: Microsoft Graph
+
+- Vercel has no outbound mail of its own and its free tier is not a place to
+  run an SMTP client, so the confirmation mail goes out through **Microsoft
+  Graph** (`POST /users/{sender}/sendMail` with an app registration that has
+  `Mail.Send` application permission, client-credentials flow). The sender
+  is a mailbox in the tenant, e.g. `redline@<domain>`.
+- **Where the credentials live.** Two acceptable places, pick one when the
+  service is built:
+  1. **Vercel project environment variables** (`GRAPH_TENANT_ID`,
+     `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_SENDER`), encrypted by
+     Vercel, read only by the `POST /api/register` route. Simplest.
+  2. **Supabase Vault** (`vault.create_secret`), read by a Postgres function
+     or an Edge Function that does the send. Keeps every secret in one place
+     with the encryption keys from section 7.
+  Either way there is a small **admin page** on the site (behind Supabase
+  Auth, one allow-listed account) with a form for the four values, a "send
+  test mail to me" button, and a log of the last sends with their Graph
+  status codes, so the key can be rotated without a deploy. The secret is
+  write-only in that form (shows "set on <date>", never the value).
+- The mail itself: plain text plus a minimal HTML version, subject "Confirm
+  REDLINE registration for NAME", the six-digit code in large type, the link,
+  what will be stored, and a one-line "if this wasn't you, ignore this".
+  Rate-limit sends per address (three per hour) and per IP, and log the
+  Graph response so a rejected send shows up on the admin page.
+- Fallback if Graph is unavailable: the registration stays pending and the
+  game says "confirmation email could not be sent, try again later"; nothing
+  is stored for the profile.
+
+### Order of work, revised
+
+This slots between steps 3 and 4 of section 8: schema first (with the tables
+above), then the register route and the Graph sender behind the admin page,
+then the in-game code entry under OPTIONS > PLAYER EMAIL, and only then the
+run upload, which must refuse any player without a confirmed registration.
