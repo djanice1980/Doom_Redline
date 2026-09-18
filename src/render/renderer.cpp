@@ -1334,14 +1334,24 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     return true;
 }
 
-bool Renderer::screenshot(const std::string& path) {
+bool Renderer::readbackFrame(std::vector<uint8_t>& rgba, int& w, int& h) {
     if (!lastImage_) return false;
     ctx_.waitIdle();
     VkExtent2D ext = ctx_.extent();
-    std::vector<uint8_t> px = ctx_.readbackImage(lastImage_, ext.width, ext.height, ctx_.swapchainFormat());
-    Image img(static_cast<int>(ext.width), static_cast<int>(ext.height));
+    rgba = ctx_.readbackImage(lastImage_, ext.width, ext.height, ctx_.swapchainFormat());
+    for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;
+    w = static_cast<int>(ext.width);
+    h = static_cast<int>(ext.height);
+    return true;
+}
+
+bool Renderer::screenshot(const std::string& path) {
+    Image img;
+    std::vector<uint8_t> px;
+    int w = 0, h = 0;
+    if (!readbackFrame(px, w, h)) return false;
+    img = Image(w, h);
     img.rgba = std::move(px);
-    for (size_t i = 3; i < img.rgba.size(); i += 4) img.rgba[i] = 255;
     return writePng(path, img);
 }
 

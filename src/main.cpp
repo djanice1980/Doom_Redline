@@ -24,6 +24,7 @@ void usage() {
         "  --scenario <name>    title | blocks | redline | fps | corrupt | prize\n"
         "  --screenshot <png>   Save a screenshot after --frames frames and exit\n"
         "  --frames <n>         Frame count for --screenshot (fixed 60 Hz step)\n"
+        "  --record <file.rgba> Append every 2nd frame (--record-every N) as raw RGBA; ffmpeg -f rawvideo -pix_fmt rgba -s WxH -r 30 -i file\n"
         "  --bot                Auto-aim and fire in FPS mode (smoke testing)\n"
         "  --level <n>          Starting level for --scenario fps (enemy health scaling)\n"
         "  --absorb <sec>       Seconds before a monster may absorb blocks and grow (default 20)\n"
@@ -62,6 +63,8 @@ int main(int argc, char** argv) {
         else if (a == "--seed") o.seed = static_cast<uint32_t>(std::atoi(next()));
         else if (a == "--scenario") o.scenario = next();
         else if (a == "--screenshot") o.screenshot = next();
+        else if (a == "--record") o.record = next();
+        else if (a == "--record-every") o.recordEvery = std::max(1, std::atoi(next()));
         else if (a == "--frames") o.frames = std::atoi(next());
         else if (a == "--bot") o.bot = true;
         else if (a == "--level") o.level = std::atoi(next());

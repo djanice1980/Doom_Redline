@@ -112,6 +112,7 @@ public:
 
     // Writes the most recently presented frame to a PNG (blocks the GPU briefly).
     bool screenshot(const std::string& path);
+    bool readbackFrame(std::vector<uint8_t>& rgba, int& w, int& h);   // the last presented frame, RGBA8, for the recorder
     VkExtent2D extent() const { return ctx_.extent(); }
     bool rayTracingAvailable() const { return rt_; }
     // 4x (or 2x) multisampling of the world pass; rebuilds the pipelines. No-op when unsupported.

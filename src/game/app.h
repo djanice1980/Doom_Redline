@@ -39,6 +39,8 @@ struct Options {
     std::string scenario = "title";    // title | blocks | redline | fps
     std::string screenshot;            // path; taken after `frames` frames, then exit
     int frames = 0;
+    std::string record;                // raw RGBA frames appended here every `recordEvery` frames (scripted runs; encode with ffmpeg)
+    int recordEvery = 2;
     bool bot = false;                  // auto-aim/fire in FPS mode (smoke testing)
     bool mute = false;
     int level = 1;                     // starting level (scenarios)

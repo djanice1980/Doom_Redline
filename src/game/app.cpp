@@ -1278,7 +1278,7 @@ int App::run() {
                 SDL_Keycode k = SDLK_UNKNOWN;
                 if (std::isalpha(static_cast<unsigned char>(ch))) k = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
                 else if (ch == '_') k = SDLK_DOWN; else if (ch == '^') k = SDLK_UP; else if (ch == '<') k = SDLK_LEFT; else if (ch == '>') k = SDLK_RIGHT;
-                else if (ch == '#') k = SDLK_DELETE; else if (ch == '=') k = SDLK_RETURN; else if (ch == '~') k = SDLK_ESCAPE;
+                else if (ch == '#') k = SDLK_DELETE;
                 else if (ch == '~') k = SDLK_RETURN; else if (ch == '`') k = SDLK_ESCAPE; else if (ch == ' ') k = SDLK_SPACE;
                 if (k == SDLK_UNKNOWN) continue;
                 ev.key.key = k;
@@ -1308,6 +1308,16 @@ int App::run() {
             cubeRanges_.push_back({static_cast<uint32_t>(envCubes_.size()), static_cast<uint32_t>(cubes_.size() - envCubes_.size()), 0});
         renderer_->render(frame_, cubes_, worldQuads_, screenQuads_, meshes_, cubeRanges_);
         ++frameCount_;
+        if (!opts_.record.empty() && opts_.frames > 0 && frameCount_ % std::max(1, opts_.recordEvery) == 0) {   // the video recorder
+            static std::FILE* rec = nullptr;
+            if (!rec) rec = std::fopen(opts_.record.c_str(), "wb");
+            std::vector<uint8_t> px; int w = 0, h = 0;
+            if (rec && renderer_->readbackFrame(px, w, h)) {
+                std::fwrite(px.data(), 1, px.size(), rec);
+                if (frameCount_ == std::max(1, opts_.recordEvery)) std::fprintf(stderr, "[app] recording %dx%d raw RGBA frames to %s\n", w, h, opts_.record.c_str());
+            }
+            if (frameCount_ >= opts_.frames && rec) { std::fclose(rec); rec = nullptr; }
+        }
 
         if (opts_.frames > 0 && frameCount_ >= opts_.frames) {
             if (!opts_.screenshot.empty()) {
@@ -1878,7 +1888,7 @@ void App::update(float dt) {
         }
         sparks_.insert(sparks_.end(), born.begin(), born.end());
     }
-    if (std::getenv("REDLINE_TROPHY_DEMO") && frameCount_ == 60) {   // test knob: the toast and the celebration without earning them
+    if (const char* demo = std::getenv("REDLINE_TROPHY_DEMO"); demo && frameCount_ == std::max(1, std::atoi(demo) > 0 ? std::atoi(demo) : 60)) {   // test knob: the toast and the celebration without earning them, at that frame
         const auto& all = trophyCatalogue();
         showTrophy(all[0], false);
         showTrophy(all.back(), true);

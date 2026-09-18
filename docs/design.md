@@ -427,7 +427,7 @@ it server-side. `stats_test` covers the round trip across two machines.
   before moving the folder; `deleteProfile` switches away first or, with no
   profile left, resets to the name prompt. `profileRequired_` keeps the
   screen up at start-up until a player is chosen; scripted runs skip it
-  unless `REDLINE_ASK_PROFILE=1`), Name entry (keyboard text
+  unless `REDLINE_ASK_PROFILE=1`; `--keys` chords: `#` is Delete, `~` Enter, `` ` `` Esc), Name entry (keyboard text
   input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
   both keyboard and pad input mapped to key codes.
 - Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks

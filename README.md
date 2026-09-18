@@ -506,7 +506,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
 --level <n>         --absorb <sec>     --god              --arsenal <n>
 --keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
 --voxels-dir <dir>  --voxels           --sprites          --reload-wad <file>
---extras <file>     --rt 0|1|2
+--extras <file>     --rt 0|1|2         --record <file.rgba> --record-every <n>
 ```
 
 A Windows test build can be cross-compiled from Linux with Docker:
@@ -519,12 +519,19 @@ cyberdemon-sized slab); `--scenario corrupt` starts with a tall holey stack so
 you can watch blocks turn. `--god` and `--arsenal N` (every weapon owned,
 holding weapon N) help when testing a fight; `--keys` presses a chord at a
 frame (letters, `_` down, `^` up, `<` `>` left/right, `~` return, `` ` `` esc,
-space). `--bot` makes
+`#` delete, space). `--bot` makes
 the player auto-aim and fire, which together with `--frames`/`--screenshot`
 gives a headless-ish smoke test of the whole loop:
 
 ```bash
 REDLINE_NOVSYNC=1 ./build/redline --mute --scenario redline --bot --frames 2400 --screenshot loop.png
+```
+
+`--record <file>` appends every second frame of such a run (`--record-every`
+changes the step) as raw RGBA, which ffmpeg turns into a video:
+
+```bash
+ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i run.rgba -c:v libx264 -pix_fmt yuv420p run.mp4
 ```
 
 Environment: `REDLINE_GPU=<index>` forces a Vulkan device (the log lists them),
