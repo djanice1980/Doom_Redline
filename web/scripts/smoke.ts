@@ -71,6 +71,8 @@ async function main() {
   check(r.status === 200, "posting the same run twice is harmless");
   const runRows = await db`select count(*) as n from runs`;
   check(Number(runRows[0].n) === 1, "one run row after the duplicate");
+  const jt = await db`select jsonb_typeof(kills_by_kind) as a, jsonb_typeof(shots) as o, jsonb_typeof(input) as i from runs limit 1`;
+  check(jt[0].a === "array" && jt[0].o === "object" && jt[0].i === "object", "jsonb columns hold real JSON values, not strings");
   const tro = await db`select count(*) as n from trophies where player_id = ${playerId}`;
   check(Number(tro[0].n) === 2, "trophies recorded");
   const mach = await db`select facts_enc from machines where install_id = ${installId}`;

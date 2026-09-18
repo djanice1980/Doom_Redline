@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     await tx`insert into runs (id, player_id, install_id, started_at, ended_at, version, platform, duration_s, score, level, lines, red_lines, fights, pieces, tetrises, best_chain,
         kills, kills_by_kind, highest_kind, blocks_destroyed, pickups, weapons_owned, shots, damage_taken, bfg_used, death_cause, killed_by, seed, voxels, brutal, input, trophies)
       values (${r.id}, ${r.player_id}, ${r.install_id}, ${r.started_at}, ${r.ended_at}, ${r.version}, ${r.platform}, ${r.duration_s}, ${r.score}, ${r.level}, ${r.lines}, ${r.red_lines}, ${r.fights}, ${r.pieces}, ${r.tetrises}, ${r.best_chain},
-        ${r.kills}, ${JSON.stringify(r.kills_by_kind)}::jsonb, ${r.highest_kind}, ${r.blocks_destroyed}, ${r.pickups}, ${JSON.stringify(r.weapons_owned)}::jsonb, ${JSON.stringify(r.shots)}::jsonb, ${r.damage_taken}, ${r.bfg_used}, ${r.death_cause}, ${r.killed_by}, ${r.seed}, ${r.voxels}, ${r.brutal}, ${JSON.stringify(r.input)}::jsonb, ${JSON.stringify(r.trophies)}::jsonb)
+        ${r.kills}, ${tx.json(r.kills_by_kind)}, ${r.highest_kind}, ${r.blocks_destroyed}, ${r.pickups}, ${tx.json(r.weapons_owned)}, ${tx.json(r.shots)}, ${r.damage_taken}, ${r.bfg_used}, ${r.death_cause}, ${r.killed_by}, ${r.seed}, ${r.voxels}, ${r.brutal}, ${tx.json(r.input)}, ${tx.json(r.trophies)})
       on conflict (id) do nothing`;
     for (const t of r.trophies) await tx`insert into trophies (player_id, trophy_id) values (${who.playerId}, ${t}) on conflict do nothing`;
     if (facts && typeof facts === "object") await tx`update machines set facts_enc = ${encrypt(JSON.stringify(facts).slice(0, 4000))}, last_seen = now() where install_id = ${r.install_id}`;

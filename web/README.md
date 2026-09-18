@@ -39,9 +39,10 @@ register again).
 
 ## 3. Site (Vercel)
 
-1. https://vercel.com/new, import the GitHub repository
-   `djanice1980/Doom_Redline`, set **Root Directory** to `web`. Framework is
-   detected as Next.js.
+1. The project exists: https://vercel.com/djanice1980s-projects/doom-redline
+   (imported from `djanice1980/Doom_Redline`; **Settings > General > Root
+   Directory** must be `web`, framework Next.js). Its production URL,
+   `https://doom-redline.vercel.app`, is the game's built-in default.
 2. Under **Environment Variables** add, for Production (and Preview if you
    like):
 
