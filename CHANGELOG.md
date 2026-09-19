@@ -4,7 +4,7 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-09-19)
 - The game tells you when a new version is out and has a WHAT'S NEW screen with this list.
 - Online is on by default; nothing is posted until you approve your email address.
 - Approve your registration by clicking the link in the email; typing the code still works too.
