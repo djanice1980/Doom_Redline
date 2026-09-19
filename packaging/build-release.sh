@@ -36,10 +36,14 @@ fi
 
 echo "== appimage"
 ld=${LINUXDEPLOY:-$(command -v linuxdeploy-x86_64.AppImage || command -v linuxdeploy || true)}
-if [ -n "$ld" ]; then
+if [ -z "$ld" ] || [ ! -x "$ld" ]; then   # fetch the tool into build/ when it is not around
+  ld="$here/build/linuxdeploy-x86_64.AppImage"
+  [ -x "$ld" ] || curl -sL -o "$ld" https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage && chmod +x "$ld"
+fi
+if [ -x "$ld" ]; then
   rm -rf build/AppDir
   DESTDIR="$here/build/AppDir" cmake --install build --prefix /usr >/dev/null
-  (cd build && APPIMAGE_EXTRACT_AND_RUN=1 "$ld" --appdir AppDir --output appimage >/dev/null 2>&1 && mv -f REDLINE-x86_64.AppImage "redline-$ver-x86_64.AppImage")
+  (cd build && APPIMAGE_EXTRACT_AND_RUN=1 "$ld" --appdir AppDir --output appimage > appimage.log 2>&1 && mv -f REDLINE-x86_64.AppImage "redline-$ver-x86_64.AppImage") || { echo "   AppImage failed, see build/appimage.log"; }
 else
   echo "   (skipped: linuxdeploy not found)"
 fi
