@@ -49,6 +49,22 @@ touching the code:
 `REDLINE_FONT_HD` (a folder, or `0` to disable) point at or disable each one
 for testing.
 
+## All artefacts in one go
+
+`packaging/build-release.sh` (run on Linux, from a configured `build/`)
+produces the tarball, the `.deb`, the Arch package, the AppImage, the
+Windows zip and the Windows installer. It needs `makepkg` (Arch), Docker
+(the Windows steps use `fedora:42` with mingw-w64 for the build and the
+`amake/innosetup` image, which runs Inno Setup's compiler under Wine, for
+the installer), and `linuxdeploy-x86_64.AppImage` from
+https://github.com/linuxdeploy/linuxdeploy/releases/tag/continuous (put it on
+`PATH` or set `LINUXDEPLOY=/path/to/it`). `--no-windows` skips the Docker
+steps. The `.deb` is written by CPack with an explicit dependency list
+(`libsdl3-0, libvorbisfile3, libvulkan1`) because `dpkg` is not on an Arch
+machine; the AppImage is an installed tree (`cmake --install --prefix /usr`
+into `build/AppDir`) with the shared libraries bundled by linuxdeploy, and the
+game finds its data folders through `bin/../share/redline` inside it.
+
 ## Windows (MSVC + vcpkg + Inno Setup)
 
 Everything below runs in a normal Windows command prompt (or PowerShell); no
@@ -82,7 +98,7 @@ Linux tools are involved. Total download is a few GB.
 6. **Inno Setup 6**: https://jrsoftware.org/isdl.php. Install it, open
    `packaging\windows\redline.iss` and press *Compile* (or run
    `"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\redline.iss`).
-   The result is `build-win\redline-0.1.0-setup.exe`.
+   The result is `build-win\redline-0.2.0-setup.exe`.
 
 What the installer does: copies the staged files to `C:\Program Files\REDLINE`,
 adds Start-menu and optional desktop shortcuts, and shows a **Doom game data**
@@ -147,7 +163,7 @@ Packages, from the build folder:
 
 ```bash
 cd build
-cpack -G TGZ          # redline-0.1.0-Linux.tar.gz (bin/, share/ layout; unpack anywhere)
+cpack -G TGZ          # redline-0.2.0-Linux.tar.gz (bin/, share/ layout; unpack anywhere)
 cpack -G DEB          # on Debian/Ubuntu: dependencies are computed by dpkg-shlibdeps
 cpack -G RPM          # on Fedora, needs rpm-build
 ```

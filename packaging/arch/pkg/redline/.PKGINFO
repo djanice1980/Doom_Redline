@@ -3,17 +3,18 @@
 pkgname = redline
 pkgbase = redline
 xdata = pkgtype=pkg
-pkgver = 0.1.0-1
+pkgver = 0.2.0-1
 pkgdesc = Tetris that tips over into a Doom fight (Vulkan, SDL3; needs your own doom.wad)
 url = https://github.com/djanice1980/Doom_Redline
-builddate = 1789761287
+builddate = 1789766492
 packager = Unknown Packager
-size = 31462843
+size = 31635047
 arch = x86_64
 license = MIT
 depend = sdl3
 depend = vulkan-icd-loader
 depend = libvorbis
+depend = curl
 depend = hicolor-icon-theme
 optdepend = fluidsynth: soundfont music backend
 optdepend = zenity: file browser for choosing the WAD outside KDE

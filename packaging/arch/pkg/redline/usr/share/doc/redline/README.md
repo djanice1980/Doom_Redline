@@ -23,13 +23,21 @@ recorded soundtracks when `extras.wad` is around.
 
 ## Get it
 
-Download the latest build from the
+Download from the
 [Releases page](https://github.com/djanice1980/Doom_Redline/releases):
-`redline-<version>-win64.zip` for Windows, `redline-<version>-Linux.tar.gz`
-for Linux (Arch / CachyOS packages and installers are described under
-[Build](#build-arch--cachyos)). You need your own `doom.wad` or `doom2.wad`;
-the game finds Steam and GOG copies by itself and otherwise asks on first
-launch. Nothing else is required.
+
+| Platform | File | Notes |
+|---|---|---|
+| Windows 10/11 | `redline-<version>-setup.exe` | Installer: Start menu and desktop shortcuts, asks where your Doom WAD is, uninstaller |
+| Windows 10/11 | `redline-<version>-win64.zip` | Portable: unzip anywhere and run `redline.exe` |
+| Arch / CachyOS / Manjaro | `redline-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U <file>` |
+| Debian / Ubuntu | `redline_<version>_amd64.deb` | `sudo apt install ./<file>` (needs a distro with SDL3 packages: Debian 13, Ubuntu 25.04 or later) |
+| Any Linux | `redline-<version>-x86_64.AppImage` | `chmod +x` and run; SDL3 and libvorbis travel inside |
+| Any Linux | `redline-<version>-Linux.tar.gz` | Portable tree; `bin/redline` |
+
+You need your own `doom.wad` or `doom2.wad`; the game finds Steam and GOG
+copies by itself and otherwise asks on first launch. Nothing else is required.
+`packaging/build-release.sh` builds all of the above from a checkout.
 
 ## Screenshots
 
@@ -236,13 +244,30 @@ menus have MAIN MENU next to RESTART and QUIT.
 
 Each profile also carries a random player id, an optional email address
 (OPTIONS > PLAYER EMAIL, or the prompt after a new name) that stays unused
-and unverified until the online leaderboard exists, and play statistics:
+and unverified until you register it (below), and play statistics:
 time in the block phase, the fight and the menus, and how many actions came
 from the keyboard, the mouse and a gamepad, kept both as lifetime totals and
 per machine (each save folder gets a random install id; the machine file
 also notes the OS, GPU, core count, memory and gamepad model). The title
-screen and the pause menu show your play time. None of this leaves the
-machine: this build has no network code.
+screen and the pause menu show your play time. Nothing leaves the machine
+unless you turn ONLINE on.
+
+## Online leaderboard
+
+Off by default. **OPTIONS > ONLINE: ON** opts a profile in; then **PLAYER
+EMAIL** starts a registration: the service emails a six-digit code, you type
+it into the game, and from then on every finished game is posted (the
+player name, the score and game statistics, and what the machine is) with
+your world rank shown on the game-over screen. **LEADERBOARD** on the title
+screen shows the boards (all time, this week, fights, level, demons slain),
+with your own row pinned, and keeps the last copy for offline viewing. The
+address is stored encrypted and never shown; each player and each machine
+is asked separately, and nothing is stored until the code is typed. Runs
+that could not be posted wait in the profile's `runs/pending` folder and go
+out at the next launch. Scripted and cheat runs (`--scenario`, `--bot`,
+`--god`, `--level` and friends) are never posted. The service itself lives
+in `web/` (its README explains the set-up); `docs/online-and-releases.md`
+has the design and what is stored.
 
 Trophies are one-time achievements (20 of them, from FIRST BLOOD to DOOM
 SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one slides a console-style

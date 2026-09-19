@@ -444,6 +444,18 @@ it server-side. `stats_test` covers the round trip across two machines.
   level-ups, blocks destroyed, a #1 high score (doom_slayer), and
   `rip_and_tear` (RIP AND TEAR!!!), awarded by `App::trophy` itself the moment
   the other 19 are all held.
+- Online (`src/game/online.*`, `runrecord.*`, `net/http.*`): `OnlineClient`
+  runs one worker thread; `App::pollOnline` handles replies on the main
+  thread each frame. `recordRun` at game over writes the `RunRecord` (counters
+  in `App::run_`, reset in `newGame`) to `<profile>/runs/` or, when ONLINE is
+  on and the profile has a token, to `runs/pending/` and uploads it; the
+  reply's rank goes on the game-over screen, a failure leaves the file for
+  `submitPendingRuns` at the next launch. Registration: `startRegistration`
+  opens `kScreenRegister` (consent text) then `kScreenCode`; a confirmed code
+  stores the token in `identity.txt` via `PlayerStats::setVerified`. The
+  service URL comes from `--online-server`, `REDLINE_ONLINE_URL`,
+  `<pref>/online.txt`, `redline.cfg`, or the default. `REDLINE_ONLINE_ALLOW_SCRIPTED=1`
+  lets a scripted run upload (tests only).
 - Level card: 4 s after the fly-out; block gravity pauses while a piece would
   be falling, the collapse still animates.
 - Gamepad: SDL3 gamepad API; axes polled per frame with an 18 % dead zone and

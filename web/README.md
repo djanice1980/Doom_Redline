@@ -100,10 +100,19 @@ tell the game:
   config file), or
 - the environment variable `REDLINE_ONLINE_URL`, or `--online-server <url>`.
 
-In the game: **OPTIONS > ONLINE: ON**, then **PLAYER EMAIL** (Enter). The
-game sends the registration, the player types the emailed six-digit code,
-and from then on every finished game is posted, with the world rank shown on
-the game-over screen. LEADERBOARD on the title screen shows the boards.
+In the game ONLINE is on by default; players without a registration are
+asked once. **PLAYER EMAIL** under OPTIONS sends the registration email:
+clicking its approve link (or typing the code) completes it, the game picks
+the approval up by polling, and from then on every finished game is posted
+with the world rank on the game-over screen. LEADERBOARD on the title screen
+shows the boards; WHAT'S NEW shows the change list and the latest release,
+which the service reads from GitHub (`/api/version`).
+
+## Migrations after the first
+
+`supabase/migrations/0002_links_and_polling.sql` adds three columns. The
+routes apply it themselves on first use (`lib/schema.ts`), so nothing breaks
+if it is not run by hand; running it in the SQL editor is still tidy.
 
 ## Local test
 

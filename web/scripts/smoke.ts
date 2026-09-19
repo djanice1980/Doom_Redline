@@ -20,7 +20,7 @@ function check(cond: unknown, what: string) {
 async function main() {
   const { sql } = await import("../lib/db");
   const db = sql();
-  await db.unsafe(readFileSync(join(__dirname, "..", "supabase", "migrations", "0001_init.sql"), "utf8"));
+  for (const f of ["0001_init.sql", "0002_links_and_polling.sql"]) await db.unsafe(readFileSync(join(__dirname, "..", "supabase", "migrations", f), "utf8"));
   for (const t of ["runs", "trophies", "player_machines", "registrations", "players", "accounts", "machines", "ratings", "mail_log", "rate_limits", "settings"]) await db.unsafe(`delete from ${t}`);
 
   const register = (await import("../app/api/register/route")).POST;
@@ -37,10 +37,16 @@ async function main() {
   let r = await register(post("/api/register", { player_id: "nope", install_id: installId, email: "a@b.co", display_name: "MARINE" }));
   check(r.status === 400, "register rejects a bad player id");
   r = await register(post("/api/register", { player_id: playerId, install_id: installId, email: "marine@example.com", display_name: "MARINE", machine_label: "LINUX / RADEON", version: "0.1.0" }));
-  check(r.status === 200, `register accepts (status ${r.status}: ${await r.clone().text()})`);
+  const regReply = (await r.clone().json()) as { ok?: boolean; poll_secret?: string };
+  check(r.status === 200 && !!regReply.poll_secret, `register accepts and returns a poll secret (status ${r.status})`);
   const mail = await db`select detail from mail_log order by id desc limit 1`;
-  const code = /Your code:\s+(\d{6})/.exec(mail[0].detail as string)?.[1];
+  const code = /code into the game where it asks:\s+(\d{6})/.exec(mail[0].detail as string)?.[1];
   check(!!code, "a six-digit code was mailed (logged)");
+  const link = /(http:\/\/localhost:3000\/confirm\/[0-9a-f-]+\?t=[A-Za-z0-9_-]+)/.exec(mail[0].detail as string)?.[1];
+  check(!!link, "an approve link was mailed (logged)");
+  const poll = (await import("../app/api/registration/route")).POST;
+  r = await poll(post("/api/registration", { player_id: playerId, poll_secret: regReply.poll_secret }));
+  check(r.status === 200 && ((await r.json()) as { status: string }).status === "pending", "polling reports pending");
   // 2. confirm: wrong code, then right
   r = await confirm(post("/api/confirm", { player_id: playerId, code: code === "000000" ? "000001" : "000000" }));
   check(r.status === 400, "confirm rejects a wrong code");
@@ -99,6 +105,40 @@ async function main() {
   check(r.status === 200, "ratings recomputed");
   const rating = await db`select tier, rank from ratings where player_id = ${playerId}`;
   check(rating[0]?.tier === "DOOM SLAYER" && Number(rating[0]?.rank) === 1, "the only player is DOOM SLAYER");
+  // 6b. approval by link for a second player + machine, then decline for a third
+  const confirmLink = (await import("../app/api/confirm-link/route")).POST;
+  const p2 = randomUUID(), m2 = randomUUID();
+  r = await register(post("/api/register", { player_id: p2, install_id: m2, email: "second@example.com", display_name: "SECOND", machine_label: "WINDOWS / RTX", version: "0.3.0" }));
+  const reg2 = (await r.json()) as { poll_secret?: string };
+  const mail2 = await db`select detail from mail_log order by id desc limit 1`;
+  const link2 = /\/confirm\/([0-9a-f-]+)\?t=([A-Za-z0-9_-]+)/.exec(mail2[0].detail as string);
+  check(!!link2, "second registration mailed a link");
+  r = await confirmLink(post("/api/confirm-link", { id: link2![1], t: "wrong-secret-wrong-secret", action: "approve" }));
+  check(r.status === 404, "a link with the wrong secret is refused");
+  r = await confirmLink(post("/api/confirm-link", { id: link2![1], t: link2![2], action: "approve" }));
+  check(r.status === 200 && ((await r.json()) as { status: string }).status === "confirmed", "approving by link confirms");
+  r = await poll(post("/api/registration", { player_id: p2, poll_secret: reg2.poll_secret }));
+  const polled = (await r.json()) as { status: string; token?: string };
+  check(polled.status === "confirmed" && !!polled.token, "polling after a link approval hands over the token");
+  r = await poll(post("/api/registration", { player_id: p2, poll_secret: reg2.poll_secret }));
+  check(((await r.json()) as { token?: string }).token === undefined, "the token is handed over only once");
+  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: p2, install_id: m2, score: 100, level: 1, fights: 0, lines: 2, pieces: 10, tetrises: 0, kills_by_kind: [1,0,0,0,0,0,0,0,0,0,0,0,0], kills: 1, highest_kind: 0, death_cause: "stack", killed_by: -1, trophies: [] }, { Authorization: `Bearer ${polled.token}` }));
+  check(r.status === 200, "the link-approved player can post a run");
+  const p3 = randomUUID(), m3 = randomUUID();
+  r = await register(post("/api/register", { player_id: p3, install_id: m3, email: "third@example.com", display_name: "THIRD", machine_label: "", version: "0.3.0" }));
+  const reg3 = (await r.json()) as { poll_secret?: string };
+  const mail3 = await db`select detail from mail_log order by id desc limit 1`;
+  const link3 = /\/confirm\/([0-9a-f-]+)\?t=([A-Za-z0-9_-]+)/.exec(mail3[0].detail as string);
+  r = await confirmLink(post("/api/confirm-link", { id: link3![1], t: link3![2], action: "decline" }));
+  check(r.status === 200 && ((await r.json()) as { status: string }).status === "declined", "declining by link works");
+  r = await poll(post("/api/registration", { player_id: p3, poll_secret: reg3.poll_secret }));
+  check(((await r.json()) as { status: string }).status === "declined", "polling reports the decline");
+  const p3rows = await db`select count(*) as n from players where id = ${p3}`;
+  check(Number(p3rows[0].n) === 0, "a declined registration stores no player");
+  // 6c. changelog parsing for the version route
+  const { parseChangelog } = await import("../lib/version");
+  const cl = parseChangelog("# Changelog\n\n## 0.3.0 (unreleased)\n- One thing.\n- Another `thing` **bold**.\n\n## v0.2.0 (2026-09-18)\n- Old.\n");
+  check(cl.length === 2 && cl[0].version === "0.3.0" && cl[0].items.length === 2 && cl[0].items[1] === "Another thing bold." && cl[1].date === "2026-09-18", "the changelog parser reads headings and bullets");
   // 7. admin settings (encrypted at rest, never returned)
   const basic = "Basic " + Buffer.from(`admin:${process.env.ADMIN_PASSWORD}`).toString("base64");
   r = await adminSettings.POST(post("/api/admin/settings", { graph_tenant_id: "tenant-123" }, { Authorization: basic }));

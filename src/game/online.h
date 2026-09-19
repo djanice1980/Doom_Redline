@@ -11,6 +11,8 @@
 //   POST runs         Authorization: Bearer <token>, body = RunRecord JSON
 //                     -> {ok:true, rank, best_rank, total_players, tier} | {error}
 //   GET  leaderboard?board=<name>&player=<id> -> {board, rows:[...], me:{...}|null, total}
+//   POST registration {player_id, poll_secret} -> {status: pending|confirmed|declined|expired, token?}
+//   GET  version -> {latest, url, published_at, changelog:[{version, date, items:[...]}]}
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -26,7 +28,7 @@ namespace rl::game {
 
 class OnlineClient {
 public:
-    enum class Kind { Register, Confirm, SubmitRun, Leaderboard, Player };
+    enum class Kind { Register, Confirm, SubmitRun, Leaderboard, Player, Version, Poll };
     struct Result {
         Kind kind;
         int id = 0;
@@ -51,6 +53,8 @@ public:
     int submitRun(const std::string& runJson, const std::string& token, const std::string& tag);
     int leaderboard(const std::string& board, const std::string& playerId);
     int player(const std::string& playerId);
+    int version();                                                     // GET /api/version: latest release + changelog
+    int pollRegistration(const std::string& playerId, const std::string& pollSecret);   // POST /api/registration
 
     std::vector<Result> poll();   // completed results since the last call
     bool busy() const;            // requests still queued or running

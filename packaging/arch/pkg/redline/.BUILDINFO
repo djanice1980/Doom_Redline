@@ -1,11 +1,11 @@
 format = 2
 pkgname = redline
 pkgbase = redline
-pkgver = 0.1.0-1
+pkgver = 0.2.0-1
 pkgarch = x86_64
-pkgbuild_sha256sum = 323a85a687c6e35ec389e06aaf7f669aba37962cced851bb5dbb66fb40b9ed5c
+pkgbuild_sha256sum = 2fe54ff457886e486099326d2c9d24c39f5d5e86dff08b3eeb6154dec378f84c
 packager = Unknown Packager
-builddate = 1789761287
+builddate = 1789766492
 builddir = /home/davidj/Claude Data/redline/packaging/arch
 startdir = /home/davidj/Claude Data/redline/packaging/arch
 buildtool = makepkg

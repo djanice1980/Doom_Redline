@@ -91,6 +91,18 @@ int OnlineClient::player(const std::string& playerId) {
     return enqueue(Kind::Player, playerId, [url] { return net::httpGet(url); });
 }
 
+int OnlineClient::version() {
+    const std::string url = server_ + "/api/version";
+    return enqueue(Kind::Version, "", [url] { return net::httpGet(url); });
+}
+
+int OnlineClient::pollRegistration(const std::string& playerId, const std::string& pollSecret) {
+    Json body = Json::object();
+    body.set("player_id", playerId).set("poll_secret", pollSecret);
+    const std::string url = server_ + "/api/registration", text = body.dump();
+    return enqueue(Kind::Poll, "", [url, text] { return net::httpPost(url, text, {"Content-Type: application/json"}); });
+}
+
 std::vector<OnlineClient::Result> OnlineClient::poll() {
     std::vector<Result> out;
     std::lock_guard<std::mutex> lock(mutex_);

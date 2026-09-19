@@ -264,7 +264,11 @@ Ranking scheme, so a player has one standing rather than a pile of tables:
 ## 10. Status (2026-09-18)
 
 Built: the game side (run records as JSON in `<profile>/runs`, the ONLINE
-option, registration by code under PLAYER EMAIL, uploads with a pending
+option (on by default since 0.3.0, with a one-time question for players
+without a registration), registration by an emailed approve link or code
+under PLAYER EMAIL (the game polls for the link approval), the update notice
+and WHAT'S NEW screen fed by `/api/version` from GitHub releases and
+`CHANGELOG.md`, uploads with a pending
 queue, the LEADERBOARD screen with a cached copy; `src/game/online.*`,
 `src/game/runrecord.*`, `src/net/http.*` with libcurl on Linux and WinHTTP on
 Windows) and the service in `web/` (Next.js on Vercel, Postgres on Supabase

@@ -213,7 +213,17 @@ private:
     // Online service (docs/online-and-releases.md): opt-in per profile, registration by
     // emailed code, run records uploaded at game over, leaderboard fetches.
     OnlineClient online_;
-    bool onlineOn_ = false;            // per-profile setting (settings.txt online=)
+    bool onlineOn_ = true;             // per-profile setting (settings.txt online=); on by default, nothing is posted until the email is approved
+    bool onlineAsked_ = false;         // the "post your scores?" question has been asked for this profile (settings.txt online_asked=)
+    float pollT_ = 0.f;                // seconds until the next registration poll
+    // Update notice and WHAT'S NEW (the service's /api/version, cached in <pref>/version.json).
+    std::string latestVersion_, latestUrl_;
+    bool updateAvailable_ = false;
+    Json changelog_;
+    int whatsNewScroll_ = 0;
+    void checkVersion();
+    void applyVersionInfo(const Json& info, bool fromNetwork);
+    static bool versionNewer(const std::string& a, const std::string& b);   // a > b, "x.y.z"
     std::string onlineServer_;         // <pref>/online.txt server=, REDLINE_ONLINE_URL, --online-server, or the default
     std::string onlineStatus_;         // last upload result for the game-over screen
     int onlineRank_ = 0, onlineTotal_ = 0;
@@ -260,7 +270,7 @@ private:
     std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
     enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry,
-                  kScreenRegister, kScreenCode, kScreenLeaderboard };
+                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     int optionsScroll_ = 0;        // first option row in view (the list scrolls when the window is short)

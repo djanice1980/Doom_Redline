@@ -55,6 +55,8 @@ public:
     void setEmail(const std::string& email);   // resets verification when it changes
     const std::string& token() const { return token_; }   // the online service's per-player secret, set by a confirmed registration
     void setVerified(const std::string& token);
+    const std::string& pendingPoll() const { return pendingPoll_; }   // secret for polling a registration that is waiting for the email approval
+    void setPendingPoll(const std::string& secret);
 
     const StatCounters& lifetime() const { return lifetime_; }
     const StatCounters& thisMachine() const { return machine_; }
@@ -65,7 +67,7 @@ public:
 
 private:
     std::string dir_;
-    std::string playerId_, email_, token_;
+    std::string playerId_, email_, token_, pendingPoll_;
     bool emailVerified_ = false;
     MachineInfo info_;
     std::string padModel_;

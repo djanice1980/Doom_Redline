@@ -100,13 +100,14 @@ export async function sendMail(mail: Mail): Promise<{ ok: boolean; status: numbe
   }
 }
 
-export function registrationMail(to: string, code: string, displayName: string, machineLabel: string, siteUrl: string): Mail {
+export function registrationMail(to: string, code: string, link: string, displayName: string, machineLabel: string, siteUrl: string): Mail {
   const text = [
     `Someone playing REDLINE as ${displayName} on a machine called ${machineLabel || "unknown"} wants to attach that player to this email address.`,
     "",
-    `Your code:  ${code}`,
+    "Approve it by opening this link (it shows an Approve button):",
+    link,
     "",
-    "Type it into the game where it asks (OPTIONS > PLAYER EMAIL).",
+    `Or type this code into the game where it asks:  ${code}`,
     "",
     "Confirming means that, whenever that player has ONLINE switched on, each finished game is posted to the REDLINE leaderboard:",
     "the player name, the score and game statistics, and what the machine is (operating system, GPU, cores, memory, gamepad model).",
@@ -117,8 +118,10 @@ export function registrationMail(to: string, code: string, displayName: string, 
   ].join("\n");
   const html = `<div style="font-family:system-ui,sans-serif;max-width:560px">
 <p>Someone playing <b>REDLINE</b> as <b>${escapeHtml(displayName)}</b> on a machine called <b>${escapeHtml(machineLabel || "unknown")}</b> wants to attach that player to this email address.</p>
-<p style="font-size:34px;letter-spacing:8px;font-weight:700;margin:24px 0">${code}</p>
-<p>Type it into the game where it asks (OPTIONS &gt; PLAYER EMAIL). The leaderboard lives at <a href="${siteUrl}">${siteUrl}</a>.</p>
+<p style="margin:24px 0"><a href="${link}" style="display:inline-block;padding:12px 22px;background:#8c1711;color:#fff;text-decoration:none;border-radius:6px;font-weight:700">Approve this registration</a></p>
+<p>Or type this code into the game where it asks:</p>
+<p style="font-size:34px;letter-spacing:8px;font-weight:700;margin:12px 0">${code}</p>
+<p>The leaderboard lives at <a href="${siteUrl}">${siteUrl}</a>.</p>
 <p style="color:#555;font-size:13px">Confirming means that, whenever that player has ONLINE switched on, each finished game is posted to the REDLINE leaderboard: the player name, the score and game statistics, and what the machine is (operating system, GPU, cores, memory, gamepad model). The address is stored encrypted, is never shown to other players, and can be removed on request. Each player and each machine that wants to use this address is asked separately. The code expires in 24 hours.</p>
 <p style="color:#555;font-size:13px">If this wasn't you, ignore this email and nothing will be stored.</p>
 </div>`;

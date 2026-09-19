@@ -83,6 +83,7 @@ void PlayerStats::load(const std::string& profileDir, const MachineInfo& machine
     email_ = id.count("email") ? id["email"] : "";
     emailVerified_ = id.count("email_verified") && id["email_verified"] == "1";
     token_ = id.count("token") ? id["token"] : "";
+    pendingPoll_ = id.count("pending_poll") ? id["pending_poll"] : "";
 
     auto st = readKv(fs::path(dir_) / "stats.txt");
     readCounters(st, lifetime_);
@@ -104,7 +105,7 @@ void PlayerStats::load(const std::string& profileDir, const MachineInfo& machine
 void PlayerStats::save() const {
     if (dir_.empty()) return;
     if (std::FILE* f = std::fopen((fs::path(dir_) / "identity.txt").string().c_str(), "w")) {
-        std::fprintf(f, "player_id=%s\nemail=%s\nemail_verified=%d\ntoken=%s\n", playerId_.c_str(), email_.c_str(), emailVerified_ ? 1 : 0, token_.c_str());
+        std::fprintf(f, "player_id=%s\nemail=%s\nemail_verified=%d\ntoken=%s\npending_poll=%s\n", playerId_.c_str(), email_.c_str(), emailVerified_ ? 1 : 0, token_.c_str(), pendingPoll_.c_str());
         std::fclose(f);
     }
     if (std::FILE* f = std::fopen((fs::path(dir_) / "stats.txt").string().c_str(), "w")) {
@@ -157,6 +158,12 @@ void PlayerStats::setEmail(const std::string& email) {
 void PlayerStats::setVerified(const std::string& token) {
     token_ = token;
     emailVerified_ = !token.empty();
+    if (!token.empty()) pendingPoll_.clear();
+    save();
+}
+
+void PlayerStats::setPendingPoll(const std::string& secret) {
+    pendingPoll_ = secret;
     save();
 }
 
