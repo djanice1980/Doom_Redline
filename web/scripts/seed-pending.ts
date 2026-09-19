@@ -1,3 +1,4 @@
+export {};   // a module of its own, so its main() does not clash with the other scripts under type-checking
 // Starts a registration for a player + machine without mail (MAIL_MODE=log) and
 // prints the poll secret and the approve link, for testing the link flow with
 // the game against a local server:

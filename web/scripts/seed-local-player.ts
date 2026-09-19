@@ -1,3 +1,4 @@
+export {};   // a module of its own, so its main() does not clash with the other scripts under type-checking
 // Registers and confirms one player + machine against DATABASE_URL without mail
 // (MAIL_MODE=log), and prints the token. For testing the game against a local
 // server:  npx tsx scripts/seed-local-player.ts <player_id> <install_id> <name>
