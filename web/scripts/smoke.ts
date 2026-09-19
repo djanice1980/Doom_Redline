@@ -20,7 +20,7 @@ function check(cond: unknown, what: string) {
 async function main() {
   const { sql } = await import("../lib/db");
   const db = sql();
-  for (const f of ["0001_init.sql", "0002_links_and_polling.sql", "0003_hardening.sql"]) await db.unsafe(readFileSync(join(__dirname, "..", "supabase", "migrations", f), "utf8"));
+  for (const f of ["0001_init.sql", "0002_links_and_polling.sql", "0003_hardening.sql", "0004_linter_quiet.sql"]) await db.unsafe(readFileSync(join(__dirname, "..", "supabase", "migrations", f), "utf8"));
   for (const t of ["runs", "trophies", "player_machines", "registrations", "players", "accounts", "machines", "ratings", "mail_log", "rate_limits", "settings"]) await db.unsafe(`delete from ${t}`);
 
   const register = (await import("../app/api/register/route")).POST;
@@ -139,6 +139,8 @@ async function main() {
   check(vopts.length === 6 && vopts.every((v) => JSON.stringify(v.reloptions ?? []).includes("security_invoker=on")), "every view runs as the caller (security_invoker)");
   const fn = await db`select proconfig from pg_proc where proname = 'recompute_ratings'`;
   check(JSON.stringify(fn[0]?.proconfig ?? []).includes("search_path=public"), "recompute_ratings has a fixed search_path");
+  const pol = await db`select count(distinct tablename) as n from pg_policies where schemaname = 'public' and policyname = 'deny_all'`;
+  check(Number(pol[0].n) === 11, "every table carries the deny_all policy");
   // 6c. changelog parsing for the version route
   const { parseChangelog } = await import("../lib/version");
   const cl = parseChangelog("# Changelog\n\n## 0.3.0 (unreleased)\n- One thing.\n- Another `thing` **bold**.\n\n## v0.2.0 (2026-09-18)\n- Old.\n");

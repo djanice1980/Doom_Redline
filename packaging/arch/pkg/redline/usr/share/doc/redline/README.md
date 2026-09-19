@@ -254,11 +254,15 @@ unless you turn ONLINE on.
 
 ## Online leaderboard
 
-Off by default. **OPTIONS > ONLINE: ON** opts a profile in; then **PLAYER
-EMAIL** starts a registration: the service emails a six-digit code, you type
-it into the game, and from then on every finished game is posted (the
-player name, the score and game statistics, and what the machine is) with
-your world rank shown on the game-over screen. **LEADERBOARD** on the title
+On by default, but nothing is posted until you approve an email address.
+Players who have not set one up are asked once on the title screen whether
+they want to. **PLAYER EMAIL** under OPTIONS starts a registration: the
+service sends one email with an **approve link** (and a six-digit code as a
+fallback); click the link, and the game notices by itself within a few
+seconds. From then on every finished game is posted (the player name, the
+score and game statistics, and what the machine is) with your world rank
+shown on the game-over screen. **OPTIONS > ONLINE: OFF** keeps everything on
+the machine and also stops the update check. **LEADERBOARD** on the title
 screen shows the boards (all time, this week, fights, level, demons slain),
 with your own row pinned, and keeps the last copy for offline viewing. The
 address is stored encrypted and never shown; each player and each machine
@@ -268,6 +272,14 @@ out at the next launch. Scripted and cheat runs (`--scenario`, `--bot`,
 `--god`, `--level` and friends) are never posted. The service itself lives
 in `web/` (its README explains the set-up); `docs/online-and-releases.md`
 has the design and what is stored.
+
+## New versions
+
+With ONLINE on, the game asks the service once per launch which version is
+the latest. When a newer one exists the title screen says so and the
+**WHAT'S NEW** item shows the change list (from `CHANGELOG.md`) with a
+DOWNLOAD button that opens the release page in your browser. WHAT'S NEW is
+always there, so the list for the version you have is a keypress away.
 
 Trophies are one-time achievements (20 of them, from FIRST BLOOD to DOOM
 SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one slides a console-style

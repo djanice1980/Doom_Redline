@@ -455,7 +455,21 @@ it server-side. `stats_test` covers the round trip across two machines.
   stores the token in `identity.txt` via `PlayerStats::setVerified`. The
   service URL comes from `--online-server`, `REDLINE_ONLINE_URL`,
   `<pref>/online.txt`, `redline.cfg`, or the default. `REDLINE_ONLINE_ALLOW_SCRIPTED=1`
-  lets a scripted run upload (tests only).
+  lets a scripted run upload (tests only). ONLINE defaults on; `onlineAsked_`
+  (settings `online_asked=`) gates the one-time `kScreenOnlineAsk` question on
+  the title (skipped in scripted runs unless `REDLINE_ASK_ONLINE=1`). A
+  registration reply carries a `poll_secret` (`PlayerStats::pendingPoll`,
+  `identity.txt pending_poll=`); `update()` polls `/api/registration` every
+  4 s on the code screen and every 30 s otherwise until the server reports
+  confirmed (token handed over once, `setVerified`), declined or expired.
+- Updates: `checkVersion` fetches `/api/version` at launch (ONLINE on), caches
+  it in `<pref>/version.json`, and `applyVersionInfo` sets `updateAvailable_`
+  when `latest` is newer than `REDLINE_VERSION` (announcement, title line,
+  the WHAT'S NEW menu item's label). `kScreenWhatsNew` wraps the changelog
+  bullets to the width, scrolls with Up/Down, and Enter calls `SDL_OpenURL`
+  on the release page. `REDLINE_UPDATE_DEMO=<version>` fakes a newer release.
+- Ray tracing: `rtShadows_` defaults to 3 but is forced to 0 (and saved) on a
+  GPU without ray queries, so the setting file reflects what runs.
 - Level card: 4 s after the fly-out; block gravity pauses while a piece would
   be falling, the collapse still animates.
 - Gamepad: SDL3 gamepad API; axes polled per frame with an 18 % dead zone and

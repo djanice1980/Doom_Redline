@@ -110,7 +110,9 @@ which the service reads from GitHub (`/api/version`).
 
 ## Migrations after the first
 
-`supabase/migrations/0002_links_and_polling.sql` adds three columns and
+`supabase/migrations/0002_links_and_polling.sql` adds three columns,
+`0004_linter_quiet.sql` adds explicit deny-all policies and locks Supabase's
+own `rls_auto_enable()` helper away from the REST API, and
 `0003_hardening.sql` answers Supabase's database linter (views run as the
 caller, a fixed `search_path` on the ratings function, and no privileges at
 all for the REST API roles `anon` and `authenticated`). The routes apply both

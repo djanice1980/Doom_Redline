@@ -36,6 +36,21 @@ export function ensureSchema(): Promise<void> {
           end if;
         end $$;
       `);
+      // 0004: nothing callable through the REST API's rpc, and explicit deny-all policies.
+      await db.unsafe(`
+        do $$ begin
+          if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'rls_auto_enable') then
+            execute 'revoke execute on function public.rls_auto_enable() from public';
+          end if;
+        end $$;
+        do $$ declare t text; begin
+          foreach t in array array['accounts', 'players', 'machines', 'registrations', 'player_machines', 'runs', 'trophies', 'ratings', 'settings', 'mail_log', 'rate_limits'] loop
+            if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = t and policyname = 'deny_all') then
+              execute format('create policy deny_all on public.%I for all using (false) with check (false)', t);
+            end if;
+          end loop;
+        end $$;
+      `);
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;
