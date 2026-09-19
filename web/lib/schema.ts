@@ -14,6 +14,28 @@ export function ensureSchema(): Promise<void> {
         alter table registrations add column if not exists poll_hash text;
         alter table registrations add column if not exists token_enc text;
       `);
+      // 0003: views as the caller, fixed search_path, nothing for the REST API roles.
+      await db.unsafe(`
+        alter view board_global set (security_invoker = on);
+        alter view board_week set (security_invoker = on);
+        alter view board_fights set (security_invoker = on);
+        alter view board_level set (security_invoker = on);
+        alter view board_kills set (security_invoker = on);
+        alter view public_stats set (security_invoker = on);
+        alter function recompute_ratings() set search_path = public;
+        do $$ begin
+          if exists (select 1 from pg_roles where rolname = 'anon') then
+            revoke all on all tables in schema public from anon;
+            revoke all on all sequences in schema public from anon;
+            revoke execute on all functions in schema public from anon;
+          end if;
+          if exists (select 1 from pg_roles where rolname = 'authenticated') then
+            revoke all on all tables in schema public from authenticated;
+            revoke all on all sequences in schema public from authenticated;
+            revoke execute on all functions in schema public from authenticated;
+          end if;
+        end $$;
+      `);
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;

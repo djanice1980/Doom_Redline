@@ -110,9 +110,15 @@ which the service reads from GitHub (`/api/version`).
 
 ## Migrations after the first
 
-`supabase/migrations/0002_links_and_polling.sql` adds three columns. The
-routes apply it themselves on first use (`lib/schema.ts`), so nothing breaks
-if it is not run by hand; running it in the SQL editor is still tidy.
+`supabase/migrations/0002_links_and_polling.sql` adds three columns and
+`0003_hardening.sql` answers Supabase's database linter (views run as the
+caller, a fixed `search_path` on the ratings function, and no privileges at
+all for the REST API roles `anon` and `authenticated`). The routes apply both
+themselves on first use (`lib/schema.ts`), so nothing breaks if they are not
+run by hand; running them in the SQL editor is still tidy and clears the
+linter's findings straight away. The remaining "RLS enabled, no policy"
+notes are intended: no policy means no access through the REST API, which
+is the design.
 
 ## Local test
 
