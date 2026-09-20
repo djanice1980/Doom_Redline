@@ -11,3 +11,8 @@ tools/build_deck.js
 
 tools/shots/
 build-win/
+
+# makepkg staging and outputs
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.zst
