@@ -4,6 +4,13 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.5.0 (2026-09-20)
+- The crypt is built from the game that made it: every room is shaped like one of the seven pieces, drawn from the ones you actually dropped, and the whole layout is seeded from how you played.
+- The boss hall is sealed. Find the skull key, hidden in the room furthest from it, and the door opens as you reach it.
+- What the crypt leaves on the floor is worked out by simulating the fight ahead with the weapons you are carrying, and a roster you could not possibly survive is cut back until you could.
+- Six texture sets dress the rooms, from grey crypt to marble tomb to something fleshier, with the torch colour following the room.
+- Columns, candles, stalagmites, hanging corpses and skull piles stand against the walls, and the bigger rooms have pillars to fight around.
+
 ## 0.4.1 (2026-09-19)
 - Deleting a player and making it again no longer leaves a second player behind on the leaderboard. Registering an address that already has players offers to carry on as one of them, keeping that history.
 - Deleting a registered player now asks whether to remove its online record too, and says what that would erase. Keeping it is the default.
