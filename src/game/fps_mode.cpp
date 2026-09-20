@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <deque>
+#include <string>
 
 namespace rl::game {
 
@@ -179,6 +182,13 @@ void FpsMode::selectWeapon(int id) {
 
 // ---------------------------------------------------------------------------
 void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
+    stage_ = Stage::Arena;
+    stageT_ = 0.f;
+    dungeon_.clear();
+    bossSeen_ = bossDead_ = false;
+    boardBlocks_ = 0;
+    for (int r = 0; r < core::kBoardH; ++r)
+        for (int c = 0; c < core::kBoardW; ++c) boardBlocks_ += !game.at(c, r).empty();
     enemies_.clear();
     projectiles_.clear();
     explosions_.clear();
@@ -290,6 +300,12 @@ std::vector<FpsEvent> FpsMode::drainEvents() {
 
 // ---------------------------------------------------------------------------
 bool FpsMode::solidAt(glm::vec3 p, const core::Game& game) const {
+    if (stage_ == Stage::Dungeon) {
+        // Behind the back wall the dungeon's tiles rule: rock is solid to the ceiling, floor is open.
+        if (p.z <= Dungeon::kZTop) return !dungeon_.floorAt(p.x, p.z) && p.y <= std::max(Dungeon::kWallHeight, dungeon_.ceilingAt(p.x, p.z));
+        // The gate: the wall's footprint and the board's end rail in front of it are open.
+        if (p.z < 0.f && std::fabs(p.x) < Dungeon::kGateHalf) return false;
+    }
     if (p.y > kBlockTop) return false;
     // Board frame: side rails and the end wall.
     if (std::fabs(p.x) > core::kBoardW * 0.5f || p.z > static_cast<float>(core::kBoardH) || p.z < 0.f) return true;
@@ -468,12 +484,19 @@ void FpsMode::hurtPlayer(float dmg, glm::vec3 from, int kind) {
 // ---------------------------------------------------------------------------
 void FpsMode::damageEnemy(Enemy& e, float dmg, glm::vec3 hitPos, glm::vec3 dir, int weapon, bool head) {
     if (!e.alive()) return;
+    if (e.dormant) {   // rudely woken
+        e.dormant = false;
+        e.attackTimer = 0.4f;
+        push(FpsEvent::Type::Wake, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, 0, e.kind);
+        if (e.boss && !bossSeen_) { bossSeen_ = true; push(FpsEvent::Type::BossSeen, e.pos, e.tier, 0, e.kind); }
+    }
     e.hp -= dmg;
     push(FpsEvent::Type::EnemyHit, hitPos, e.tier, 0, e.kind);
     if (brutal_) spawnBlood(hitPos, dir, 6 + static_cast<int>(dmg * 0.15f), 4.5f, 0, bloodColorForKind(e.kind));
     else spawnDebris(hitPos, {0.6f, 0.05f, 0.05f}, 3, true);
     if (e.hp <= 0.f) {
         health_ = std::max(health_, std::min(100.f, health_ + 5.f));   // small heal per kill keeps long fights winnable
+        if (e.boss && !bossDead_) { bossDead_ = true; finishDelay_ = 0.f; push(FpsEvent::Type::BossDead, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, 0, e.kind); }
         e.state = Enemy::State::Dying;
         e.stateT = 0.f;
         e.animT = 0.f;
@@ -922,7 +945,8 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
 
     // --- enemies ---------------------------------------------------------
     std::uniform_real_distribution<float> u(0.f, 1.f);
-    int alive = enemiesLeft();
+    int alive = 0;
+    for (const Enemy& e : enemies_) alive += e.alive() && !e.dormant;   // sleepers do not crowd the room
     float crowd = std::max(1.f, static_cast<float>(alive) * 0.35f);
     float cadence = std::max(0.5f, 1.f - 0.06f * static_cast<float>(level_ - 1));
     glm::vec3 playerCentre = playerPos_ + glm::vec3(0.f, 0.6f, 0.f);
@@ -936,6 +960,24 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         if (in.warmup && e.state != Enemy::State::Emerging) {   // countdown: hold position
             e.pos.y = st.flies ? 0.8f : 0.f;
             continue;
+        }
+        if (e.dormant) {
+            // Asleep in its room until it sees the player or they come close (a hit wakes it too).
+            if (!e.alive()) { e.dormant = false; }
+            else {
+                e.senseT -= dt;
+                if (e.senseT > 0.f) continue;
+                e.senseT = 0.15f + 0.15f * u(rng_);
+                const glm::vec3 to = playerPos_ - e.pos;
+                const float d = std::sqrt(to.x * to.x + to.z * to.z);
+                const bool sees = d < 45.f && lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game);
+                if (d > 3.5f && !sees) continue;
+                e.dormant = false;
+                e.attackTimer = 0.5f + 0.9f * u(rng_);
+                if (d > 1e-3f) e.yaw = std::atan2(to.x, to.z);
+                push(FpsEvent::Type::Wake, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, 0, e.kind);
+                if (e.boss && !bossSeen_) { bossSeen_ = true; push(FpsEvent::Type::BossSeen, e.pos, e.tier, 0, e.kind); }
+            }
         }
         if (e.alive() && e.state != Enemy::State::Emerging && health_ > 0.f) {
             e.breakTimer -= dt;
@@ -984,7 +1026,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                     }
                     const glm::vec3 delta = e.moveDir * st.speed * dt;
                     const glm::vec3 before = e.pos;
-                    if (st.flies) e.pos += delta;
+                    if (st.flies && !e.inDungeon) e.pos += delta;
                     else moveWithCollision(e.pos, delta, e.radius, game);
                     if (!st.flies && glm::length(e.pos - before) < 0.3f * glm::length(delta)) { e.blocked = true; e.moveCount = 0.f; }
                     turnTowards(e.yaw, std::atan2(e.moveDir.x, e.moveDir.z), kChaseTurnRate * dt);
@@ -1105,7 +1147,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         p.pos += p.vel * dt;
         p.ttl -= dt;
         p.animT += dt;
-        bool remove = p.ttl <= 0.f || p.pos.y < 0.f || solidAt(p.pos, game) || std::fabs(p.pos.x) > 16.f || p.pos.z > 24.f || p.pos.z < -3.f;
+        bool remove = p.ttl <= 0.f || p.pos.y < 0.f || solidAt(p.pos, game) || outOfWorld(p.pos);
         if (p.fromPlayer) {
             for (Enemy& e : enemies_) {
                 if (!e.alive() || e.state == Enemy::State::Emerging) continue;
@@ -1194,13 +1236,202 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
     }
 
     // --- end conditions ----------------------------------------------------
-    if (!finished_ && !in.warmup && enemiesLeft() == 0) {
-        finishDelay_ += dt;
-        if (finishDelay_ >= 1.2f) {
-            finished_ = true;
-            push(FpsEvent::Type::AllClear);
+    if (!finished_ && !in.warmup) {
+        if (stage_ == Stage::Arena) {
+            if (enemiesLeft() == 0) {
+                finishDelay_ += dt;
+                if (finishDelay_ >= 1.2f) {
+                    if (dungeonEnabled_) {
+                        // The arena is clear: the back wall comes down and the crypt behind it opens.
+                        stage_ = Stage::GateFalling;
+                        stageT_ = 0.f;
+                        finishDelay_ = 0.f;
+                        for (int k = 0; k < 6; ++k) spawnDebris(glm::vec3(-1.5f + static_cast<float>(k % 4), 0.5f + static_cast<float>(k / 4) * 2.f, -2.f), {0.6f, 0.6f, 0.6f}, 6, false);   // mortar flying off the wall
+                        push(FpsEvent::Type::GateFalls, glm::vec3(0.f, 1.f, -2.5f));
+                    } else {
+                        finished_ = true;
+                        push(FpsEvent::Type::AllClear);
+                    }
+                }
+            }
+        } else if (stage_ == Stage::GateFalling) {
+            stageT_ += dt;
+            if (stageT_ >= kGateFallTime) openDungeon(game);
+        } else {
+            stageT_ += dt;
+            if (bossDead_) {
+                finishDelay_ += dt;
+                if (finishDelay_ >= 2.5f) { finished_ = true; push(FpsEvent::Type::AllClear); }
+            }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The dungeon.
+bool FpsMode::outOfWorld(glm::vec3 p) const {
+    if (stage_ == Stage::Dungeon) {
+        const float x0 = std::min(-16.f, dungeon_.originX() - 1.f), x1 = std::max(16.f, dungeon_.originX() + static_cast<float>(dungeon_.width()) + 1.f);
+        return p.x < x0 || p.x > x1 || p.z > 24.f || p.z < dungeon_.zMin() - 1.f;
+    }
+    return std::fabs(p.x) > 16.f || p.z > 24.f || p.z < -3.f;
+}
+
+const Enemy* FpsMode::boss() const {
+    for (const Enemy& e : enemies_) if (e.boss) return &e;
+    return nullptr;
+}
+
+void FpsMode::closeDungeon() {
+    stage_ = Stage::Arena;
+    stageT_ = 0.f;
+    dungeon_.clear();
+}
+
+void FpsMode::debugClearArena() {
+    for (Enemy& e : enemies_) if (!e.inDungeon) { e.state = Enemy::State::Dead; e.exploded = true; }
+}
+
+void FpsMode::openDungeon(core::Game& game) {
+    dungeon_.generate(game.seed() * 31337u + static_cast<uint32_t>(level_) * 7u + static_cast<uint32_t>(game.redLineCount()), level_);
+    stage_ = Stage::Dungeon;
+    stageT_ = 0.f;
+    // The falling wall smashes a passage through the stack in front of the gate.
+    for (int r = core::kBoardH - 7; r < core::kBoardH; ++r)
+        for (int c = 3; c < 7; ++c)
+            if (!game.at(c, r).empty()) {
+                game.clearCell(c, r);
+                spawnDebris(flatCellCentre(c, r), game.at(c, r).red() ? glm::vec3(0.9f, 0.1f, 0.1f) : glm::vec3(0.85f, 0.85f, 0.85f), 4, false);
+            }
+    Explosion ex;
+    ex.pos = glm::vec3(0.f, 0.8f, -1.f);
+    ex.radius = 3.f;
+    ex.duration = 0.7f;
+    explosions_.push_back(ex);
+    populateDungeon();
+    push(FpsEvent::Type::DungeonOpen, glm::vec3(0.f, 1.f, Dungeon::kZTop));
+    if (std::getenv("REDLINE_LOG_DUNGEON")) {   // the layout, top down (the gate at the top, x to the right)
+        for (int j = 0; j < dungeon_.depth(); ++j) {
+            std::string row;
+            for (int i = 0; i < dungeon_.width(); ++i) {
+                char ch = dungeon_.tile(i, j) == Dungeon::Floor ? '.' : dungeon_.tile(i, j) == Dungeon::Wall ? '#' : ' ';
+                const glm::vec3 c = dungeon_.tileCentre(i, j);
+                for (const Enemy& e : enemies_) if (e.inDungeon && std::fabs(e.pos.x - c.x) < 0.5f && std::fabs(e.pos.z - c.z) < 0.5f) ch = e.boss ? 'B' : 'm';
+                for (const Pickup& p : pickups_) if (std::fabs(p.home.x - c.x) < 0.5f && std::fabs(p.home.z - c.z) < 0.5f) ch = '+';
+                row += ch;
+            }
+            std::fprintf(stderr, "[dungeon] %s\n", row.c_str());
+        }
+    }
+}
+
+// Monsters for the rooms, scaled by the level and by how much of a stack there was:
+// more blocks, more (and tougher) demons and a bigger boss.
+void FpsMode::populateDungeon() {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    const int L = std::max(1, level_);
+    const float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(L - 1), 0.45f, 2.5f);
+    const int capTier = std::min(4, maxTierForLevel(L));   // the big two are the boss's job
+    auto make = [&](int tier, glm::vec3 pos, float hpMul, bool boss) {
+        Enemy e;
+        e.tier = tier;
+        e.kind = boss ? tier : pickKind(tier);
+        if (enemyStats(e.kind).flies) e.kind = kindAvailable_[8] && u(rng_) < 0.5f ? 8 : 2;   // no drifting through walls: a hell knight or a demon instead
+        const EnemyStats& st = enemyStats(e.kind);
+        e.pos = pos;
+        e.maxHp = e.hp = st.hp * hpScale * hpMul;
+        e.radius = st.radius;
+        e.height = st.height;
+        e.state = Enemy::State::Idle;
+        e.stateT = 0.f;
+        e.attackTimer = 1.f;
+        e.breakTimer = 1e9f;   // nothing to chew on down here
+        e.absorbTimer = 1e9f;
+        e.bobPhase = u(rng_) * 6.28f;
+        e.yaw = u(rng_) * 6.28f;
+        e.moveDir = glm::vec3(std::sin(e.yaw), 0.f, std::cos(e.yaw));
+        e.dormant = true;
+        e.inDungeon = true;
+        e.boss = boss;
+        e.senseT = u(rng_) * 0.3f;
+        enemies_.push_back(e);
+    };
+    const int count = std::clamp(1 + L + boardBlocks_ / 14, 3, 36);
+    for (const glm::vec3& p : dungeon_.spawnSpots(rng_, count)) {
+        const float roll = std::pow(u(rng_), 1.7f);   // most are small fry
+        make(std::min(capTier, static_cast<int>(roll * static_cast<float>(capTier + 1))), p, 1.f, false);
+    }
+    // The boss: a baron early on, then a cyberdemon, then the mastermind; its health
+    // grows with the level and with the stack it came from.
+    const int bossTier = L <= 2 ? 4 : L <= 5 ? 5 : 6;
+    const float bossHp = 1.0f + static_cast<float>(boardBlocks_) / 80.f + 0.1f * static_cast<float>(L);
+    const DungeonRoom& hall = dungeon_.bossRoom();
+    make(bossTier, dungeon_.tileCentre(hall.cx(), hall.cz()), bossHp, true);
+    for (const glm::vec3& p : dungeon_.bossGuardSpots(rng_, 2 + L / 3)) make(std::min(capTier, 1 + L / 3), p, 1.f, false);
+    // Something in every room: health and ammunition, so the crypt can be fought through.
+    const PickupKind kinds[] = {PickupKind::Medikit, PickupKind::Bullets, PickupKind::Rockets, PickupKind::Cells, PickupKind::Stim};
+    for (size_t k = 2; k < dungeon_.rooms().size(); ++k) {
+        const DungeonRoom& r = dungeon_.rooms()[k];
+        glm::vec3 c = dungeon_.tileCentre(r.cx(), r.cz());
+        spawnPickup(kinds[k % 5], c + glm::vec3(0.f, 0.6f, 0.f), c);
+        if (k % 2 == 0) spawnPickup(PickupKind::Medikit, c + glm::vec3(1.f, 0.6f, 0.f), c + glm::vec3(1.f, 0.f, 0.f));
+    }
+    spawnPickup(PickupKind::Medikit, dungeon_.tileCentre(hall.x0 + 1, hall.z0 + 1) + glm::vec3(0.f, 0.6f, 0.f), dungeon_.tileCentre(hall.x0 + 1, hall.z0 + 1));
+}
+
+// Breadth-first search over 1 m tiles of everything walkable (the board's floor and the
+// dungeon's), for the test bot. `next` is the centre of the first tile along the way.
+bool FpsMode::navNext(glm::vec3 from, glm::vec3 to, glm::vec3& next, const core::Game& game) const {
+    const float x0 = stage_ == Stage::Dungeon ? std::min(-16.f, dungeon_.originX()) : -16.f;
+    const float x1 = stage_ == Stage::Dungeon ? std::max(16.f, dungeon_.originX() + static_cast<float>(dungeon_.width())) : 16.f;
+    const float z0 = stage_ == Stage::Dungeon ? dungeon_.zMin() : -3.f;
+    const int W = static_cast<int>(x1 - x0), D = static_cast<int>(24.f - z0);
+    auto idx = [&](int i, int j) { return j * W + i; };
+    auto centre = [&](int i, int j) { return glm::vec3(x0 + static_cast<float>(i) + 0.5f, 0.f, z0 + static_cast<float>(j) + 0.5f); };
+    auto open = [&](int i, int j) {
+        if (i < 0 || i >= W || j < 0 || j >= D) return false;
+        const glm::vec3 c = centre(i, j) + glm::vec3(0.f, 0.5f, 0.f);
+        const float r = 0.32f;
+        return !solidAt(c, game) && !solidAt(c + glm::vec3(r, 0.f, r), game) && !solidAt(c + glm::vec3(-r, 0.f, r), game)
+            && !solidAt(c + glm::vec3(r, 0.f, -r), game) && !solidAt(c + glm::vec3(-r, 0.f, -r), game);
+    };
+    auto tileOf = [&](glm::vec3 p, int& i, int& j) { i = static_cast<int>(std::floor(p.x - x0)); j = static_cast<int>(std::floor(p.z - z0)); };
+    int si, sj, gi, gj;
+    tileOf(from, si, sj);
+    tileOf(to, gi, gj);
+    if (si < 0 || si >= W || sj < 0 || sj >= D) return false;
+    // The goal may stand against a wall (a fat monster): aim for the nearest open tile around it.
+    if (!open(gi, gj)) {
+        bool found = false;
+        for (int ring = 1; ring <= 3 && !found; ++ring)
+            for (int dj = -ring; dj <= ring && !found; ++dj)
+                for (int di = -ring; di <= ring && !found; ++di)
+                    if (open(gi + di, gj + dj)) { gi += di; gj += dj; found = true; }
+        if (!found) return false;
+    }
+    if (si == gi && sj == gj) { next = centre(gi, gj); return true; }
+    std::vector<int> parent(static_cast<size_t>(W * D), -1);
+    std::deque<std::pair<int, int>> q;
+    q.push_back({si, sj});
+    parent[static_cast<size_t>(idx(si, sj))] = idx(si, sj);
+    const int di[4] = {1, -1, 0, 0}, dj[4] = {0, 0, 1, -1};
+    bool reached = false;
+    while (!q.empty() && !reached) {
+        auto [i, j] = q.front();
+        q.pop_front();
+        for (int k = 0; k < 4; ++k) {
+            const int ni = i + di[k], nj = j + dj[k];
+            if (!open(ni, nj) || parent[static_cast<size_t>(idx(ni, nj))] >= 0) continue;
+            parent[static_cast<size_t>(idx(ni, nj))] = idx(i, j);
+            if (ni == gi && nj == gj) { reached = true; break; }
+            q.push_back({ni, nj});
+        }
+    }
+    if (!reached) return false;
+    int cur = idx(gi, gj);
+    while (parent[static_cast<size_t>(cur)] != idx(si, sj)) cur = parent[static_cast<size_t>(cur)];
+    next = centre(cur % W, cur / W);
+    return true;
 }
 
 }  // namespace rl::game

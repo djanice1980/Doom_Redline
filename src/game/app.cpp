@@ -28,6 +28,7 @@ constexpr float kFlyInTime = 2.2f;
 constexpr float kFlyOutTime = 1.6f;
 constexpr float kCountdownTime = 3.0f;
 constexpr float kLevelCardTime = 4.0f;
+constexpr int kGateHeight = 4;   // rows of the back wall that fall to open the dungeon
 
 const glm::vec3 kPieceColors[7] = {
     {0.25f, 0.85f, 0.95f},   // I cyan
@@ -375,6 +376,7 @@ void App::newGame(bool enter) {
     game_ = std::make_unique<core::Game>(seed);
     fps_ = FpsMode();
     fps_.setBrutal(brutalActive());
+    fps_.setDungeonEnabled(dungeon_ && !std::getenv("REDLINE_NO_DUNGEON"));
     for (int k = 0; k < kEnemyKinds; ++k) fps_.setKindAvailable(k, assets_.enemies[k].available);
     ambient_.reset(seed, 1);
     brawlDecals_.clear();
@@ -436,7 +438,7 @@ void App::applyScenario() {
         for (int i = 0; i < 6; ++i) game_->moveLeft();
         game_->hardDrop();
     }
-    if (opts_.scenario == "redline" || opts_.scenario == "fps") {
+    if (opts_.scenario == "redline" || opts_.scenario == "fps" || opts_.scenario == "dungeon") {
         // A nearly complete red floor row plus assorted red regions of
         // different sizes (one enemy of each class) and normal blocks around
         // them so the explosions have something to destroy.
@@ -452,7 +454,7 @@ void App::applyScenario() {
         normal(7, H - 8); normal(9, H - 8); normal(8, H - 9);
         red(4, H - 10); red(5, H - 10); red(4, H - 11); red(5, H - 11); red(6, H - 11);   // 5-region -> demon
         normal(3, H - 10); normal(6, H - 10); normal(3, H - 11); normal(7, H - 11);
-        if (opts_.scenario == "fps" && opts_.level >= 8) {
+        if ((opts_.scenario == "fps" || opts_.scenario == "dungeon") && opts_.level >= 8) {
             // Big fights: a 20-cell red slab -> cyberdemon, plus cover to eat.
             for (int r = H - 16; r < H - 12; ++r) for (int c = 2; c < 7; ++c) red(c, r);
             for (int c = 0; c < 2; ++c) normal(c, H - 13);
@@ -464,12 +466,13 @@ void App::applyScenario() {
         for (int i = 0; i < 6; ++i) game_->moveLeft();
         game_->hardDrop();
         for (int i = 0; i < 200 && game_->phase() != core::Phase::RedLine; ++i) game_->tick(0.05f);
-        if (opts_.scenario == "fps") {
+        if (opts_.scenario == "fps" || opts_.scenario == "dungeon") {
             game_->setLevel(opts_.level);
             fps_.setAbsorbPeriod(opts_.absorbPeriod);
             fps_.setGodMode(opts_.god);
             fps_.begin(*game_, opts_.level);
             if (opts_.arsenal >= 0) fps_.giveArsenal(opts_.arsenal);
+            if (opts_.scenario == "dungeon") fps_.debugClearArena();   // straight to the wall coming down
             enterMode(Mode::Fps);
         }
     }
@@ -587,6 +590,7 @@ void App::loadSettings() {
             else if (k == "voxels") useVoxels_ = v != "0";
             else if (k == "doom_art") doomArtOff_ = v == "0";
             else if (k == "brutal") brutal_ = v != "0";
+            else if (k == "dungeon") dungeon_ = v != "0";
             else if (k == "online") onlineOn_ = v != "0";
             else if (k == "online_asked") onlineAsked_ = v != "0";
         }
@@ -1183,9 +1187,10 @@ void App::adjustOption(int dir) {
         break;
     case 14: setDoomArt(doomArtOff_); break;   // toggles
     case 15: if (assets_.usingWad()) { brutal_ = !brutal_; fps_.setBrutal(brutalActive()); saveSettings(); } break;   // sub-option of DOOM ART
-    case 16: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
-    case 17: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
-    case 18: bloom_ = !bloom_; saveDisplaySettings(); break;
+    case 16: dungeon_ = !dungeon_; fps_.setDungeonEnabled(dungeon_); saveSettings(); break;   // takes effect from the next fight
+    case 17: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
+    case 18: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
+    case 19: bloom_ = !bloom_; saveDisplaySettings(); break;
     case 8: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -1207,7 +1212,7 @@ void App::screenKey(int key, bool fromPad) {
     static const std::string kLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ";
     switch (screen_) {
     case kScreenOptions: {
-        const int n = 20;   // 19 options + BACK (the last index)
+        const int n = 21;   // 20 options + BACK (the last index)
         const int back = n - 1;
         if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; optionsFollow_ = true; play("menu", 0.6f); }
         else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; optionsFollow_ = true; play("menu", 0.6f); }
@@ -1521,9 +1526,9 @@ float App::pixelDensity() const {
 
 void App::saveSettings() const {
     if (std::FILE* f = std::fopen(settingsPath_.c_str(), "w")) {
-        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\nsfx_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\nonline=%d\nonline_asked=%d\n",
+        std::fprintf(f, "music_set=%s\nmusic_on=%d\nmusic_volume=%.2f\nsfx_volume=%.2f\npad_sens=%.2f\npad_invert=%d\npad_rumble=%d\nvoxels=%d\ndoom_art=%d\nbrutal=%d\ndungeon=%d\nonline=%d\nonline_asked=%d\n",
                      musicSet_ == MusicSet::Classic ? "classic" : musicSet_ == MusicSet::Sc55 ? "sc55" : "modern", music_.enabled() ? 1 : 0,
-                     music_.volume(), sfxVolume_, padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0, onlineOn_ ? 1 : 0, onlineAsked_ ? 1 : 0);
+                     music_.volume(), sfxVolume_, padSens_, padInvertY_ ? 1 : 0, padRumble_ ? 1 : 0, useVoxels_ ? 1 : 0, doomArtOff_ ? 0 : 1, brutal_ ? 1 : 0, dungeon_ ? 1 : 0, onlineOn_ ? 1 : 0, onlineAsked_ ? 1 : 0);
         std::fclose(f);
     }
 }
@@ -2087,6 +2092,29 @@ void App::handleFpsEvents() {
             break;
         case FpsEvent::Type::FireballHit: play("fireball_hit", 0.5f, 1.f, 80); break;
         case FpsEvent::Type::AllClear: play("levelup", 1.f); break;
+        case FpsEvent::Type::GateFalls:
+            play("explode", 1.f); shakeT_ = 1.2f; rumble(0.9f, 0.7f, 900);
+            announce("ARENA CLEARED: THE WALL COMES DOWN", glm::vec4(1.f, 0.4f, 0.3f, 1.f), 1.5f);
+            break;
+        case FpsEvent::Type::DungeonOpen:
+            play("levelup", 1.f, 0.6f); shakeT_ = 0.5f;
+            announce("ENTER THE DUNGEON AND KILL THE BOSS", glm::vec4(1.f, 0.25f, 0.2f, 1.f), 1.7f);
+            std::fprintf(stderr, "[dungeon] level %d: %dx%d tiles, %zu rooms, %d demons + boss %s (blocks %d)\n", fps_.level(), fps_.dungeon().width(), fps_.dungeon().depth(),
+                         fps_.dungeon().rooms().size(), fps_.totalEnemies() - 1, fps_.boss() ? assets_.enemies[std::clamp(fps_.boss()->kind, 0, kEnemyKinds - 1)].name.c_str() : "?", fps_.boardBlocks());
+            break;
+        case FpsEvent::Type::Wake:
+            if (brutalActive() && ev.kind == 0 && assets_.brZombieSight) play("zcsit" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brZombieSight)), 0.8f);
+            else play(art.sightSound, 0.8f);
+            break;
+        case FpsEvent::Type::BossSeen:
+            announce("BOSS: " + art.name, glm::vec4(1.f, 0.3f, 0.2f, 1.f), 1.8f);
+            play(art.sightSound, 1.f, 0.85f);
+            break;
+        case FpsEvent::Type::BossDead:
+            announce("BOSS SLAIN", glm::vec4(1.f, 0.9f, 0.4f, 1.f), 2.f);
+            play("levelup", 1.f, 1.1f);
+            trophy("dungeon");
+            break;
         case FpsEvent::Type::PlayerDead: diedInFps_ = true; run_.killedBy = ev.kind; break;
         case FpsEvent::Type::EnemySight: {
             // Announce the biggest monster in the room and log the roster.
@@ -2106,6 +2134,14 @@ void App::handleFpsEvents() {
 
 void App::update(float dt) {
     modeT_ += dt;
+    updateNoticeT_ = (mode_ == Mode::Title && updateAvailable_) ? updateNoticeT_ + dt : 0.f;
+    {
+        // The dungeon lives only through a fight; the static environment follows its stage.
+        const bool fightMode = mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut
+                            || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)) || (mode_ == Mode::GameOver && diedInFps_);
+        if (!fightMode && fps_.stage() != FpsMode::Stage::Arena) fps_.closeDungeon();
+        if (static_cast<int>(fps_.stage()) != envStage_ || envDungeon_ != !fps_.dungeon().empty()) { buildEnvironment(); buildProps(); }
+    }
     if (mode_ == Mode::Blocks || mode_ == Mode::Alert || mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut) run_.duration += dt;
     pollOnline();
     if (dialogDone_) {
@@ -2339,6 +2375,10 @@ void App::update(float dt) {
         break;
     case Mode::Blocks:
         updateBlocksInput(dt);
+        if (opts_.bot && !(levelCardT_ < kLevelCardTime)) {   // the test bot plays the blocks
+            botTetrisT_ += dt;
+            if (botTetrisT_ >= 0.12f) { botTetrisT_ = 0.f; tetrisBot_.step(*game_); }
+        }
         // While the level card is up the collapse still plays but the next piece waits.
         if (!(levelCardT_ < kLevelCardTime && (game_->phase() == core::Phase::Falling || game_->phase() == core::Phase::Spawning))) game_->tick(dt);
         handleGameEvents();
@@ -2388,11 +2428,20 @@ void App::update(float dt) {
                 glm::vec3 to = chest - fps_.eye();
                 float wantYaw = std::atan2(to.x, to.z);
                 float wantPitch = std::atan2(to.y, std::sqrt(to.x * to.x + to.z * to.z));
+                float len = glm::length(to);
+                bool clear = fps_.rayBlockDistance(fps_.eye(), to / len, len, *game_) >= len - 0.01f;
+                // Out of sight (behind blocks, or somewhere in the crypt): walk the shortest
+                // path towards it instead, facing the way we go.
+                botNavT_ -= dt;
+                if (!clear && botNavT_ <= 0.f) { botNavT_ = 0.2f; botHaveWaypoint_ = fps_.navNext(fps_.playerPos(), target->pos, botWaypoint_, *game_); }
+                if (!clear && botHaveWaypoint_) {
+                    glm::vec3 w = botWaypoint_ - fps_.playerPos();
+                    w.y = 0.f;
+                    if (glm::length(w) > 1e-3f) { wantYaw = std::atan2(w.x, w.z); wantPitch = 0.f; }
+                }
                 float dyaw = std::remainder(wantYaw - fps_.yaw(), 2.f * kPi);
                 in.lookDX = -dyaw / 0.0022f;
                 in.lookDY = -(wantPitch - fps_.pitch()) / 0.0022f;
-                float len = glm::length(to);
-                bool clear = fps_.rayBlockDistance(fps_.eye(), to / len, len, *game_) >= len - 0.01f;
                 in.fire = std::fabs(dyaw) < 0.03f && clear;
                 // Best owned weapon with ammo: rockets at range, plasma, chaingun, shotgun.
                 auto usable = [&](int id) { return fps_.weapon(id).owned && (weaponDef(id).ammoPerPickup == 0 || fps_.weapon(id).ammo > 0); };
@@ -2406,6 +2455,9 @@ void App::update(float dt) {
                     in.moveZ = len > 7.f ? 1.f : 0.f;
                     in.run = len > 7.f;
                     in.moveX = std::sin(time_ * 1.7f) * 0.6f;
+                } else if (botHaveWaypoint_) {
+                    in.moveZ = std::fabs(dyaw) < 0.6f ? 1.f : 0.3f;   // turn first, then go
+                    in.run = true;
                 } else {
                     // Shot blocked by a block: sidestep, flipping direction every so often.
                     botBlockedT_ += dt;
@@ -2571,15 +2623,40 @@ void App::buildEnvironment() {
             // No ceiling: the sun has to reach the floor for the shadow map to mean anything.
         }
     // Back wall behind the board, side walls, front wall behind the overview camera.
+    // Once the arena is cleared the gate section of the back wall is gone (it falls,
+    // drawn by addFpsActors while it does) and the dungeon stands behind it.
+    const bool gateOpen = fps_.stage() != FpsMode::Stage::Arena;
+    envStage_ = static_cast<int>(fps_.stage());
+    envDungeon_ = !fps_.dungeon().empty();
     for (int y = 0; y < height; ++y) {
         for (int x = -halfW; x < halfW; ++x) {
-            push({x + 0.5f, y + 0.5f, -2.5f}, assets_.wall, glm::vec4(0.85f, 0.85f, 0.85f, 1.f));
+            if (!(gateOpen && std::fabs(x + 0.5f) < Dungeon::kGateHalf && y < kGateHeight))
+                push({x + 0.5f, y + 0.5f, -2.5f}, assets_.wall, glm::vec4(0.85f, 0.85f, 0.85f, 1.f));
             push({x + 0.5f, y + 0.5f, depth + 0.5f}, assets_.wall, glm::vec4(0.7f, 0.7f, 0.7f, 1.f));
         }
         for (int z = -2; z < depth; ++z) {
             push({-halfW - 0.5f, y + 0.5f, z + 0.5f}, assets_.wall, glm::vec4(0.75f, 0.75f, 0.75f, 1.f));
             push({halfW + 0.5f, y + 0.5f, z + 0.5f}, assets_.wall, glm::vec4(0.75f, 0.75f, 0.75f, 1.f));
         }
+    }
+    if (envDungeon_) {
+        // The crypt: floor and ceiling over every floor tile, walls three high wherever
+        // rock borders floor. Darker and greener than the arena, a lintel over the gate.
+        const Dungeon& d = fps_.dungeon();
+        const glm::vec4 floorTint(0.55f, 0.52f, 0.46f, 1.f), wallTint(0.58f, 0.6f, 0.52f, 1.f), ceilTint(0.36f, 0.36f, 0.34f, 1.f);
+        for (int j = 0; j < d.depth(); ++j)
+            for (int i = 0; i < d.width(); ++i) {
+                const glm::vec3 c = d.tileCentre(i, j);
+                const int h = d.ceilingAt(i, j);
+                if (d.tile(i, j) == Dungeon::Floor) {
+                    push({c.x, -0.5f, c.z}, assets_.floor, floorTint);
+                    push({c.x, static_cast<float>(h) + 0.5f, c.z}, assets_.wall, ceilTint);
+                } else if (d.tile(i, j) == Dungeon::Wall) {
+                    for (int y = 0; y < h; ++y) push({c.x, y + 0.5f, c.z}, assets_.wall, wallTint);
+                }
+            }
+        // The wall's footprint gets a floor: the passage runs across the rail and through it.
+        for (float x = -Dungeon::kGateHalf + 0.5f; x < Dungeon::kGateHalf; x += 1.f) push({x, -0.5f, -2.5f}, assets_.floor, floorTint);
     }
     envRanges_.push_back({0, static_cast<uint32_t>(floorCubes.size()), materialSlot(assets_.floorLump)});
     envRanges_.push_back({static_cast<uint32_t>(floorCubes.size()), static_cast<uint32_t>(wallCubes.size()), materialSlot(assets_.wallLump)});
@@ -2595,6 +2672,8 @@ void App::buildProps() {
         props_.push_back({&a, pos, px, lc, lr, lh, static_cast<float>(props_.size()) * 1.7f});
     };
     const glm::vec3 red(1.f, 0.42f, 0.12f), blue(0.35f, 0.5f, 1.f), green(0.4f, 1.f, 0.45f), warm(1.f, 0.75f, 0.45f), white(0.9f, 0.9f, 1.f);
+    // Torches along the dungeon's walls, while there is one.
+    for (const DungeonTorch& t : fps_.dungeon().torches()) prop(assets_.torchRed, t.pos, 0.031f, warm, 6.5f, 1.7f);
     // Red torches flank the board against the back wall.
     prop(assets_.torchRed, {-7.5f, 0.f, -1.85f}, 0.031f, red, 7.f, 1.7f);
     prop(assets_.torchRed, {7.5f, 0.f, -1.85f}, 0.031f, red, 7.f, 1.7f);
@@ -2963,6 +3042,24 @@ void App::addFpsActors() {
         else cube(d.pos, d.size, glm::vec4(d.color * fade, 1.f), assets_.block);
     }
     addGore();
+    if (fps_.stage() == FpsMode::Stage::GateFalling) {
+        // The gate section of the back wall tips over backwards into the crypt, cube by
+        // cube, the top rows lagging a little, and sinks into the passage floor.
+        const float T = fps_.stageT() / FpsMode::kGateFallTime;
+        for (int y = 0; y < kGateHeight; ++y)
+            for (float x = -Dungeon::kGateHalf + 0.5f; x < Dungeon::kGateHalf; x += 1.f) {
+                const float lag = 0.06f * static_cast<float>(y) + 0.03f * std::fabs(x);
+                const float t = std::clamp((T - lag) / 0.7f, 0.f, 1.f);
+                const float a = (t * t) * kPi * 0.5f;   // accelerating like a felled tree
+                // Pivot on the wall's bottom back edge (y = 0, z = -3): the cube's centre, at
+                // (ly, 0.5) from it, swings up and over into -z, then the slab sinks away.
+                const float ly = static_cast<float>(y) + 0.5f;
+                const float py = ly * std::cos(a) + 0.5f * std::sin(a) - std::max(0.f, T - 0.8f) * 6.f;
+                const float pz = -3.f + 0.5f * std::cos(a) - ly * std::sin(a);
+                if (py < -1.2f) continue;
+                cube(glm::vec3(x, py, pz), 1.f, glm::vec4(0.85f, 0.85f, 0.85f, 1.f), assets_.wall, {}, 0.f, 0.f, 0.f, -a);
+            }
+    }
 }
 
 void App::addLights() {
@@ -3218,6 +3315,36 @@ void App::text(float x, float y, const std::string& s, float scale, glm::vec4 co
     }
 }
 
+void App::textRot(float cx, float cy, const std::string& s, float scale, glm::vec4 color, float angle) {
+    // Every glyph is a screen quad the shader turns about its own anchor (pos.w), so the
+    // line is laid out flat about (0, 0), each anchor is turned the same way, and the
+    // glyphs end up sharing one rotation about the centre of the text.
+    const float w = static_cast<float>(assets_.textWidth(s, scale));
+    const float h = static_cast<float>(assets_.fontHeight) * scale;
+    const float c = std::cos(angle), sn = std::sin(angle);
+    float cx0 = -w * 0.5f;
+    for (char ch : s) {
+        char up = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        auto it = assets_.font.find(up);
+        if (it == assets_.font.end()) { cx0 += (assets_.fontHeight / 2 + 1) * scale; continue; }
+        const render::AtlasRegion& r = assets_.region(it->second);
+        // Flat layout: the anchor is the glyph's bottom-left, y measured upwards from the text centre.
+        const float ax = cx0, ay = -(h * 0.5f) + (assets_.usingWad() ? r.offsetY * scale : 0.f);
+        const float rx = ax * c - ay * sn, ry = ax * sn + ay * c;
+        render::QuadInstance q;
+        auto big = scale >= 3.f ? assets_.fontBig.find(up) : assets_.fontBig.end();
+        const render::AtlasRegion& g = big != assets_.fontBig.end() ? assets_.region(big->second) : r;
+        const float gs = big != assets_.fontBig.end() ? scale / static_cast<float>(assets_.fontBigScale) : scale;
+        q.pos = glm::vec4(cx + rx, cy - ry, 0.f, angle);
+        q.size = glm::vec4(g.w * gs, g.h * gs, 0.f, 1.f);
+        q.uvRect = glm::vec4(g.u0, g.v0, g.u1, g.v1);
+        q.color = color;
+        q.params = glm::vec4(1.f, 0.f, 0.f, hdrQuads_ ? 2.f : 0.f);
+        screenQuads_.push_back(q);
+        cx0 += (r.w + 1) * scale;
+    }
+}
+
 void App::addHud() {
     hotspots_.clear();
     VkExtent2D ext = renderer_->extent();
@@ -3385,6 +3512,18 @@ void App::addHud() {
             panel(bx, by, bw * std::clamp(left / total, 0.f, 1.f), bh, left < 3.f ? glm::vec4(1.f, 0.55f, 0.2f, 0.95f) : glm::vec4(1.f, 0.9f, 0.4f, 0.95f));
         }
         text(W * 0.5f, hy, "DEMONS " + std::to_string(fps_.enemiesLeft()) + "/" + std::to_string(fps_.totalEnemies()), s, yellow, 1);
+        if (const Enemy* boss = fps_.boss(); boss && fps_.stage() == FpsMode::Stage::Dungeon) {
+            // The boss's health, once it has been seen (above the demon count); before that, a hint that it is down there.
+            const float by = hy - lh * 2.3f;
+            if (!fps_.bossSeen()) text(W * 0.5f, hy - lh * 1.1f, "ENTER THE DUNGEON AND KILL THE BOSS", s * 0.7f, glm::vec4(1.f, 0.5f, 0.4f, 0.8f + 0.2f * std::sin(time_ * 3.f)), 1);
+            else if (boss->alive()) {
+                const std::string& name = assets_.enemies[std::clamp(boss->kind, 0, kEnemyKinds - 1)].name;
+                text(W * 0.5f, by, name, s * 0.8f, glm::vec4(1.f, 0.35f, 0.3f, 1.f), 1);
+                float bw = W * 0.34f, bh = lh * 0.4f, bx = W * 0.5f - bw * 0.5f, yy = by + lh * 0.95f;
+                panel(bx - 2.f, yy - 2.f, bw + 4.f, bh + 4.f, glm::vec4(0.f, 0.f, 0.f, 0.65f));
+                panel(bx, yy, bw * std::clamp(boss->hp / boss->maxHp, 0.f, 1.f), bh, glm::vec4(0.9f, 0.12f, 0.1f, 0.95f));
+            }
+        }
         text(W - 24.f, hy, "LEVEL " + std::to_string(game_->level()) + "   SCORE " + std::to_string(game_->score()), s, white, 2);
         // Weapon roster: owned weapons with ammo, current one highlighted.
         {
@@ -3501,9 +3640,24 @@ void App::addHud() {
             std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
             hotText(W * 0.5f, ty + static_cast<float>(i) * lh * 1.25f, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1, kHotMenu, static_cast<int>(i));
         }
-        if (updateAvailable_) {   // bottom centre, between the assets line and the key hints
-            const float f = 0.6f + 0.4f * std::sin(time_ * 4.f);
-            text(W * 0.5f, H - lh * 1.1f, "NEW VERSION " + latestVersion_ + " IS OUT: SEE WHAT'S NEW", s * 0.75f, glm::vec4(0.7f, 1.f, 0.7f, f), 1);
+        if (updateAvailable_) {
+            // A sticker to the right of the menu, tilted, that zooms in and out three times
+            // when the title comes up (and again every so often) so it gets noticed, then
+            // breathes gently. Clicking it opens WHAT'S NEW.
+            const float burst = std::fmod(updateNoticeT_, 15.f);
+            const float zoom = burst < 1.8f ? 1.f + 0.5f * std::fabs(std::sin(burst * kPi / 0.6f)) : 1.f + 0.05f * std::sin(time_ * 3.f);
+            const float ang = 0.22f;   // about 12 degrees, rising to the right
+            const float cx = W * 0.81f, cy = H * 0.68f;
+            const float f = 0.8f + 0.2f * std::sin(time_ * 5.f);
+            auto line = [&](float dy, const std::string& t, float sc, glm::vec4 col) {
+                // Lines stack along the sticker's own "down" direction.
+                textRot(cx + dy * std::sin(ang), cy + dy * std::cos(ang), t, sc, col, ang);
+            };
+            line(-lh * 1.5f * zoom, "NEW VERSION", s * 1.1f * zoom, glm::vec4(1.f, 0.95f, 0.45f, 1.f));
+            line(0.f, latestVersion_, s * 2.6f * zoom, glm::vec4(0.7f, 1.f, 0.7f, f));
+            line(lh * 1.5f * zoom, "IS OUT! SEE WHAT'S NEW", s * 0.8f * zoom, dim);
+            const float bw = static_cast<float>(assets_.textWidth("IS OUT! SEE WHAT'S NEW", s * 0.8f)) + lh, bh = lh * 4.5f;
+            hotRect(cx - bw * 0.5f, cy - bh * 0.5f, bw, bh, kHotMenu, 5);   // the WHAT'S NEW item
         }
         if (!allProfileScores_.empty()) {
             // Right-hand column, top right under the key hints: the best runs of every player on this machine.
@@ -3568,6 +3722,7 @@ void App::addHud() {
             rows.push_back({"ONLINE", !OnlineClient::available() ? "NOT IN THIS BUILD" : !onlineOn_ ? "OFF  (SCORES STAY ON THIS MACHINE)" : !stats_.emailVerified() ? "ON  (REGISTER YOUR EMAIL TO POST SCORES)" : "ON  (POSTING SCORES)", OnlineClient::available()});
             rows.push_back({"DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON"});
             rows.push_back({"BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", assets_.usingWad(), true});
+            rows.push_back({"DUNGEON", dungeon_ ? "ON  (A CRYPT BEHIND THE WALL AFTER EVERY ARENA)" : "OFF  (ARENA FIGHTS ONLY)"});
             rows.push_back({"RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS"});
             rows.push_back({"ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF"});
             rows.push_back({"BLOOM & HAZE", bloom_ ? "ON" : "OFF"});
@@ -3993,6 +4148,8 @@ void App::buildScene() {
     frame_.sunDir = glm::normalize(glm::vec3(0.45f, 0.75f, 0.5f));
     frame_.shadowCenter = glm::vec3(0.f, 8.f, 10.f);
     frame_.shadowRadius = 26.f;
+    const bool inDungeon = fps_.stage() == FpsMode::Stage::Dungeon && eye.z < Dungeon::kZTop + 2.f;
+    if (inDungeon) frame_.shadowCenter = glm::vec3(eye.x, 8.f, eye.z);   // the sun box follows into the crypt (its ceiling shades it)
     frame_.shadowStrength = 0.85f;
     frame_.rtShadows = renderer_->rayTracingAvailable() ? rtShadows_ : 0;
     frame_.bloom = bloom_ ? 0.4f : 0.f;
@@ -4003,6 +4160,11 @@ void App::buildScene() {
     frame_.ambient = glm::mix(glm::vec3(0.30f, 0.30f, 0.34f), glm::vec3(0.21f, 0.17f, 0.17f), tilt);   // the fight stays moody but readable
     frame_.fogDensity = glm::mix(0.012f, 0.035f, tilt);
     frame_.fogColor = glm::mix(glm::vec3(0.03f, 0.03f, 0.05f), glm::vec3(0.06f, 0.02f, 0.02f), tilt);
+    if (inDungeon) {   // torch-lit stone: darker, and the fog goes with the depth
+        frame_.ambient = glm::vec3(0.10f, 0.09f, 0.09f);
+        frame_.fogDensity = 0.05f;
+        frame_.fogColor = glm::vec3(0.02f, 0.015f, 0.012f);
+    }
     frame_.clearColor = frame_.fogColor;
     if (mode_ == Mode::Alert) {
         float f = 0.5f + 0.5f * std::sin(modeT_ * 18.f);

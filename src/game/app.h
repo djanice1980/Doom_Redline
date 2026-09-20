@@ -15,6 +15,7 @@
 #include "game/highscores.h"
 #include "game/trophies.h"
 #include "core/tetris.h"
+#include "core/tetris_bot.h"
 #include "game/assets.h"
 #include "game/fps_mode.h"
 #include "game/ambient.h"
@@ -108,6 +109,8 @@ private:
     void addHud();
     void addLights();
     void text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align = 0);
+    // Text turned by `angle` radians (counter-clockwise) about its own centre at (cx, cy).
+    void textRot(float cx, float cy, const std::string& s, float scale, glm::vec4 color, float angle);
     // Mouse: every menu item, option row and BACK/CANCEL label registers a hotspot as it is drawn.
     enum { kHotMenu = 0, kHotScreenItem, kHotOptionRow, kHotBack, kHotProfileAction };   // profile action: index 0 rename, 1 email, 2 delete
     struct Hotspot { float x, y, w, h; int kind; int index; };
@@ -191,6 +194,7 @@ private:
     bool useVoxels_ = false;
     bool doomArtOff_ = false;          // play on the placeholder art even though a WAD is known
     bool brutal_ = true;               // OPTIONS > DOOM ART > BRUTAL: blood, gibs, casings, bullet holes, screen blood
+    bool dungeon_ = true;              // OPTIONS > DUNGEON: the crypt behind the back wall after every arena
     float sfxVolume_ = 0.5f;           // OPTIONS > SFX VOLUME (master gain on every effect)
     bool brutalActive() const { return brutal_ && assets_.usingWad(); }   // the preference only applies on Doom art
     struct ScreenBlood { float x, y, scale, t, ttl; int frame; };
@@ -348,6 +352,14 @@ private:
     float shakeT_ = 0.f;
     float botBlockedT_ = 0.f;
     float botSide_ = 1.f;
+    float updateNoticeT_ = 0.f;
+    int envStage_ = 0;             // FpsMode::Stage the environment cubes were built for
+    bool envDungeon_ = false;      // whether they include a dungeon
+    glm::vec3 botWaypoint_{0.f};   // the fight bot's next path step (navNext), refreshed a few times a second
+    float botNavT_ = 0.f;
+    bool botHaveWaypoint_ = false;
+    core::TetrisBot tetrisBot_;    // --bot: plays the block phase too (one input every 0.12 s, a person's pace)
+    float botTetrisT_ = 0.f;   // seconds the NEW VERSION sticker has been on the title (drives its zoom bursts)
     int countdownLast_ = -1;
     struct Announcement { std::string text; glm::vec4 color; float scale; float t; };
     std::vector<Announcement> announcements_;

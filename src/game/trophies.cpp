@@ -28,6 +28,7 @@ const std::vector<TrophyDef>& trophyCatalogue() {
         {"demolition", "DEMOLITION", "DESTROY 50 BLOCKS IN ONE GAME"},
         {"collector", "COLLECTOR", "PICK UP 20 ITEMS IN ONE GAME"},
         {"grown", "TOO SLOW", "KILL A DEMON THAT HAS GROWN"},
+        {"dungeon", "DUNGEON CRAWLER", "SLAY A DUNGEON BOSS"},
         {"doom_slayer", "DOOM SLAYER!", "SET A NEW HIGH SCORE"},
         {"rip_and_tear", "RIP AND TEAR!!!", "EARN EVERY OTHER TROPHY"},
     };

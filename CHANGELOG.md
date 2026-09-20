@@ -4,6 +4,13 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.4.0 (2026-09-19)
+- The dungeon: clear the arena and the back wall comes down on a crypt of rooms and corridors, generated fresh for every fight and bigger at higher levels.
+- Dungeon demons sleep until they see you; the boss at the far end scales with the level and with how big your stack was. Kill it to finish the fight.
+- A new trophy, DUNGEON CRAWLER, for the first boss slain, and a DUNGEON switch in the options.
+- The new-version notice is a tilted sticker beside the title menu that zooms to get your attention; click it for WHAT'S NEW.
+- The test bot now plays the block phase properly.
+
 ## 0.3.0 (2026-09-19)
 - The game tells you when a new version is out and has a WHAT'S NEW screen with this list.
 - Online is on by default; nothing is posted until you approve your email address.

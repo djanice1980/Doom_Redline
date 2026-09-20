@@ -205,6 +205,72 @@ instanced draw.
   until the board is compact again. The player dying ends the game
   (`YOU DIED` screen with the board still flat).
 
+## Dungeon (`src/game/dungeon.h`, the `Stage` machine in `fps_mode.h`)
+
+- `FpsMode` has three stages: `Arena` (as before), `GateFalling` (2.4 s: the
+  4 x 4 gate section of the back wall tips over, drawn by `App::addFpsActors`
+  as tumbling cubes while `buildEnvironment` leaves the hole) and `Dungeon`.
+  With `dungeonEnabled_` the arena's "all dead for 1.2 s" no longer finishes
+  the fight but starts the fall; `openDungeon` generates the layout, blasts
+  columns 3-6 of the bottom seven rows (the passage), spawns the population
+  and pushes `DungeonOpen`. The fight finishes 2.5 s after the boss dies.
+- `Dungeon::generate(seed, level)`: a tile grid (`Rock`/`Floor`/`Wall`, wall =
+  rock bordering floor in the 8-neighbourhood) of `min(64, 30 + 4L)` x
+  `min(80, 34 + 5L)` tiles. Tile (0, 0) is at x = -w/2, z = -3 and the grid
+  runs towards -z. An entrance room behind the gate (centred on x = 0), the
+  boss's hall at the far end (15-21 tiles square), then `min(8, 2 + (L+1)/2)`
+  rooms of 5-11 tiles placed by rejection sampling with a tile of rock between
+  any two. Corridors: each unlinked room joins the nearest linked room by an
+  L (2 wide; 3 into the hall), the hall last, plus one or two random loops;
+  the entrance corridor is 4 wide to match the gate. `ceilingAt` is 4 cubes
+  over rooms and corridors, 6 in the hall; a wall tile is as tall as the
+  tallest floor beside it. Torches every three tiles round each room (four in
+  the hall) and every ninth corridor tile.
+- World model: `solidAt` treats z <= -3 as the dungeon's (floor open, anything
+  else solid up to `ceilingAt`), and the gate passage (|x| < 2, -3 <= z < 0)
+  as open across the board's end rail; `outOfWorld` widens the projectile
+  bounds to the grid. Movement, line of sight and hitscans need no other
+  changes (a shot into a wall throws stone chips).
+- Population (`populateDungeon`): `count = clamp(1 + L + blocks/14, 3, 36)`
+  demons spread round-robin over the ordinary rooms (`spawnSpots`), tiers
+  drawn as `min(cap, floor(u^1.7 * (cap+1)))` with `cap = min(4,
+  maxTierForLevel)`; flyers become hell knights or demons. The boss (tier 4 at
+  L <= 2, 5 at L <= 5, else 6) stands in the hall's centre with `hp * (1 +
+  blocks/80 + 0.1 L)`, plus `2 + L/3` guards away from the middle. One item per
+  room (medikit, bullets, rockets, cells, stim in turn), a second medikit in
+  every other room, one in the hall's corner.
+- Sleepers: dungeon monsters start `dormant`; every 0.15-0.3 s one checks
+  `lineOfSight` to the player within 45 m or a distance under 3.5 m, and any
+  damage wakes it. Waking pushes `Wake` (its sight sound) and, for the boss,
+  `BossSeen` (announcement + the HUD bar). Sleepers do not count towards the
+  crowd factor that slows attacks. `boardBlocks_` (non-empty cells when the
+  fight began) is what the population and the boss scale by.
+- The App rebuilds the static environment (and the torch props) whenever the
+  stage or the presence of a dungeon changes; outside fight modes any dungeon
+  is closed. In the crypt the sun's shadow box follows the eye (the ceiling
+  shades it), ambient drops to 0.10 and the fog thickens.
+- Testing: `--scenario dungeon` (arena pre-cleared), `REDLINE_LOG_DUNGEON=1`
+  (ASCII layout with `m`onsters, the `B`oss and `+` items), and the bot's
+  `navNext` (a breadth-first search over 1 m tiles of everything walkable)
+  which lets `--bot` walk the crypt to the boss.
+
+## Test bot (`src/core/tetris_bot.h`)
+
+`planPlacement` tries every rotation and every column the active piece can
+slide to at its current height, drops each, and scores the result with
+`0.76 lines - 0.51 height - 0.36 holes - 0.18 bumpiness - 0.10 wells +
+2 redRow + 6 redLine`, resolving the landing the way `Game` does (a full
+row loses its normal cells and each such column shifts down, reds stay,
+then `settle`'s sticky gravity). A gap walled in by red in a row with at
+most two gaps is "fight fuel", not a hole: corruption reddens the block on
+top of it and evil fills it. `TetrisBot::step` issues one input per call
+(rotate first, then slide, then hard-drop), replans when the piece stops
+responding and drops it if the new plan is no better. The App calls it
+every 0.12 s in `Mode::Blocks` (a person's pace, which the corruption and
+evil-spawn timers assume); at that cadence twelve seeds all reach eight
+fights. `tests/tetris_test.cpp` runs it for 400 pieces on a plain board and
+through two red lines with the shipped rules.
+
 ## Renderer (`src/render/renderer.h`)
 
 - `CubeInstance`: centre + uniform scale, tint, emissive (rgb + strength),

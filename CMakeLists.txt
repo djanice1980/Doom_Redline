@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(redline VERSION 0.3.0 LANGUAGES CXX)
+project(redline VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +21,7 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Core rules library (no dependencies)
-add_library(rl_core STATIC src/core/tetris.cpp src/core/inflate.cpp src/core/png_read.cpp src/core/pixel_scale.cpp src/core/json.cpp)
+add_library(rl_core STATIC src/core/tetris.cpp src/core/tetris_bot.cpp src/core/inflate.cpp src/core/png_read.cpp src/core/pixel_scale.cpp src/core/json.cpp)
 configure_file(src/version.h.in ${CMAKE_BINARY_DIR}/version.h @ONLY)
 target_include_directories(rl_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
@@ -90,6 +90,7 @@ if(REDLINE_BUILD_GAME)
       src/game/procedural.cpp
       src/game/app.cpp
       src/game/fps_mode.cpp
+      src/game/dungeon.cpp
       src/game/highscores.cpp
       src/game/trophies.cpp
       src/game/ambient.cpp

@@ -1,5 +1,6 @@
 // Rule tests for the REDLINE block engine. Plain asserts, no framework.
 #include "core/tetris.h"
+#include "core/tetris_bot.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -614,7 +615,46 @@ static void testFloatingGroupFalls() {
     CHECK(g.at(8, 18).kind == CellKind::Normal && g.at(8, 19).empty());                    // the overhang came with it and still hangs
 }
 
+static void testBotPlays() {
+    // The test bot plays real games: with no red minos it must keep a plain
+    // board alive for hundreds of pieces and clear lines while doing so; with
+    // the shipped rules it must reach a red line (the fight trigger) rather
+    // than topping out, and carry on after the fight.
+    {
+        Game g(7, fastRules());
+        TetrisBot bot;
+        for (int i = 0; i < 200000 && bot.pieces() < 400 && g.phase() != Phase::GameOver; ++i) {
+            bot.step(g);
+            g.tick(0.02f);
+        }
+        CHECK(bot.pieces() >= 400);
+        CHECK(g.phase() != Phase::GameOver);
+        CHECK(g.lines() >= 120);
+        CHECK(g.stackRows() <= 8);
+    }
+    {
+        // Shipped red chances and lock delay, one input every 0.12 s (a person's pace:
+        // corruption and evil spawns are timed against real play, not a machine gun).
+        Rules r = fastRules();
+        r.redChanceBase = Rules{}.redChanceBase;
+        r.redChancePerLevel = Rules{}.redChancePerLevel;
+        r.lockDelay = 0.3f;
+        Game g(3, r);
+        int fights = 0;
+        TetrisBot bot;
+        for (int i = 0; i < 400000 && fights < 2 && g.phase() != Phase::GameOver; ++i) {
+            if (g.phase() == Phase::RedLine) { ++fights; g.clearAllRed(); g.resumeAfterRedLine(); continue; }
+            if (i % 6 == 0) bot.step(g);
+            g.tick(0.02f);
+        }
+        CHECK(fights == 2);
+        CHECK(g.phase() != Phase::GameOver);
+        CHECK(g.level() == 3);
+    }
+}
+
 int main() {
+    testBotPlays();
     testFloatingGroupFalls();
     testFightCleansesBoard();
     testPrizes();

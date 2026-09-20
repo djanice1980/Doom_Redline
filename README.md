@@ -46,7 +46,9 @@ copies by itself and otherwise asks on first launch. Nothing else is required.
 | ![Title](docs/screenshots/title.jpg) The title screen: the stack behind, high scores, the arena's brawlers | ![The stack turning evil](docs/screenshots/evil-stack.jpg) Nine rows high: the stack is turning evil and the sign beside the board bleeds |
 | ![The board tips over](docs/screenshots/tip-over.jpg) A row is all red: the board tips onto the floor and the camera flies in | ![The fight](docs/screenshots/fight.jpg) Inside the board: chest-high blocks for cover, every red cluster a monster |
 | ![Arch-viles](docs/screenshots/arch-vile.jpg) Doom 2 monsters as variants when doom2.wad is around: arch-viles raising their arms | ![Trophies](docs/screenshots/trophies.jpg) A trophy card, and the fireworks for the last one |
-| ![Options](docs/screenshots/options.jpg) Options: music, controls, display, models, ray tracing, anti-aliasing | ![Players](docs/screenshots/players.jpg) Several people on one machine: profiles with their own scores, trophies and settings |
+| ![Options](docs/screenshots/options.jpg) Options: music, controls, display, models, dungeon, ray tracing, anti-aliasing | ![Players](docs/screenshots/players.jpg) Several people on one machine: profiles with their own scores, trophies and settings |
+| ![The gate](docs/screenshots/dungeon-gate.jpg) Arena cleared: the back wall has come down and the crypt's corridor opens behind the stack | ![A room](docs/screenshots/dungeon-room.jpg) Torch-lit rooms and corridors, laid out afresh for every fight; the demons sleep until they see you |
+| ![The boss](docs/screenshots/dungeon-boss.jpg) The hall at the far end: a cyberdemon boss, its health bar under the demon count | |
 
 ## How to play
 
@@ -64,9 +66,15 @@ copies by itself and otherwise asks on first launch. Nothing else is required.
    move, Shift run, click to fire, 1-4 or the wheel to change weapons.
 4. **Clear the room.** Kills explode neighbouring blocks and drop health, ammo
    and weapons. Monsters chew through your cover and grow if you leave one
-   alive too long. Clear them all and the board stands back up one level
-   higher; die and the run ends.
-5. **Bank prizes.** Lines you clear before a fight pay out as health, armour
+   alive too long.
+5. **Into the dungeon.** With the arena clear the back wall comes down and a
+   crypt of rooms and corridors opens behind it, laid out fresh every time and
+   bigger at higher levels. Its demons sleep until they see you; its boss (a
+   baron, then a cyberdemon, then the spider mastermind, tougher the higher
+   your stack was) waits in a hall at the far end. Kill the boss and the board
+   stands back up one level higher; die and the run ends. OPTIONS > DUNGEON
+   turns the crypt off for arena-only fights.
+6. **Bank prizes.** Lines you clear before a fight pay out as health, armour
    and a chance at invulnerability for that fight.
 
 The full rules are under [Rules that differ from classic](#rules-that-differ-from-classic),
@@ -276,12 +284,14 @@ has the design and what is stored.
 ## New versions
 
 With ONLINE on, the game asks the service once per launch which version is
-the latest. When a newer one exists the title screen says so and the
-**WHAT'S NEW** item shows the change list (from `CHANGELOG.md`) with a
+the latest. When a newer one exists a tilted NEW VERSION sticker sits to the
+right of the title menu, zooming in and out three times as the title comes up
+(and again every fifteen seconds) so it is not missed; clicking it, or the
+**WHAT'S NEW** item, shows the change list (from `CHANGELOG.md`) with a
 DOWNLOAD button that opens the release page in your browser. WHAT'S NEW is
 always there, so the list for the version you have is a keypress away.
 
-Trophies are one-time achievements (20 of them, from FIRST BLOOD to DOOM
+Trophies are one-time achievements (21 of them, from FIRST BLOOD to DOOM
 SLAYER! for a new #1 high score, and RIP AND TEAR!!! for owning all the others). Unlocking one slides a console-style
 card down from the top of the screen (the menu skull, TROPHY UNLOCKED,
 the name, what you did, and the count), with a jingle and a rumble; it
@@ -429,6 +439,33 @@ you stack blocks, a few monsters brawl on the floor either side of the board:
 they fight each other, respawn when killed, and vanish the moment a red line
 tips the board over. In the fight, the three toughest living demons get named
 health bars in the top-right corner and a bar over their heads.
+
+## The dungeon
+
+Clearing the arena is half the fight. A second later the section of the back
+wall behind the stack tips over into the dark (smashing a passage through the
+blocks in front of it), and behind it is a crypt: rooms joined by corridors on
+a tile grid, generated fresh for every fight the way Diablo 2 lays out its
+levels (rectangular rooms placed at random, each joined to the nearest room
+already reachable, a loop or two, a big hall at the far end). Level 1 is
+three rooms and the hall; by level 9 it is eight rooms on a 64 x 79 grid.
+Rooms and corridors are four cubes high, the hall six, so a cyberdemon
+stands up straight in it.
+
+The crypt is populated from the level and from the stack: more blocks on the
+board when the fight began means more demons in the rooms (one per fourteen
+blocks, plus one per level, plus one) and a tougher boss. Its demons are
+asleep (Doom's ambush): one wakes when it sees you, when you come within a
+few metres, or when you shoot it, and the ordinary ones never fly, so
+nothing drifts through walls. The boss waits in the hall with a few guards:
+a baron at levels 1-2, a cyberdemon at 3-5, the spider mastermind from 6,
+with health scaled by the level and the block count. Each room holds a
+medikit or ammunition. The screen says ARENA CLEARED: THE WALL COMES DOWN,
+then ENTER THE DUNGEON AND KILL THE BOSS, and a line under the demon count
+repeats that until the boss has been seen, when its name and health bar take
+its place. The boss's death ends the fight (its DUNGEON CRAWLER trophy is
+new); the remaining demons do not matter. OPTIONS > DUNGEON turns all of
+this off.
 
 ## Display
 
@@ -585,7 +622,7 @@ Up/Down or W/S to pick, Enter or click to confirm.
 
 ```
 --wad <file>        --no-wad           --size WxH        --fullscreen
---igpu              --seed <n>         --scenario title|blocks|redline|fps
+--igpu              --seed <n>         --scenario title|blocks|redline|fps|dungeon
 --screenshot <png>  --frames <n>       --bot              --mute
 --level <n>         --absorb <sec>     --god              --arsenal <n>
 --keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
@@ -599,12 +636,17 @@ A Windows test build can be cross-compiled from Linux with Docker:
 `--scenario redline` starts with a nearly complete red row plus a few red
 clusters of different sizes and drops the last red piece for you; `--scenario
 fps` skips straight to the fight (`--level N` sets the level for it; 8+ adds a
-cyberdemon-sized slab); `--scenario corrupt` starts with a tall holey stack so
-you can watch blocks turn. `--god` and `--arsenal N` (every weapon owned,
-holding weapon N) help when testing a fight; `--keys` presses a chord at a
-frame (letters, `_` down, `^` up, `<` `>` left/right, `~` return, `` ` `` esc,
-`#` delete, space). `--bot` makes
-the player auto-aim and fire, which together with `--frames`/`--screenshot`
+cyberdemon-sized slab); `--scenario dungeon` is `fps` with the arena already
+cleared, so the wall comes down at once; `--scenario corrupt` starts with a
+tall holey stack so you can watch blocks turn. `--god` and `--arsenal N`
+(every weapon owned, holding weapon N) help when testing a fight; `--keys`
+presses a chord at a frame (letters, `_` down, `^` up, `<` `>` left/right,
+`~` return, `` ` `` esc, `#` delete, space). `--bot` plays the game: in the
+block phase it steers every piece to the landing that keeps the stack low,
+flat and free of holes (and works towards a red row, since a fight is the way
+out of a rising stack), one input every 0.12 s like a person; in the fight it
+auto-aims and fires, and walks the shortest path to demons it cannot see,
+through the crypt to the boss. Together with `--frames`/`--screenshot` that
 gives a headless-ish smoke test of the whole loop:
 
 ```bash
@@ -620,7 +662,10 @@ ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -r 30 -i run.rgba -c:v libx264 -pi
 
 Environment: `REDLINE_GPU=<index>` forces a Vulkan device (the log lists them),
 `REDLINE_VALIDATION=1` enables the Khronos validation layer if installed,
-`REDLINE_NOVSYNC=1` uses mailbox/immediate presentation.
+`REDLINE_NOVSYNC=1` uses mailbox/immediate presentation, `REDLINE_NO_DUNGEON=1`
+keeps fights to the arena, `REDLINE_LOG_DUNGEON=1` prints each crypt's layout
+(rooms, monsters, items) to the log as it opens, `REDLINE_UPDATE_DEMO=<ver>`
+shows the new-version sticker for that version.
 
 ## Layout
 

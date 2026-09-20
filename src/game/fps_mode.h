@@ -11,6 +11,7 @@
 #include <glm/glm.hpp>
 
 #include "core/tetris.h"
+#include "game/dungeon.h"
 
 namespace rl::game {
 
@@ -133,6 +134,12 @@ struct Enemy {
     // Arch-vile: its flame, placed on the player while it can see them (fireT < 0 = none).
     float fireT = -1.f;
     glm::vec3 firePos{0.f};
+    // Dungeon monsters wait in their rooms (Doom's ambush) until they see the player,
+    // the player comes close, or something hurts them.
+    bool dormant = false;
+    bool inDungeon = false;
+    bool boss = false;       // the dungeon's boss: the fight ends when it dies
+    float senseT = 0.f;      // seconds until a sleeping monster next looks for the player
     bool alive() const { return state != State::Dead && state != State::Dying; }
 };
 
@@ -210,7 +217,8 @@ struct FpsInput {
 struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
                       Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown, EnemyGibbed,
-                      CasingBounce, BulletHole, VileFire, VileBlast } type;   // VileFire: a = 0 the flame starts, 1 it crackles
+                      CasingBounce, BulletHole, VileFire, VileBlast,
+                      GateFalls, DungeonOpen, Wake, BossSeen, BossDead } type;   // the dungeon: the back wall goes, the crypt opens, a sleeper wakes, the boss   // VileFire: a = 0 the flame starts, 1 it crackles
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
@@ -231,6 +239,24 @@ public:
     float absorbPeriod() const { return absorbPeriod_; }
     void update(float dt, const FpsInput& in, core::Game& game);
     bool finished() const { return finished_; }
+
+    // The dungeon behind the back wall. With it enabled, clearing the arena is only
+    // the first half: the wall falls (GateFalling), the crypt opens (Dungeon) and the
+    // fight ends when its boss dies.
+    enum class Stage { Arena, GateFalling, Dungeon };
+    static constexpr float kGateFallTime = 2.4f;
+    void setDungeonEnabled(bool on) { dungeonEnabled_ = on; }
+    bool dungeonEnabled() const { return dungeonEnabled_; }
+    Stage stage() const { return stage_; }
+    float stageT() const { return stageT_; }
+    const Dungeon& dungeon() const { return dungeon_; }
+    const Enemy* boss() const;          // the dungeon boss once it exists (dead or alive)
+    bool bossSeen() const { return bossSeen_; }
+    int boardBlocks() const { return boardBlocks_; }   // blocks on the board when the fight began (the boss scales with it)
+    void closeDungeon();                // after the fight: back to the plain arena
+    void debugClearArena();             // testing: every arena monster drops dead so the gate falls at once
+    // Test bot navigation: the next 1 m step on the shortest walkable path from `from` to `to` (false if none).
+    bool navNext(glm::vec3 from, glm::vec3 to, glm::vec3& next, const core::Game& game) const;
     bool playerDead() const { return health_ <= 0.f; }
 
     // Player
@@ -303,6 +329,9 @@ private:
     void hurtPlayer(float dmg, glm::vec3 from, int kind = -1);   // kind: the monster responsible, for the run record
     void push(FpsEvent::Type t, glm::vec3 p = {}, int tier = 0, int a = 0, int kind = -1) { events_.push_back({t, p, tier, a, kind < 0 ? tier : kind}); }
     int pickKind(int tier);
+    void openDungeon(core::Game& game);
+    void populateDungeon();
+    bool outOfWorld(glm::vec3 p) const;
     bool kindAvailable_[kMonsterKinds] = {true, true, true, true, true, true, true, false, false, false, false, false, false};
 
     std::mt19937 rng_;
@@ -335,6 +364,13 @@ private:
     float finishDelay_ = 0.f;
     float absorbPeriod_ = 20.f;
     bool god_ = false;
+    Dungeon dungeon_;
+    Stage stage_ = Stage::Arena;
+    float stageT_ = 0.f;
+    bool dungeonEnabled_ = true;
+    int boardBlocks_ = 0;
+    bool bossSeen_ = false;
+    bool bossDead_ = false;
 };
 
 }  // namespace rl::game
