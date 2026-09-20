@@ -349,13 +349,14 @@ void FpsMode::moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, c
     if (!blocked(nz)) pos = nz;
 }
 
-void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red) {
+void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red, int colorIndex) {
     std::uniform_real_distribution<float> u(-1.f, 1.f);
     for (int i = 0; i < count; ++i) {
         Debris d;
         d.pos = pos + glm::vec3(u(rng_), u(rng_), u(rng_)) * 0.3f;
         d.vel = glm::vec3(u(rng_) * 4.f, 3.5f + u(rng_) * 3.f, u(rng_) * 4.f);
         d.color = color;
+        d.colorIndex = colorIndex;
         d.ttl = 1.2f + 0.8f * std::fabs(u(rng_));
         d.size = 0.12f + 0.15f * std::fabs(u(rng_));
         d.red = red;
@@ -655,8 +656,9 @@ void FpsMode::rocketBlast(glm::vec3 pos, float radius, float damage, core::Game&
                 if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
                 if (game.at(x, y).kind != core::CellKind::Normal) continue;
                 if (glm::length(flatCellCentre(x, y) - pos) > radius * 0.75f) continue;
+                const int shade = game.at(x, y).color;
                 game.clearCell(x, y);
-                spawnDebris(flatCellCentre(x, y), {0.85f, 0.85f, 0.85f}, 5, false);
+                spawnDebris(flatCellCentre(x, y), {0.6f, 0.6f, 0.6f}, 5, false, shade);
                 ++destroyed;
             }
     }
@@ -698,17 +700,18 @@ void FpsMode::explodeEnemy(Enemy& e, core::Game& game) {
     // Every cell of the region blasts its normal neighbours.
     int destroyed = 0;
     std::vector<std::pair<int, int>> victims;
+    std::vector<int> victimShades;
     for (auto [c, r] : e.cells) {
         for (int y = r - 2; y <= r + 2; ++y)
             for (int x = c - 2; x <= c + 2; ++x) {
                 if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
                 float dx = static_cast<float>(x - c), dy = static_cast<float>(y - r);
                 if (dx * dx + dy * dy > kExplosionRadius * kExplosionRadius + 1e-4f) continue;
-                if (game.at(x, y).kind == core::CellKind::Normal) victims.push_back({x, y});
+                if (game.at(x, y).kind == core::CellKind::Normal) { victims.push_back({x, y}); victimShades.push_back(game.at(x, y).color); }
             }
         destroyed += game.explodeAt(c, r, kExplosionRadius);
     }
-    for (auto [x, y] : victims) spawnDebris(flatCellCentre(x, y), {0.85f, 0.85f, 0.85f}, 5, false);
+    for (size_t v = 0; v < victims.size(); ++v) spawnDebris(flatCellCentre(victims[v].first, victims[v].second), {0.6f, 0.6f, 0.6f}, 5, false, victimShades[v]);
     spawnDebris(e.pos + glm::vec3(0.f, 0.6f, 0.f), {0.9f, 0.1f, 0.1f}, 8 + 3 * e.tier, true);
     Explosion ex;
     ex.pos = e.pos + glm::vec3(0.f, 0.7f, 0.f);
@@ -783,8 +786,9 @@ void FpsMode::spawnPickup(PickupKind kind, glm::vec3 from, glm::vec3 home) {
 void FpsMode::breakCell(int c, int r, core::Game& game) {
     if (c < 0 || c >= core::kBoardW || r < 0 || r >= core::kBoardH) return;
     if (game.at(c, r).kind != core::CellKind::Normal) return;
+    const int shade = game.at(c, r).color;
     game.clearCell(c, r);
-    spawnDebris(flatCellCentre(c, r), {0.85f, 0.85f, 0.85f}, 5, false);
+    spawnDebris(flatCellCentre(c, r), {0.6f, 0.6f, 0.6f}, 5, false, shade);
     Explosion ex;
     ex.pos = flatCellCentre(c, r);
     ex.radius = 0.9f;
@@ -1300,8 +1304,10 @@ void FpsMode::openDungeon(core::Game& game) {
     for (int r = core::kBoardH - 7; r < core::kBoardH; ++r)
         for (int c = 3; c < 7; ++c)
             if (!game.at(c, r).empty()) {
+                const bool wasRed = game.at(c, r).red();
+                const int shade = game.at(c, r).color;
                 game.clearCell(c, r);
-                spawnDebris(flatCellCentre(c, r), game.at(c, r).red() ? glm::vec3(0.9f, 0.1f, 0.1f) : glm::vec3(0.85f, 0.85f, 0.85f), 4, false);
+                spawnDebris(flatCellCentre(c, r), wasRed ? glm::vec3(0.9f, 0.1f, 0.1f) : glm::vec3(0.6f, 0.6f, 0.6f), 4, wasRed, wasRed ? -1 : shade);
             }
     Explosion ex;
     ex.pos = glm::vec3(0.f, 0.8f, -1.f);

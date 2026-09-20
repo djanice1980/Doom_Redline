@@ -1987,7 +1987,16 @@ void App::handleEvents() {
             SDL_Keycode k = e.key.key;
             if (!e.key.repeat) stats_.addInput(InputDevice::Keyboard);
             if (k == SDLK_F12) {
-                renderer_->screenshot("redline-screenshot.png");
+                // Numbered, so holding F12 through a fight keeps every shot instead of
+                // overwriting the one file each time.
+                std::error_code ec;
+                std::string name;
+                for (int n = 1; n < 10000; ++n) {
+                    name = "redline-screenshot-" + std::string(n < 10 ? "00" : n < 100 ? "0" : "") + std::to_string(n) + ".png";
+                    if (!std::filesystem::exists(name, ec)) break;
+                }
+                renderer_->screenshot(name);
+                std::fprintf(stderr, "[app] screenshot %s\n", name.c_str());
                 break;
             }
             if (k == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT) && !e.key.repeat) {
@@ -3218,8 +3227,11 @@ void App::addFpsActors() {
     }
     for (const Debris& d : fps_.debris()) {
         float fade = std::min(1.f, d.ttl / 0.4f);
+        // A fragment carries the colour of the block it came off; a flat grey one read as a
+        // white box against the arena's lighting.
+        const glm::vec3 col = d.colorIndex >= 0 ? kPieceColors[d.colorIndex % 7] * 0.8f : d.color;
         if (d.red) cube(d.pos, d.size, glm::vec4(d.color, 1.f), assets_.redBlock, glm::vec3(1.f, 0.1f, 0.05f), 0.6f * fade);
-        else cube(d.pos, d.size, glm::vec4(d.color * fade, 1.f), assets_.block);
+        else cube(d.pos, d.size, glm::vec4(col * fade, 1.f), assets_.block);
     }
     addGore();
     if (fps_.stage() == FpsMode::Stage::GateFalling) {

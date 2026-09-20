@@ -197,6 +197,7 @@ inline int bloodColorForKind(int kind) { return kind == 3 ? 2 : (kind == 4 || ki
 struct Debris {
     glm::vec3 pos, vel;
     glm::vec3 color;
+    int colorIndex = -1;     // the piece colour of the block it came off (-1 = use `color`)
     float ttl = 1.5f;
     float size = 0.2f;
     bool red = false;
@@ -304,7 +305,7 @@ public:
     // First distance along the ray at which a block is hit (or maxT).
     float rayBlockDistance(glm::vec3 o, glm::vec3 d, float maxT, const core::Game& game) const;
 
-    void spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red);
+    void spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red, int colorIndex = -1);
     void spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind, int color = 0);
     void spawnGibs(const Enemy& e);
     void addDecal(glm::vec3 pos, glm::vec3 normal, float size, int kind, int color = 0);
