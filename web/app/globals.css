@@ -45,6 +45,8 @@ td.rank { color: var(--gold); font-weight: 700; width: 56px; }
 .trophy .desc { color: var(--muted); font-size: 13px; }
 .trophy .pct { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.grid2.lead { grid-template-columns: minmax(520px, 2fr) minmax(220px, 1fr); }
+@media (max-width: 880px) { .grid2.lead { grid-template-columns: 1fr; } }
 .empty { color: var(--muted); padding: 30px; text-align: center; background: var(--panel); border-radius: 8px; }
 form.admin label { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 13px; }
 form.admin input { width: 100%; padding: 8px 10px; background: var(--panel2); color: var(--text); border: 1px solid #333; border-radius: 6px; font: inherit; }

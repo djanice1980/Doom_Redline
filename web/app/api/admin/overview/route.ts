@@ -3,21 +3,17 @@
 // everything that has been collected, including players still waiting on their
 // email, so it is possible to tell whether anyone is actually playing.
 //
-// Behind ADMIN_PASSWORD (HTTP Basic, see middleware.ts). Addresses are shown masked
-// (first letter and domain), never in full: enough to tell accounts apart without
-// turning the page into a mailing list.
+// Behind ADMIN_PASSWORD (HTTP Basic, see middleware.ts). Addresses are shown in
+// full, which is safe to do because of how they are kept: the database holds only
+// AES-256-GCM ciphertext plus a one-way HMAC used for lookup, and the key that
+// undoes it lives in the environment, not in the database. Reading one back is a
+// real decryption by a request that passed the admin password, not a lookup.
 import { sql } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
 import { adminChallenge, isAdmin, json } from "@/lib/auth";
 import { ensureSchema } from "@/lib/schema";
 
 export const runtime = "nodejs";
-
-function mask(email: string): string {
-  const at = email.indexOf("@");
-  if (at <= 0) return "hidden";
-  return `${email[0]}…${email.slice(at)}`;
-}
 
 export async function GET(req: Request) {
   if (!isAdmin(req)) return adminChallenge();
@@ -57,14 +53,21 @@ export async function GET(req: Request) {
       (select count(*) from trophies t where t.player_id = p.id) as trophies
     from players p order by p.last_seen desc limit 200`;
 
-  // Accounts with their masked address and how many players hang off each.
+  // Accounts with their address and what hangs off each. Decrypting here is the only
+  // way to read one: the column holds ciphertext, and the key is in the environment.
   const accountRows = await db`select a.id, a.email_enc, a.created_at,
-      (select count(*) from players p where p.account_id = a.id) as players
+      (select count(*) from players p where p.account_id = a.id) as players,
+      (select coalesce(sum((select count(*) from runs r where r.player_id = p.id)), 0) from players p where p.account_id = a.id) as runs,
+      (select max(p.last_seen) from players p where p.account_id = a.id) as last_seen
     from accounts a order by a.created_at desc limit 200`;
   const accounts = accountRows.map((a) => {
     let email = "";
     try { email = decrypt(a.email_enc as string); } catch { email = ""; }
-    return { id: a.id as string, email: email ? mask(email) : "unreadable", players: Number(a.players), created_at: new Date(a.created_at as string).toISOString() };
+    return {
+      id: a.id as string, email: email || "unreadable", players: Number(a.players), runs: Number(a.runs),
+      created_at: new Date(a.created_at as string).toISOString(),
+      last_seen: a.last_seen ? new Date(a.last_seen as string).toISOString() : "",
+    };
   });
 
   // Registrations still waiting, so it is clear who is one click from appearing.
@@ -76,7 +79,7 @@ export async function GET(req: Request) {
     try { email = decrypt(w.email_enc as string); } catch { email = ""; }
     return {
       id: w.id as string, player_id: w.player_id as string, name: w.display_name as string, machine: (w.machine_label as string) || "",
-      email: email ? mask(email) : "unreadable", runs: Number(w.runs),
+      email: email || "unreadable", runs: Number(w.runs),
       created_at: new Date(w.created_at as string).toISOString(), expires_at: new Date(w.expires_at as string).toISOString(),
     };
   });

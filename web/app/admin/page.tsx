@@ -20,7 +20,7 @@ type Overview = {
   versions: { version: string; runs: number; players: number; last: string }[];
   platforms: { platform: string; runs: number }[];
   players: { id: string; name: string; approved: boolean; runs: number; best: number; seconds: number; machines: number; trophies: number; created_at: string; last_seen: string }[];
-  accounts: { id: string; email: string; players: number; created_at: string }[];
+  accounts: { id: string; email: string; players: number; runs: number; created_at: string; last_seen: string }[];
   waiting: { id: string; player_id: string; name: string; machine: string; email: string; runs: number; created_at: string; expires_at: string }[];
   hardware: { counted: number; os: { name: string; n: number }[]; gpu: { name: string; n: number }[]; pads: { name: string; n: number }[]; avg_cores: number; avg_ram_gb: number };
   recent: { id: string; at: string; name: string; approved: boolean; score: number; level: number; fights: number; kills: number; red_lines: number; duration_s: number; version: string; platform: string; death_cause: string; voxels: boolean; brutal: boolean }[];
@@ -104,7 +104,7 @@ export default function AdminPage() {
                 <h2>Waiting for approval</h2>
                 <p className="sub">One click on the emailed link and these appear everywhere. Declining deletes them.</p>
                 <table><thead><tr><th>Player</th><th>Address</th><th>Machine</th><th className="num">Games held</th><th>Asked</th><th>Link expires</th></tr></thead><tbody>
-                  {ov.waiting.map((w) => <tr key={w.id}><td>{w.name}</td><td>{w.email}</td><td>{w.machine || "unknown"}</td><td className="num">{w.runs}</td><td>{when(w.created_at)}</td><td>{when(w.expires_at)}</td></tr>)}
+                  {ov.waiting.map((w) => <tr key={w.id}><td>{w.name}</td><td><a href={`mailto:${w.email}`}>{w.email}</a></td><td>{w.machine || "unknown"}</td><td className="num">{w.runs}</td><td>{when(w.created_at)}</td><td>{when(w.expires_at)}</td></tr>)}
                 </tbody></table>
               </>
             ) : null}
@@ -183,13 +183,18 @@ export default function AdminPage() {
               )) : <tr><td colSpan={10} className="empty">No games posted yet.</td></tr>}
             </tbody></table>
 
-            <div className="grid2">
+            <div className="grid2 lead">
               <div>
                 <h2>Addresses</h2>
-                <p className="sub">Masked on purpose. One address can carry several players.</p>
-                <table><thead><tr><th>Address</th><th className="num">Players</th><th>Approved</th></tr></thead><tbody>
-                  {ov.accounts.length ? ov.accounts.map((a) => <tr key={a.id}><td>{a.email}</td><td className="num">{a.players}</td><td>{when(a.created_at)}</td></tr>)
-                    : <tr><td colSpan={3} className="empty">None yet.</td></tr>}
+                <p className="sub">Stored as AES-256-GCM ciphertext and decrypted here with the key from the environment. One address can carry several players.</p>
+                <table><thead><tr><th>Address</th><th className="num">Players</th><th className="num">Games</th><th>Approved</th><th>Last seen</th></tr></thead><tbody>
+                  {ov.accounts.length ? ov.accounts.map((a) => (
+                    <tr key={a.id}>
+                      <td><a href={`mailto:${a.email}`}>{a.email}</a></td>
+                      <td className="num">{a.players}</td><td className="num">{a.runs}</td>
+                      <td>{when(a.created_at)}</td><td>{a.last_seen ? when(a.last_seen) : "—"}</td>
+                    </tr>
+                  )) : <tr><td colSpan={5} className="empty">None yet.</td></tr>}
                 </tbody></table>
               </div>
               <div>

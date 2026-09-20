@@ -145,8 +145,15 @@ show: every player including the ones still waiting on their email, games
 posted today and this week, the last fortnight day by day, which versions are
 in the wild, what people run the game on (the machine facts, decrypted here and
 nowhere else, in aggregate), a players table, recent games, and the addresses
-masked to a first letter and a domain. **Mail & settings** is the Graph
-credentials and the mail log as before.
+in full. **Mail & settings** is the Graph credentials and the mail log as
+before.
+
+The addresses are shown in full because of how they are kept. The database
+holds AES-256-GCM ciphertext and a one-way HMAC used only for lookup; the key
+that undoes the ciphertext is in the environment, not in the database. Reading
+an address back is a real decryption performed by a request that has already
+passed the admin password, so a copy of the database on its own still yields
+nothing.
 
 The point of the first tab is the question the public pages cannot answer: is
 anyone playing? A player who has not clicked their approve link appears here,
