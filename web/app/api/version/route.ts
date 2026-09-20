@@ -5,6 +5,6 @@ export const runtime = "nodejs";
 
 export async function GET() {
   const info = await versionInfo();
-  return new Response(JSON.stringify(info), { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=300" } });
+  return new Response(JSON.stringify(info), { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=120" } });
 }
 

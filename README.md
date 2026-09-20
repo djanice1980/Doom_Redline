@@ -283,8 +283,10 @@ has the design and what is stored.
 
 ## New versions
 
-With ONLINE on, the game asks the service once per launch which version is
-the latest. When a newer one exists a tilted NEW VERSION sticker sits to the
+With ONLINE on, the game asks the service at launch which version is the
+latest, again every ten minutes while it sits on the title screen, and when
+WHAT'S NEW is opened (the service itself learns of a release within a few
+minutes). When a newer one exists a tilted NEW VERSION sticker sits to the
 right of the title menu, zooming in and out three times as the title comes up
 (and again every fifteen seconds) so it is not missed; clicking it, or the
 **WHAT'S NEW** item, shows the change list (from `CHANGELOG.md`) with a

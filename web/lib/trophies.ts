@@ -18,6 +18,7 @@ export const TROPHIES: { id: string; name: string; description: string }[] = [
   { id: "demolition", name: "DEMOLITION", description: "Destroy 50 blocks in one game" },
   { id: "collector", name: "COLLECTOR", description: "Pick up 20 items in one game" },
   { id: "grown", name: "TOO SLOW", description: "Kill a demon that has grown" },
+  { id: "dungeon", name: "DUNGEON CRAWLER", description: "Slay a dungeon boss" },
   { id: "doom_slayer", name: "DOOM SLAYER!", description: "Set a new high score" },
   { id: "rip_and_tear", name: "RIP AND TEAR!!!", description: "Earn every other trophy" },
 ];

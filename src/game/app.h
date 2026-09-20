@@ -220,6 +220,7 @@ private:
     bool onlineOn_ = true;             // per-profile setting (settings.txt online=); on by default, nothing is posted until the email is approved
     bool onlineAsked_ = false;         // the "post your scores?" question has been asked for this profile (settings.txt online_asked=)
     float pollT_ = 0.f;                // seconds until the next registration poll
+    float versionAgeT_ = 0.f;          // seconds since the last version check (re-checked on the title every ten minutes and when WHAT'S NEW opens)
     // Update notice and WHAT'S NEW (the service's /api/version, cached in <pref>/version.json).
     std::string latestVersion_, latestUrl_;
     bool updateAvailable_ = false;

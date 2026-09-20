@@ -1707,7 +1707,11 @@ void App::menuSelect() {
     else if (item == "OPTIONS") openScreen(kScreenOptions);
     else if (item == "TROPHIES") openScreen(kScreenTrophies);
     else if (item == "LEADERBOARD") openLeaderboard(leaderboardTab_);
-    else if (item.rfind("WHAT'S NEW", 0) == 0) { whatsNewScroll_ = 0; openScreen(kScreenWhatsNew); }
+    else if (item.rfind("WHAT'S NEW", 0) == 0) {
+        whatsNewScroll_ = 0;
+        if (versionAgeT_ > 60.f) { versionAgeT_ = 0.f; checkVersion(); }   // a release published since launch shows up here
+        openScreen(kScreenWhatsNew);
+    }
     else if (item == "CREDITS") openScreen(kScreenCredits);
     else if (item.rfind("PLAYER: ", 0) == 0) openScreen(kScreenProfiles);
     else if (item == "START") { if (profileName_.empty()) openScreen(kScreenNameEntry); else enterMode(Mode::Blocks); }
@@ -2135,6 +2139,8 @@ void App::handleFpsEvents() {
 void App::update(float dt) {
     modeT_ += dt;
     updateNoticeT_ = (mode_ == Mode::Title && updateAvailable_) ? updateNoticeT_ + dt : 0.f;
+    versionAgeT_ += dt;
+    if (mode_ == Mode::Title && screen_ == kScreenNone && versionAgeT_ > 600.f && !online_.busy()) { versionAgeT_ = 0.f; checkVersion(); }   // a game left on the title still learns of a release
     {
         // The dungeon lives only through a fight; the static environment follows its stage.
         const bool fightMode = mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut

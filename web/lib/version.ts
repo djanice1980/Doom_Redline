@@ -1,6 +1,7 @@
 // The latest release and the changelog, for the game's update notice and its
 // WHAT'S NEW screen. Both come from GitHub (the Releases API and CHANGELOG.md on
-// main) and are cached in memory for ten minutes.
+// main) and are cached in memory for three minutes, so a new release reaches the game
+// within a few minutes of being published.
 const REPO = "djanice1980/Doom_Redline";
 
 export interface ChangelogEntry { version: string; date: string; items: string[] }
@@ -22,7 +23,7 @@ export function parseChangelog(md: string): ChangelogEntry[] {
 }
 
 export async function versionInfo(): Promise<VersionInfo> {
-  if (cache && Date.now() - cache.at < 10 * 60 * 1000) return cache.info;
+  if (cache && Date.now() - cache.at < 3 * 60 * 1000) return cache.info;
   let latest = "", url = `https://github.com/${REPO}/releases/latest`, published: string | null = null;
   try {
     const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: "application/vnd.github+json", "User-Agent": "redline-online" }, cache: "no-store" });
