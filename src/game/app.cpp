@@ -2234,7 +2234,7 @@ void App::handleFpsEvents() {
             if (brutalActive() && !assets_.brSpray[bloodColorForKind(ev.kind)].empty()) bursts_.push_back({ev.pos, 0.f, 0.42f, 0.007f, &assets_.brSpray[bloodColorForKind(ev.kind)]});
             break;
         case FpsEvent::Type::BulletHole:
-            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos, 0.f, 0.6f, 0.006f, &assets_.brSmoke});
+            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos, 0.f, 0.6f, 0.006f, &assets_.brSmoke, glm::vec4(0.5f, 0.47f, 0.45f, 0.45f)});
             if (ev.a) {   // wall: sparks and a ricochet; floor: a dull thud
                 if (!assets_.brSparks.empty()) bursts_.push_back({ev.pos, 0.f, 0.45f, 0.007f, &assets_.brSparks});
                 if (assets_.brRicochetSounds) play("ricochet" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brRicochetSounds)), 0.35f, 1.f, 60);
@@ -2260,11 +2260,15 @@ void App::handleFpsEvents() {
             break;
         case FpsEvent::Type::VileBlast:   // A_VileAttack plays the barrel explosion
             play("explode", 1.f); shakeT_ = 0.45f; rumble(0.9f, 0.6f, 300);
-            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke});
+            // Smoke, not a flash: the default 1.3 white tint left a glowing pale ball hanging
+            // in the air for half a second after every fireball had gone out.
+            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke, glm::vec4(0.34f, 0.30f, 0.28f, 0.38f)});
             break;
         case FpsEvent::Type::Explosion:
             play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
-            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke});
+            // Smoke, not a flash: the default 1.3 white tint left a glowing pale ball hanging
+            // in the air for half a second after every fireball had gone out.
+            if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke, glm::vec4(0.34f, 0.30f, 0.28f, 0.38f)});
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
@@ -3415,7 +3419,10 @@ void App::addBursts() {
         const int n = static_cast<int>(b.anim->frames.size());
         const int i = std::clamp(static_cast<int>(k * static_cast<float>(n)), 0, n - 1);
         const float fade = k > 0.7f ? (1.f - k) / 0.3f : 1.f;
-        softBillboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(glm::vec3(b.tint) * fade, b.tint.a * fade));
+        // Smoke (an alpha under 1) is see-through from the start and thins as it drifts;
+        // opaque bursts (sparks, chunks) keep the old flat fade.
+        const float alpha = b.tint.a < 0.99f ? b.tint.a * fade * (1.f - 0.55f * k) : b.tint.a * fade;
+        softBillboard(b.anim->frames[static_cast<size_t>(i)], b.pos, b.px, glm::vec4(glm::vec3(b.tint) * fade, alpha));
     }
     // Embers: tiny glowing cubes; rings: an expanding, fading shockwave in the board plane.
     for (const Ember& e : embers_) {
