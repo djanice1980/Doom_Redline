@@ -3702,9 +3702,10 @@ void App::addHud() {
         }
         text(W * 0.5f, hy, "DEMONS " + std::to_string(fps_.enemiesLeft()) + "/" + std::to_string(fps_.totalEnemies()), s, yellow, 1);
         if (const Enemy* boss = fps_.boss(); boss && fps_.stage() == FpsMode::Stage::Dungeon) {
-            // The boss's health, once it has been seen (above the demon count); before that, a hint that it is down there.
-            const float by = hy - lh * 2.3f;
-            if (!fps_.bossSeen()) text(W * 0.5f, hy - lh * 1.1f, "ENTER THE DUNGEON AND KILL THE BOSS", s * 0.7f, glm::vec4(1.f, 0.5f, 0.4f, 0.8f + 0.2f * std::sin(time_ * 3.f)), 1);
+            // The boss's health, once it has been seen; before that, a hint that it is down
+            // there. Both sit clear above the weapon roster, which owns the row at hy - 1.3.
+            const float by = hy - lh * 3.6f;
+            if (!fps_.bossSeen()) text(W * 0.5f, hy - lh * 2.7f, "ENTER THE DUNGEON AND KILL THE BOSS", s * 0.7f, glm::vec4(1.f, 0.5f, 0.4f, 0.8f + 0.2f * std::sin(time_ * 3.f)), 1);
             else if (boss->alive()) {
                 const std::string& name = assets_.enemies[std::clamp(boss->kind, 0, kEnemyKinds - 1)].name;
                 text(W * 0.5f, by, name, s * 0.8f, glm::vec4(1.f, 0.35f, 0.3f, 1.f), 1);
