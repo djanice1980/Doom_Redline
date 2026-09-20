@@ -534,26 +534,38 @@ sensitivity, inverted look and rumble live under OPTIONS.
 
 ## Controls
 
+CONTROLS on the title screen and on the pause menu lists all of this in the
+game, keyboard and gamepad side by side. Nothing is printed over the play
+field any more.
+
 Every menu and screen works with the mouse as well: hovering highlights an
 item, a left click activates it, option rows step forward on left click and
 back on right click, and each screen has a clickable BACK or CANCEL.
 
 Block mode:
 
-| Key | Action |
-|---|---|
-| Left / Right, A / D | move (auto-repeats) |
-| Up, X, W | rotate clockwise |
-| Z, Left Ctrl | rotate counter-clockwise |
-| Down, S | soft drop |
-| Space | hard drop |
-| Esc | pause menu (resume / options / restart / quit) |
-| T | trophies (title screen) |
-| F12 | screenshot to `redline-screenshot.png` |
+| Action | Keyboard | Gamepad |
+|---|---|---|
+| Move (auto-repeats) | Left / Right, A / D | D-pad or left stick |
+| Soft drop | Down, S | D-pad down or stick down |
+| Rotate clockwise | Up, X, W | A or RB |
+| Rotate counter-clockwise | Z, Left Ctrl | B or LB |
+| Hard drop | Space | X or D-pad up |
 
-First-person mode: mouse to look, WASD to move, Shift to run, left click /
-Space to fire, 1-4 or mouse wheel (Q/E) to switch weapons. Menus (title, pause, game over):
-Up/Down or W/S to pick, Enter or click to confirm.
+First-person mode:
+
+| Action | Keyboard and mouse | Gamepad |
+|---|---|---|
+| Move | WASD or arrows | Left stick |
+| Look | Mouse | Right stick |
+| Fire | Left click, Space, Left Ctrl | A or right trigger |
+| Run | Shift | Left trigger or L3 |
+| Change weapon | 1-4, Q / E, mouse wheel | LB / RB or X / Y |
+
+Anywhere: Esc pauses and opens the menu (Start on a pad), Up/Down or W/S pick
+and Enter or a click confirms (D-pad and A, B goes back), T opens the trophies
+from the title screen, M mutes the music and N steps through the soundtracks,
+F12 saves a numbered screenshot and Alt+Enter toggles fullscreen.
 
 ## Rules that differ from classic
 

@@ -289,7 +289,7 @@ private:
     std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
     enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry,
-                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew, kScreenAdopt, kScreenDeleteOnline };
+                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew, kScreenAdopt, kScreenDeleteOnline, kScreenControls };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     int optionsScroll_ = 0;        // first option row in view (the list scrolls when the window is short)

@@ -540,8 +540,12 @@ it server-side. `stats_test` covers the round trip across two machines.
   profile left, resets to the name prompt. `profileRequired_` keeps the
   screen up at start-up until a player is chosen; scripted runs skip it
   unless `REDLINE_ASK_PROFILE=1`; `--keys` chords: `#` is Delete, `~` Enter, `` ` `` Esc), Name entry (keyboard text
-  input via SDL_EVENT_TEXT_INPUT; gamepad letter picker). `screenKey` takes
-  both keyboard and pad input mapped to key codes.
+  input via SDL_EVENT_TEXT_INPUT; gamepad letter picker), Controls (the key
+  and pad reference: three sections drawn as label/keyboard/gamepad columns,
+  the row step computed from the window height so a short window shrinks the
+  page instead of running off the bottom; reached from the title and the
+  pause menu, and the only place the bindings are written down in the game).
+  `screenKey` takes both keyboard and pad input mapped to key codes.
 - Trophies: fixed catalogue in `trophyCatalogue()`; `App::trophy(id)` unlocks
   once and calls `showTrophy` (a `Toast` queue: one card at a time, slides in
   over 0.35 s, holds 5 s (8 s for the ultimate), slides out; the jingle and

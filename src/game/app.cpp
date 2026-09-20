@@ -494,7 +494,7 @@ void App::enterMode(Mode m) {
     menu_ = {};
     switch (m) {
     case Mode::Title:
-        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "OPTIONS", "TROPHIES", "LEADERBOARD", updateAvailable_ ? "WHAT'S NEW: VERSION " + latestVersion_ : "WHAT'S NEW", "CREDITS", "QUIT"};
+        menu_.items = {"START", "PLAYER: " + (profileName_.empty() ? std::string("NONE") : profileName_), "CONTROLS", "OPTIONS", "TROPHIES", "LEADERBOARD", updateAvailable_ ? "WHAT'S NEW: VERSION " + latestVersion_ : "WHAT'S NEW", "CREDITS", "QUIT"};
         refreshAllScores();
         if (nameRequired_ && profileName_.empty() && screen_ == kScreenNone) openScreen(kScreenNameEntry);
         else if (profileRequired_ && screen_ == kScreenNone) openScreen(kScreenProfiles);
@@ -548,7 +548,7 @@ void App::enterMode(Mode m) {
         if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
         break;
     case Mode::Paused:
-        menu_.items = {"RESUME", "TROPHIES", "OPTIONS", "RESTART", "MAIN MENU", "QUIT"};
+        menu_.items = {"RESUME", "CONTROLS", "TROPHIES", "OPTIONS", "RESTART", "MAIN MENU", "QUIT"};
         break;
     default:
         break;
@@ -1380,6 +1380,7 @@ void App::screenKey(int key, bool fromPad) {
     }
     case kScreenTrophies:
     case kScreenCredits:
+    case kScreenControls:
         if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_BACKSPACE || key == SDLK_SPACE) closeScreen();
         break;
     case kScreenWadSetup: {
@@ -1833,6 +1834,7 @@ void App::menuSelect() {
         if (versionAgeT_ > 60.f) { versionAgeT_ = 0.f; checkVersion(); }   // a release published since launch shows up here
         openScreen(kScreenWhatsNew);
     }
+    else if (item == "CONTROLS") openScreen(kScreenControls);
     else if (item == "CREDITS") openScreen(kScreenCredits);
     else if (item.rfind("PLAYER: ", 0) == 0) openScreen(kScreenProfiles);
     else if (item == "START") { if (profileName_.empty()) openScreen(kScreenNameEntry); else enterMode(Mode::Blocks); }
@@ -3628,14 +3630,16 @@ void App::addHud() {
     // A full-screen overlay (players, options, leaderboard...) replaces the page: drawing
     // the block HUD and the key hints behind it only shows through and collides with titles.
     if (!inFps && screen_ == kScreenNone) {
-        float x = 24.f, y = 24.f;
+        // The column sits as high as the window allows: the key hints that used to share
+        // the top of the screen live on the CONTROLS page now.
+        float x = 24.f, y = 4.f * s;   // top margin in glyph pixels, so it sits the same on any display
         text(x, y, "SCORE", s, dim); y += lh;
-        text(x, y, std::to_string(game_->score()), s, white); y += lh * 1.4f;
+        text(x, y, std::to_string(game_->score()), s, white); y += lh * 1.15f;
         text(x, y, "LEVEL " + std::to_string(game_->level()), s, dim); y += lh;
         text(x, y, "LINES " + std::to_string(game_->lines()), s, dim); y += lh;
         text(x, y, "RED LINES " + std::to_string(redLinesSurvived_), s, red); y += lh;
         if (game_->combo() > 1) { text(x, y, "COMBO X" + std::to_string(game_->combo()), s, yellow); }
-        y += lh * 1.4f;
+        y += lh * 0.9f;
         if (game_->prizes().any()) {
             const core::Prizes& pr = game_->prizes();
             text(x, y, "NEXT FIGHT", s * 0.7f, dim); y += lh * 0.8f;
@@ -3660,10 +3664,6 @@ void App::addHud() {
             q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
             screenQuads_.push_back(q);
         }
-        text(W - 24.f, 24.f, "ARROWS/WASD MOVE  UP ROTATE  SPACE DROP", s * 0.6f, dim, 2);
-        text(W - 24.f, 24.f + lh, "RED BLOCKS REFUSE TO CLEAR.", s * 0.6f, dim, 2);
-        text(W - 24.f, 24.f + lh * 2.f, "A FULL RED ROW TIPS THE BOARD OVER.", s * 0.6f, dim, 2);
-        text(W - 24.f, 24.f + lh * 3.f, pad_ ? "PAD: STICK/DPAD MOVE  A/B ROTATE  X DROP  START PAUSE" : "ESC MENU  F12 SCREENSHOT", s * 0.6f, dim, 2);
     }
     if (mode_ == Mode::Blocks && game_->danger() > 0.f) {
         // The stack is high enough for blocks to turn evil: a creeping red edge and a warning.
@@ -4098,6 +4098,52 @@ void App::addHud() {
             line("DOOM ART, SOUNDS AND MUSIC: ID SOFTWARE", 0.7f, dim, 0.85f);
             line("MODERN SOUNDTRACK: ANDREW HULSHULT   SC-55 RECORDINGS: THE DOOM RERELEASE", 0.7f, dim, 0.85f);
             line("LIBVORBIS, FLUIDSYNTH, GLM", 0.7f, dim, 1.4f);
+            hotText(W * 0.5f, y, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
+        } else if (screen_ == kScreenControls) {
+            // Everything that used to be printed in the corner of the play field, keyboard
+            // and pad side by side. The rows are stepped to fit whatever height we have,
+            // so a short window shrinks the page rather than running off the bottom.
+            text(W * 0.5f, H * 0.06f, "CONTROLS", s * 1.8f, white, 1);
+            const float labelR = W * 0.34f, keyX = W * 0.37f, padX = W * 0.70f, colW = W * 0.29f;
+            const float yTop = H * 0.06f + lh * 2.2f;
+            const float step = std::min(lh * 0.95f, (H * 0.90f - yTop) / 24.f);
+            const float rs = s * 0.8f * std::min(1.f, step / (lh * 0.95f));
+            float y = yTop;
+            text(keyX, y, "KEYBOARD AND MOUSE", rs * 0.85f, yellow, 0);
+            text(padX, y, "GAMEPAD", rs * 0.85f, yellow, 0);
+            y += step * 1.2f;
+            auto section = [&](const char* name) {
+                y += step * 0.5f;
+                text(labelR, y, name, rs * 1.05f, glm::vec4(1.f, 0.35f, 0.25f, 1.f), 2);
+                y += step * 1.05f;
+            };
+            auto ctrl = [&](const char* what, const char* kb, const char* pad) {
+                text(labelR, y, what, rs, dim, 2);
+                textFit(keyX, y, kb, rs, white, 0, colW);
+                textFit(padX, y, pad, rs, white, 0, colW);
+                y += step;
+            };
+            section("FALLING BLOCKS");
+            ctrl("MOVE", "LEFT / RIGHT  OR  A / D", "D-PAD  OR  LEFT STICK");
+            ctrl("SOFT DROP", "DOWN  OR  S", "D-PAD DOWN  OR  STICK DOWN");
+            ctrl("ROTATE", "UP, W  OR  X", "A  OR  RB");
+            ctrl("ROTATE BACK", "Z  OR  CTRL", "B  OR  LB");
+            ctrl("HARD DROP", "SPACE", "X  OR  D-PAD UP");
+            section("THE FIGHT");
+            ctrl("MOVE", "W A S D  OR  ARROWS", "LEFT STICK");
+            ctrl("LOOK", "MOUSE", "RIGHT STICK");
+            ctrl("FIRE", "CLICK, SPACE  OR  CTRL", "A  OR  RIGHT TRIGGER");
+            ctrl("RUN", "SHIFT", "LEFT TRIGGER  OR  L3");
+            ctrl("CHANGE WEAPON", "1 - 4, Q / E  OR  WHEEL", "LB / RB  OR  X / Y");
+            section("ANYWHERE");
+            ctrl("PAUSE AND MENU", "ESC", "START");
+            ctrl("MENUS", "ARROWS, ENTER, MOUSE", "D-PAD AND A,  B GOES BACK");
+            ctrl("MUSIC", "M MUTE     N NEXT SET", "");
+            ctrl("SCREENSHOT", "F12", "");
+            ctrl("FULLSCREEN", "ALT + ENTER", "");
+            y += step * 0.7f;
+            textFit(W * 0.5f, y, "RED BLOCKS REFUSE TO CLEAR.   A FULL RED ROW TIPS THE BOARD OVER.", rs, red, 1, W - 48.f);
+            y += step * 1.5f;
             hotText(W * 0.5f, y, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
         } else if (screen_ == kScreenWadSetup) {
             text(W * 0.5f, H * 0.12f, "REDLINE NEEDS DOOM", s * 2.f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
