@@ -584,6 +584,23 @@ it server-side. `stats_test` covers the round trip across two machines.
   the WHAT'S NEW menu item's label). `kScreenWhatsNew` wraps the changelog
   bullets to the width, scrolls with Up/Down, and Enter calls `SDL_OpenURL`
   on the release page. `REDLINE_UPDATE_DEMO=<version>` fakes a newer release.
+- The title card (`buildTitleCard` in assets.cpp): a 320x200 page composed at
+  load time out of whatever art the install has, which is the menu logo, the
+  WAD's own letters and two of its monsters over a painted sky, a brick course
+  and a stack of blocks. It goes into the atlas twice: as it is, and run
+  through `shadeBlue` (luminance into a blue ramp) with the bottom band left
+  empty. `App::addSplash` draws the first one over everything at startup and
+  `startMelt`/`stepSplash` take it away in `kMeltColumns` strips on Doom's
+  35 Hz tic, each strip a quad with its own slice of the atlas region and its
+  own offset. Any key or button during the hold starts the melt; nothing
+  interrupts the melt itself. `addCardBackdrop` draws the blue copy behind
+  `kScreenControls` and `kScreenFarewell`. Scripted runs start past the card
+  unless `REDLINE_SPLASH` is set, so every other capture lands on its frame.
+- Leaving: QUIT and Esc on the title call `quitGame`, which puts
+  `kScreenFarewell` up (the blue page, the player's numbers, where to get the
+  next version) until any key, or ten seconds. Scripted runs and the bot go
+  straight out unless `REDLINE_FAREWELL` is set; the window's close button
+  always exits at once.
 - Ray tracing: `rtShadows_` defaults to 3 but is forced to 0 (and saved) on a
   GPU without ray queries, so the setting file reflects what runs.
 - Level card: 4 s after the fly-out; block gravity pauses while a piece would

@@ -174,6 +174,10 @@ App::App(Options opts) : opts_(std::move(opts)) {
     // First run without Doom data: offer to find it before anything else.
     if (wadMissing_ && opts_.scenario == "title") openScreen(kScreenWadSetup);
     if (doomArtOff_ && assets_.usingWad()) setDoomArt(false);   // the profile prefers the placeholder look
+    // The title card, up before anything else. Scripted captures start past it
+    // unless they ask for it, so every other screenshot still lands on its frame.
+    splashActive_ = !assets_.titleCard.empty() && opts_.scenario == "title"
+                    && (opts_.frames == 0 || std::getenv("REDLINE_SPLASH"));
 }
 
 // Music: MUS tracks from the WAD through the OPL3 emulator with GENMIDI, or
@@ -1299,11 +1303,22 @@ void App::pollGamepad(float dt) {
 }
 
 // --- overlay screens ---------------------------------------------------------
+// Leaving the game: Doom put a page up on the way out, and so does this. Scripted
+// runs and the bot go straight out so a capture never ends on it.
+void App::quitGame() {
+    const bool scripted = (opts_.frames > 0 || opts_.bot) && !std::getenv("REDLINE_FAREWELL");
+    if (scripted || assets_.titleCardBlue.empty()) { running_ = false; return; }
+    if (mouseCaptured_) { SDL_SetWindowRelativeMouseMode(window_, false); mouseCaptured_ = false; }
+    stats_.save();
+    openScreen(kScreenFarewell);
+}
+
 void App::openScreen(int screen) {
     screen_ = screen;
     screenIndex_ = 0;
     optionsScroll_ = 0;
     optionsFollow_ = true;
+    if (screen == kScreenFarewell) farewellT_ = 0.f;
     if (screen == kScreenProfiles) loadProfileList();
     if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; nameRename_ = false; wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
@@ -1385,6 +1400,9 @@ void App::screenKey(int key, bool fromPad) {
     case kScreenCredits:
     case kScreenControls:
         if (key == SDLK_ESCAPE || key == SDLK_RETURN || key == SDLK_BACKSPACE || key == SDLK_SPACE) closeScreen();
+        break;
+    case kScreenFarewell:
+        running_ = false;   // anything at all: this page is the way out
         break;
     case kScreenWadSetup: {
         const int n = 4;   // browse, type, placeholder, quit
@@ -1890,7 +1908,7 @@ void App::menuKey(int key) {
 
 void App::menuSelect() {
     const std::string& item = menu_.items[static_cast<size_t>(menu_.index)];
-    if (item == "QUIT") running_ = false;
+    if (item == "QUIT") quitGame();
     else if (item == "OPTIONS") openScreen(kScreenOptions);
     else if (item == "TROPHIES") openScreen(kScreenTrophies);
     else if (item == "LEADERBOARD") openLeaderboard(leaderboardTab_);
@@ -1914,6 +1932,12 @@ void App::handleEvents() {
     fpsIn_.select = -1;
     fpsIn_.wheel = 0;
     while (SDL_PollEvent(&e)) {
+        // While the title card is up, a key or a click takes it away. Doom let you
+        // cut the wait short but never the wipe, and neither do we.
+        if (splashActive_ && (e.type == SDL_EVENT_KEY_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)) {
+            startMelt();
+            continue;
+        }
         switch (e.type) {
         case SDL_EVENT_QUIT:
             running_ = false;
@@ -1966,6 +1990,7 @@ void App::handleEvents() {
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             stats_.addInput(InputDevice::Mouse);
+            if (screen_ == kScreenFarewell) { running_ = false; break; }   // the page says any key, and means it
             if (mode_ == Mode::Fps && screen_ == kScreenNone) { if (e.button.button == SDL_BUTTON_LEFT) fpsIn_.fire = true; break; }
             if (e.button.button == SDL_BUTTON_LEFT || e.button.button == SDL_BUTTON_RIGHT) {
                 const Hotspot* h = hotspotAt(e.button.x, e.button.y);
@@ -2033,7 +2058,7 @@ void App::handleEvents() {
             if (k == SDLK_ESCAPE) {
                 if (mode_ == Mode::Blocks || mode_ == Mode::Fps || mode_ == Mode::Countdown) { pausedFrom_ = mode_; enterMode(Mode::Paused); }
                 else if (mode_ == Mode::Paused) enterMode(pausedFrom_);
-                else if (mode_ == Mode::Title) running_ = false;
+                else if (mode_ == Mode::Title) quitGame();
                 break;
             }
             if (k == SDLK_T && mode_ == Mode::Title && !e.key.repeat) { openScreen(kScreenTrophies); break; }
@@ -2351,6 +2376,11 @@ void App::handleFpsEvents() {
 
 void App::update(float dt) {
     modeT_ += dt;
+    stepSplash(dt);
+    if (screen_ == kScreenFarewell) {
+        farewellT_ += dt;
+        if (farewellT_ > 10.f) running_ = false;   // nobody is watching: go
+    }
     updateNoticeT_ = (mode_ == Mode::Title && updateAvailable_) ? updateNoticeT_ + dt : 0.f;
     versionAgeT_ += dt;
     if (mode_ == Mode::Title && screen_ == kScreenNone && versionAgeT_ > 600.f && !online_.busy()) { versionAgeT_ = 0.f; checkVersion(); }   // a game left on the title still learns of a release
@@ -3683,6 +3713,82 @@ void App::textRot(float cx, float cy, const std::string& s, float scale, glm::ve
     }
 }
 
+// --- the title card and its melt --------------------------------------------
+// Doom put a full-screen page up before the game and slid it away a column at a
+// time, each column starting a little later than its neighbour and picking up
+// speed. The page is assets_.titleCard; this is that wipe, on the same 35 Hz
+// clock, so it falls at the speed it did in 1993.
+void App::startMelt() {
+    if (splashMelting_) return;
+    splashMelting_ = true;
+    meltTick_ = 0.f;
+    uint32_t seed = static_cast<uint32_t>(SDL_GetTicks()) | 1u;
+    auto rnd = [&]() { seed = seed * 1664525u + 1013904223u; return (seed >> 16) & 0x7fffu; };
+    meltY_[0] = -static_cast<float>(rnd() % 16u);
+    for (int i = 1; i < kMeltColumns; ++i) {
+        const float step = static_cast<float>(static_cast<int>(rnd() % 3u) - 1);
+        meltY_[i] = std::clamp(meltY_[i - 1] + step, -15.f, 0.f);
+    }
+}
+
+void App::stepSplash(float dt) {
+    if (!splashActive_) return;
+    splashT_ += dt;
+    if (!splashMelting_) {
+        if (splashT_ > 2.2f) startMelt();
+        return;
+    }
+    meltTick_ += dt;
+    const float tic = 1.f / 35.f;
+    while (meltTick_ >= tic) {
+        meltTick_ -= tic;
+        bool moving = false;
+        for (int i = 0; i < kMeltColumns; ++i) {
+            float& y = meltY_[i];
+            if (y < 0.f) { y += 1.f; moving = true; }
+            else if (y < 200.f) {
+                const float dy = y < 16.f ? y + 1.f : 8.f;
+                y = std::min(200.f, y + dy);
+                moving = true;
+            }
+        }
+        if (!moving) { splashActive_ = false; splashMelting_ = false; break; }
+    }
+}
+
+void App::addSplash(float W, float H) {
+    if (!splashActive_ || assets_.titleCard.empty()) return;
+    const render::AtlasRegion& r = assets_.region(assets_.titleCard);
+    const float colW = W / static_cast<float>(kMeltColumns), rowPx = H / 200.f;
+    for (int i = 0; i < kMeltColumns; ++i) {
+        if (meltY_[i] >= 200.f) continue;   // this column has left the screen
+        const float f0 = static_cast<float>(i) / static_cast<float>(kMeltColumns);
+        const float f1 = static_cast<float>(i + 1) / static_cast<float>(kMeltColumns);
+        render::QuadInstance q;
+        q.pos = glm::vec4(std::floor(static_cast<float>(i) * colW), std::max(0.f, meltY_[i]) * rowPx, 0.f, 0.f);
+        q.size = glm::vec4(std::ceil(colW) + 1.f, H, 0.f, 1.f);
+        q.uvRect = glm::vec4(r.u0 + (r.u1 - r.u0) * f0, r.v0, r.u0 + (r.u1 - r.u0) * f1, r.v1);
+        q.color = glm::vec4(1.f);
+        q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
+        screenQuads_.push_back(q);
+    }
+}
+
+// The same page shaded blue, behind a screen that has text over it. `dim` is how
+// far it is taken down so the text stays the brightest thing on the page.
+void App::addCardBackdrop(float W, float H, float dim) {
+    if (assets_.titleCardBlue.empty()) { panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.88f)); return; }
+    const render::AtlasRegion& r = assets_.region(assets_.titleCardBlue);
+    render::QuadInstance q;
+    q.pos = glm::vec4(0.f, 0.f, 0.f, 0.f);
+    q.size = glm::vec4(W, H, 0.f, 1.f);
+    q.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
+    q.color = glm::vec4(1.f);
+    q.params = glm::vec4(1.f, 0.f, 0.f, 0.f);
+    screenQuads_.push_back(q);
+    panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.02f, dim));
+}
+
 void App::addHud() {
     hotspots_.clear();
     VkExtent2D ext = renderer_->extent();
@@ -4030,7 +4136,9 @@ void App::addHud() {
     }
     // Overlay screens ---------------------------------------------------------
     if (screen_ != kScreenNone) {
-        panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.88f));
+        // Two pages borrow Doom's trick of sitting on the title art in blue.
+        if (screen_ == kScreenControls || screen_ == kScreenFarewell) addCardBackdrop(W, H, 0.45f);
+        else panel(0.f, 0.f, W, H, glm::vec4(0.f, 0.f, 0.f, 0.88f));
         int rowIndex = 0;
         // enabled = false greys the row out (it stays selectable but does nothing); sub-options are drawn smaller with a dash.
         auto row = [&](float y, const std::string& label, const std::string& value, bool sel, bool enabled = true, bool sub = false) {
@@ -4167,6 +4275,26 @@ void App::addHud() {
             line("MODERN SOUNDTRACK: ANDREW HULSHULT   SC-55 RECORDINGS: THE DOOM RERELEASE", 0.7f, dim, 0.85f);
             line("LIBVORBIS, FLUIDSYNTH, GLM", 0.7f, dim, 1.4f);
             hotText(W * 0.5f, y, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
+        } else if (screen_ == kScreenFarewell) {
+            // The page on the way out. Doom filled this one with a phone number and
+            // an order form; ours says what you did and where the next version lives.
+            text(W * 0.5f, H * 0.12f, "THANKS FOR PLAYING", s * 2.2f, glm::vec4(1.f, 0.85f, 0.35f, 1.f), 1);
+            float y = H * 0.12f + lh * 3.f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap) { textFit(W * 0.5f, y, t, s * sc, c, 1, W - 64.f); y += lh * gap; };
+            line("REDLINE   VERSION " + std::string(REDLINE_VERSION), 1.f, white, 1.8f);
+            if (!profileName_.empty()) {
+                line(profileName_, 1.4f, glm::vec4(1.f, 0.3f, 0.25f, 1.f), 1.2f);
+                std::string row = "BEST " + std::to_string(highScore_) + "     TROPHIES " + std::to_string(trophies_.unlockedCount()) + "/" + std::to_string(trophies_.total());
+                if (stats_.loaded()) row += "     PLAYED " + PlayerStats::formatDuration(stats_.lifetime().total());
+                line(row, 0.9f, dim, 2.0f);
+            }
+            line("THE BLOCKS WILL KEEP FALLING WITHOUT YOU.", 0.9f, glm::vec4(0.8f, 0.8f, 0.85f, 1.f), 1.1f);
+            line("THE DEMONS WILL KEEP.", 0.9f, glm::vec4(0.8f, 0.8f, 0.85f, 1.f), 2.0f);
+            line("NEW VERSIONS, THE SOURCE AND THE LEADERBOARD:", 0.8f, dim, 1.1f);
+            line("GITHUB.COM/DJANICE1980/DOOM_REDLINE", 0.95f, glm::vec4(0.6f, 0.9f, 1.f, 1.f), 1.1f);
+            line("DOOM-REDLINE.VERCEL.APP", 0.95f, glm::vec4(0.6f, 0.9f, 1.f, 1.f), 2.2f);
+            const float f = 0.55f + 0.45f * std::sin(time_ * 4.f);
+            hotText(W * 0.5f, y, "PRESS ANY KEY TO EXIT", s * 1.1f, glm::vec4(1.f, 0.9f, 0.4f, f), 1, kHotBack, 0);
         } else if (screen_ == kScreenControls) {
             // Everything that used to be printed in the corner of the play field, keyboard
             // and pad side by side. The three columns are measured first and the block is
@@ -4654,6 +4782,10 @@ void App::buildScene() {
     if (actors) addFpsActors();
     addLights();
     addHud();
+    {   // The title card covers everything, including the overlay screens.
+        VkExtent2D ext = renderer_->extent();
+        addSplash(static_cast<float>(ext.width), static_cast<float>(ext.height));
+    }
 }
 
 }  // namespace rl::game

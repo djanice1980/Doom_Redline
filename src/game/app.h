@@ -244,6 +244,20 @@ private:
     int whatsNewScroll_ = 0;
     void checkVersion();
     void applyVersionInfo(const Json& info, bool fromNetwork);
+    // The title card and its melt. Doom opened on a full-screen page that slid away
+    // in columns; kMeltColumns of them fall at their own pace until the page is gone.
+    static constexpr int kMeltColumns = 160;
+    bool splashActive_ = false;
+    bool splashMelting_ = false;
+    float splashT_ = 0.f;          // seconds the card has been up
+    float meltTick_ = 0.f;         // accumulator for the 35 Hz melt step
+    float meltY_[kMeltColumns]{};  // each column's offset, in card rows (200 = gone)
+    void quitGame();               // the farewell page, then out
+    void startMelt();
+    void stepSplash(float dt);
+    void addSplash(float W, float H);
+    void addCardBackdrop(float W, float H, float dim);   // the blue page behind a screen
+    float farewellT_ = 0.f;        // the page shown on the way out
     static bool versionNewer(const std::string& a, const std::string& b);   // a > b, "x.y.z"
     std::string onlineServer_;         // <pref>/online.txt server=, REDLINE_ONLINE_URL, --online-server, or the default
     std::string onlineStatus_;         // last upload result for the game-over screen
@@ -289,7 +303,8 @@ private:
     std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
     enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry,
-                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew, kScreenAdopt, kScreenDeleteOnline, kScreenControls };
+                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew, kScreenAdopt, kScreenDeleteOnline, kScreenControls,
+                  kScreenFarewell };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     int optionsScroll_ = 0;        // first option row in view (the list scrolls when the window is short)

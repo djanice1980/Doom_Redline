@@ -1,11 +1,15 @@
 #include "game/assets.h"
 
+#include "version.h"
+
 #include "core/png.h"
 #include "core/png_read.h"
 #include "core/pixel_scale.h"
 #include "audio/oggstream.h"
 
 #include <algorithm>
+#include <map>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -37,6 +41,211 @@ std::string readFirstLine(const fs::path& p) {
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
     return line;
 }
+}  // namespace
+
+// --- the title card ---------------------------------------------------------
+// Doom opened on a full-screen page that melted away into the game, and it
+// reused that page, shaded blue, behind its help and farewell screens. This is
+// ours: 320x200, the same shape, built out of whatever art this install has.
+namespace {
+
+void blitImage(Image& dst, const Image& src, int x0, int y0, int scale,
+               float tr, float tg, float tb, float alpha) {
+    if (!src.valid() || scale < 1) return;
+    for (int sy = 0; sy < src.height; ++sy)
+        for (int sx = 0; sx < src.width; ++sx) {
+            const uint8_t* s = src.px(sx, sy);
+            const float a = static_cast<float>(s[3]) / 255.f * alpha;
+            if (a <= 0.004f) continue;
+            const float sr = static_cast<float>(s[0]) * tr, sg = static_cast<float>(s[1]) * tg, sb = static_cast<float>(s[2]) * tb;
+            for (int ry = 0; ry < scale; ++ry)
+                for (int rx = 0; rx < scale; ++rx) {
+                    const int dx = x0 + sx * scale + rx, dy = y0 + sy * scale + ry;
+                    if (dx < 0 || dy < 0 || dx >= dst.width || dy >= dst.height) continue;
+                    uint8_t* d = dst.px(dx, dy);
+                    d[0] = static_cast<uint8_t>(std::clamp(sr * a + static_cast<float>(d[0]) * (1.f - a), 0.f, 255.f));
+                    d[1] = static_cast<uint8_t>(std::clamp(sg * a + static_cast<float>(d[1]) * (1.f - a), 0.f, 255.f));
+                    d[2] = static_cast<uint8_t>(std::clamp(sb * a + static_cast<float>(d[2]) * (1.f - a), 0.f, 255.f));
+                    d[3] = 255;
+                }
+        }
+}
+
+int cardTextWidth(const std::map<char, Image>& glyphs, const std::string& s, int scale) {
+    int w = 0;
+    for (char c : s) {
+        auto it = glyphs.find(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        w += (it == glyphs.end() ? 5 : it->second.width + 1) * scale;
+    }
+    return w;
+}
+
+// Letters sit on a common baseline: Doom's font has short glyphs (a full stop is
+// three pixels tall) that would otherwise float at the top of the line.
+void cardText(Image& dst, const std::map<char, Image>& glyphs, int x, int y, const std::string& s, int scale,
+              float r, float g, float b, float alpha = 1.f) {
+    int tall = 0;
+    for (const auto& [ch, img] : glyphs) tall = std::max(tall, img.height);
+    int cx = x;
+    for (char c : s) {
+        auto it = glyphs.find(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        if (it == glyphs.end()) { cx += 5 * scale; continue; }
+        // The letters are white with the shape in the alpha, so the colour asked for
+        // here is a straight multiplier on them.
+        blitImage(dst, it->second, cx, y + (tall - it->second.height) * scale, scale, r / 255.f, g / 255.f, b / 255.f, alpha);
+        cx += (it->second.width + 1) * scale;
+    }
+}
+
+void cardTextCentred(Image& dst, const std::map<char, Image>& glyphs, int cx, int y, const std::string& s, int scale,
+                     float r, float g, float b, float alpha = 1.f) {
+    cardText(dst, glyphs, cx - cardTextWidth(glyphs, s, scale) / 2, y, s, scale, r, g, b, alpha);
+}
+
+uint32_t cardRand(uint32_t& seed) {
+    seed = seed * 1664525u + 1013904223u;
+    return seed >> 8;
+}
+
+// One block of a piece: flat colour with a lit top-left edge and a dark bottom-right,
+// the same read as the blocks in the play field.
+void cardBlock(Image& dst, int x0, int y0, int size, float r, float g, float b) {
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            const int dx = x0 + x, dy = y0 + y;
+            if (dx < 0 || dy < 0 || dx >= dst.width || dy >= dst.height) continue;
+            float k = 1.f;
+            if (x == 0 || y == 0) k = 1.35f;
+            else if (x >= size - 2 || y >= size - 2) k = 0.55f;
+            if (x == size - 1 || y == size - 1) k = 0.25f;
+            uint8_t* d = dst.px(dx, dy);
+            d[0] = static_cast<uint8_t>(std::clamp(r * k, 0.f, 255.f));
+            d[1] = static_cast<uint8_t>(std::clamp(g * k, 0.f, 255.f));
+            d[2] = static_cast<uint8_t>(std::clamp(b * k, 0.f, 255.f));
+            d[3] = 255;
+        }
+}
+
+// `prompt` false leaves the bottom band empty: that copy becomes the blue page
+// behind the CONTROLS and farewell screens, where "PRESS ANY KEY" would be a lie.
+Image buildTitleCard(const std::map<char, Image>& glyphs, const Image* logo, const std::vector<Image>& monsters,
+                     const std::string& version, bool prompt) {
+    const int W = 320, H = 200;
+    Image card(W, H);
+    uint32_t seed = 0x5ED1;
+
+    // Sky: dark at the top, hot along a horizon two thirds down, with soft columns
+    // of light and a scatter of embers, then a dark floor under it.
+    const int horizon = 150;
+    for (int y = 0; y < H; ++y) {
+        const float t = static_cast<float>(y) / static_cast<float>(horizon);
+        for (int x = 0; x < W; ++x) {
+            float r, g, b;
+            if (y <= horizon) {
+                const float k = std::pow(std::clamp(t, 0.f, 1.f), 2.2f);
+                const float col = 0.75f + 0.25f * std::sin(static_cast<float>(x) * 0.055f) * std::sin(static_cast<float>(x) * 0.017f + 1.3f);
+                r = (14.f + 150.f * k) * col;
+                g = (6.f + 26.f * k) * col;
+                b = (20.f + 14.f * k) * col;
+            } else {
+                const float k = static_cast<float>(y - horizon) / static_cast<float>(H - horizon);
+                r = 46.f * (1.f - 0.8f * k); g = 16.f * (1.f - 0.8f * k); b = 16.f * (1.f - 0.8f * k);
+            }
+            const float n = static_cast<float>(cardRand(seed) % 17u) - 8.f;
+            uint8_t* d = card.px(x, y);
+            d[0] = static_cast<uint8_t>(std::clamp(r + n, 0.f, 255.f));
+            d[1] = static_cast<uint8_t>(std::clamp(g + n * 0.4f, 0.f, 255.f));
+            d[2] = static_cast<uint8_t>(std::clamp(b + n * 0.4f, 0.f, 255.f));
+            d[3] = 255;
+        }
+    }
+    // The wall of the arena: a course of dark bricks behind everything, fading up.
+    for (int y = 96; y < horizon; ++y)
+        for (int x = 0; x < W; ++x) {
+            const int row = (y - 96) / 10;
+            const int off = (row & 1) ? 16 : 0;
+            const bool line = ((y - 96) % 10 == 0) || ((x + off) % 32 == 0);
+            if (!line) continue;
+            uint8_t* d = card.px(x, y);
+            const float k = 0.55f;
+            d[0] = static_cast<uint8_t>(d[0] * k); d[1] = static_cast<uint8_t>(d[1] * k); d[2] = static_cast<uint8_t>(d[2] * k);
+        }
+
+    // A stack of blocks across the floor, three of them red and still waiting.
+    {
+        const int size = 10;
+        const int cols = W / size + 1;
+        std::vector<int> top(static_cast<size_t>(cols));
+        for (int c = 0; c < cols; ++c) top[static_cast<size_t>(c)] = 1 + static_cast<int>(cardRand(seed) % 4u);
+        for (int c = 0; c < cols; ++c) {
+            const int n = top[static_cast<size_t>(c)];
+            for (int i = 0; i < n; ++i) {
+                const int y0 = H - (i + 1) * size;
+                const bool red = (cardRand(seed) % 7u) == 0;
+                const float shade = 0.5f + 0.1f * static_cast<float>(i);
+                if (red) cardBlock(card, c * size, y0, size, 210.f, 40.f, 34.f);
+                else cardBlock(card, c * size, y0, size, 70.f * shade, 66.f * shade, 86.f * shade);
+            }
+        }
+    }
+
+    // The monsters stand on the stack, one at each side, looking in.
+    if (!monsters.empty()) {
+        const Image& m0 = monsters[0];
+        blitImage(card, m0, 18, H - 34 - m0.height, 1, 1.f, 1.f, 1.f, 1.f);
+        if (monsters.size() > 1) {
+            const Image& m1 = monsters[1];
+            blitImage(card, m1, W - 22 - m1.width, H - 36 - m1.height, 1, 1.f, 1.f, 1.f, 1.f);
+        }
+    }
+
+    // The logo, or the word DOOM in the WAD's own letters when there is no logo.
+    int y = 10;
+    if (logo && logo->valid() && logo->width <= W - 8) {
+        blitImage(card, *logo, (W - logo->width) / 2, y, 1, 1.f, 1.f, 1.f, 1.f);
+        y += logo->height + 8;
+    } else {
+        cardTextCentred(card, glyphs, W / 2, y, "DOOM", 4, 190.f, 150.f, 40.f);
+        y += 4 * 9 + 8;
+    }
+    // REDLINE, in red, with a black shadow under it so it reads over the sky.
+    cardTextCentred(card, glyphs, W / 2 + 2, y + 2, "REDLINE", 3, 0.f, 0.f, 0.f, 0.75f);
+    cardTextCentred(card, glyphs, W / 2, y, "REDLINE", 3, 240.f, 44.f, 32.f);
+    y += 3 * 9 + 6;
+    cardTextCentred(card, glyphs, W / 2, y, "STACK THE BLOCKS. THEY BLEED.", 1, 210.f, 190.f, 150.f);
+
+    // The band along the bottom, where Doom put its notice.
+    for (int by = H - 12; by < H; ++by)
+        for (int x = 0; x < W; ++x) {
+            uint8_t* d = card.px(x, by);
+            const float k = 0.18f;
+            d[0] = static_cast<uint8_t>(d[0] * k); d[1] = static_cast<uint8_t>(d[1] * k); d[2] = static_cast<uint8_t>(d[2] * k);
+        }
+    if (prompt) {
+        cardText(card, glyphs, 6, H - 11, "REDLINE " + version, 1, 215.f, 175.f, 65.f);
+        const std::string press = "PRESS ANY KEY";
+        cardText(card, glyphs, W - 6 - cardTextWidth(glyphs, press, 1), H - 11, press, 1, 215.f, 175.f, 65.f);
+    }
+    return card;
+}
+
+// The same page with the colour taken out and dropped into blue, the way Doom
+// shaded its title art behind the help screen. Dark enough to read text over.
+Image shadeBlue(const Image& src) {
+    Image out(src.width, src.height);
+    for (int i = 0; i < src.width * src.height; ++i) {
+        const uint8_t* s = &src.rgba[static_cast<size_t>(i) * 4];
+        const float lum = (0.299f * static_cast<float>(s[0]) + 0.587f * static_cast<float>(s[1]) + 0.114f * static_cast<float>(s[2])) / 255.f;
+        const float v = std::pow(std::clamp(lum, 0.f, 1.f), 0.85f);
+        uint8_t* d = &out.rgba[static_cast<size_t>(i) * 4];
+        d[0] = static_cast<uint8_t>(std::clamp(26.f + 70.f * v, 0.f, 255.f));
+        d[1] = static_cast<uint8_t>(std::clamp(30.f + 96.f * v, 0.f, 255.f));
+        d[2] = static_cast<uint8_t>(std::clamp(64.f + 170.f * v, 0.f, 255.f));
+        d[3] = 255;
+    }
+    return out;
+}
+
 }  // namespace
 
 std::string Assets::savedWadPath(const std::string& prefDir) {
@@ -268,6 +477,13 @@ void Assets::loadProcedural(audio::Audio& audio) {
     }
     fontHeight = 7;
     title.clear();
+    {
+        std::map<char, Image> glyphs = proc::font(1);
+        atlas_.add("title_card", buildTitleCard(glyphs, nullptr, {}, REDLINE_VERSION, true));
+        atlas_.add("title_card_blue", shadeBlue(buildTitleCard(glyphs, nullptr, {}, REDLINE_VERSION, false)));
+        titleCard = "title_card";
+        titleCardBlue = "title_card_blue";
+    }
 
     auto add = [&](const char* name, proc::Sound s) { audio.addSound(name, s.rate, std::move(s.samples)); };
     add("shoot", proc::sndShoot());
@@ -681,6 +897,25 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         addSound(enemies[t].painSound, {painSnd[t]}, proc::sndHit());
         addSound(enemies[t].deathSound, {deathSnd[t]}, proc::sndEnemyDie());
         addSound(enemies[t].attackSound, {attackSnd[t]}, proc::sndFireball());
+    }
+
+    // The title card, built from this install's own art: the menu logo, the WAD's
+    // letters and two of its monsters.
+    {
+        std::vector<Image> monsters;
+        for (const char* name : {"TROO", "SARG"}) {
+            auto set = wad::SpriteSet::load(*wad, *pal, name);
+            if (!set && wad2) set = wad::SpriteSet::load(*wad2, *pal, name);
+            if (!set) continue;
+            if (auto view = set->get('A', 1); view && view->image) monsters.push_back(*view->image);
+        }
+        const Image* logo = nullptr;
+        std::optional<Image> logoImg = wad::loadPatch(*wad, *pal, "M_DOOM");
+        if (logoImg && logoImg->valid()) logo = &*logoImg;
+        atlas_.add("title_card", buildTitleCard(glyphs, logo, monsters, REDLINE_VERSION, true));
+        atlas_.add("title_card_blue", shadeBlue(buildTitleCard(glyphs, logo, monsters, REDLINE_VERSION, false)));
+        titleCard = "title_card";
+        titleCardBlue = "title_card_blue";
     }
     return true;
 }

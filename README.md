@@ -80,6 +80,20 @@ copies by itself and otherwise asks on first launch. Nothing else is required.
 The full rules are under [Rules that differ from classic](#rules-that-differ-from-classic),
 the controls under [Controls](#controls).
 
+## The title card
+
+REDLINE opens the way Doom did: a full-screen page, held for a couple of
+seconds, that slides away in columns to leave the game behind it. The page is
+built at load time out of whatever art the install has, so it is Doom's own
+logo, letters and monsters over a sky, a brick wall and a stack of blocks
+rather than a picture shipped with the game. Any key or button cuts the wait
+short. Nothing interrupts the melt, which is also how Doom had it.
+
+The same page, shaded blue, sits behind CONTROLS and behind the page shown on
+the way out, which has your numbers on it and where to find the next version.
+Esc on the title screen and QUIT both go through it; the window's close button
+still exits at once.
+
 ## Windows
 
 Grab `redline-<version>-win64.zip` (from the GitHub release, or build it as
@@ -711,7 +725,9 @@ Environment: `REDLINE_GPU=<index>` forces a Vulkan device (the log lists them),
 `REDLINE_NOVSYNC=1` uses mailbox/immediate presentation, `REDLINE_NO_DUNGEON=1`
 keeps fights to the arena, `REDLINE_LOG_DUNGEON=1` prints each crypt's layout
 (rooms, monsters, items) to the log as it opens, `REDLINE_UPDATE_DEMO=<ver>`
-shows the new-version sticker for that version.
+shows the new-version sticker for that version, `REDLINE_SPLASH=1` keeps the
+title card in a scripted capture (which otherwise starts past it) and
+`REDLINE_FAREWELL=1` keeps the page shown on the way out.
 
 ## Layout
 

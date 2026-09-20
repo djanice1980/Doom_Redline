@@ -118,6 +118,10 @@ public:
     SpriteAnim torchRed, torchBlue, torchGreen, candelabra, lamp, barrel;
     std::string title;                      // optional big title graphic ("" if none)
     std::string skull;                      // M_SKULL1, the menu skull, as the trophy icon ("" if none)
+    // The title card: a 320x200 page in Doom's own shape, built at load time from
+    // whatever art is available, shown at startup and melted away. The blue copy is
+    // the same page shaded down, used behind the CONTROLS and the farewell pages.
+    std::string titleCard, titleCardBlue;
 
     // Music: raw MUS lumps by name (D_E1M1 ...) and the GENMIDI OPL bank.
     std::map<std::string, std::vector<uint8_t>> music;
