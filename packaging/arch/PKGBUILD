@@ -3,7 +3,7 @@
 # (run `makepkg -si` inside packaging/arch). No Doom data is included: the
 # game asks for doom.wad on first launch, or set REDLINE_WAD / ~/.local/share/redline/redline/wad.txt.
 pkgname=redline
-pkgver=0.4.0
+pkgver=0.4.1
 pkgrel=1
 pkgdesc="Tetris that tips over into a Doom fight (Vulkan, SDL3; needs your own doom.wad)"
 arch=('x86_64')

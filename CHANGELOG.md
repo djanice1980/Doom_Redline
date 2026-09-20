@@ -4,6 +4,14 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.4.1 (2026-09-19)
+- Deleting a player and making it again no longer leaves a second player behind on the leaderboard. Registering an address that already has players offers to carry on as one of them, keeping that history.
+- Deleting a registered player now asks whether to remove its online record too, and says what that would erase. Keeping it is the default.
+- The explosion smoke is smoke again: it was a white ball hanging in the air after the fireball went out.
+- Shattered blocks throw fragments in their own colour instead of white ones.
+- Menu text no longer runs off the edge or prints on top of itself: the delete confirm, the title menu and the dungeon boss line all have room now.
+- F12 saves numbered screenshots instead of overwriting the same file.
+
 ## 0.4.0 (2026-09-19)
 - The dungeon: clear the arena and the back wall comes down on a crypt of rooms and corridors, generated fresh for every fight and bigger at higher levels.
 - Dungeon demons sleep until they see you; the boss at the far end scales with the level and with how big your stack was. Kill it to finish the fight.
