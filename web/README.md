@@ -137,6 +137,21 @@ npm run build && scripts/local-server.sh   # the production build on http://loca
 confirms a player without mail and prints the token, for testing the game
 against the local server with `--online-server http://localhost:3000`.
 
+## The admin dashboard
+
+`/admin`, behind `ADMIN_PASSWORD`, has two tabs. **Dashboard** is the owner's
+view of everything collected, which is deliberately more than the public pages
+show: every player including the ones still waiting on their email, games
+posted today and this week, the last fortnight day by day, which versions are
+in the wild, what people run the game on (the machine facts, decrypted here and
+nowhere else, in aggregate), a players table, recent games, and the addresses
+masked to a first letter and a domain. **Mail & settings** is the Graph
+credentials and the mail log as before.
+
+The point of the first tab is the question the public pages cannot answer: is
+anyone playing? A player who has not clicked their approve link appears here,
+with the number of games being held for them, and nowhere else.
+
 ## What is stored
 
 See `../docs/online-and-releases.md` sections 6, 7 and 9. In short: player
