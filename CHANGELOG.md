@@ -4,6 +4,11 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.6.0 (2026-09-20)
+- Setting up the leaderboard is one click now. The email has a single Approve button and there is no code to type.
+- Your scores are posted from the moment you set an address, but nobody can see them until you click that button: the boards, player pages and the site totals show approved players only. Declining deletes everything collected.
+- Permission belongs to your email address rather than to one profile, so another profile on a machine you have already approved needs no second email. Deleting a profile takes its permission with it.
+
 ## 0.5.0 (2026-09-20)
 - The crypt is built from the game that made it: every room is shaped like one of the seven pieces, drawn from the ones you actually dropped, and the whole layout is seeded from how you played.
 - The boss hall is sealed. Find the skull key, hidden in the room furthest from it, and the door opens as you reach it.
