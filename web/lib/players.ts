@@ -19,7 +19,7 @@ export async function playerSummary(id: string): Promise<PlayerSummary | null> {
   const p = await db`select p.id, p.display_name, p.created_at, coalesce(g.rating, 0) as rating, g.rank, coalesce(g.tier, '') as tier, coalesce(g.best_score, 0) as best_score
     from players p left join ratings g on g.player_id = p.id where p.id = ${id} and p.token_hash is not null`;
   if (p.length === 0) return null;
-  const [t] = await db`select count(*) as runs, coalesce(sum(duration_s), 0) as seconds, coalesce(sum(kills), 0) as kills, coalesce(max(level), 0) as best_level,
+  const [t] = await db`select count(*) as runs, coalesce(sum(duration_s), 0) as seconds, coalesce(sum(kills), 0) as kills, coalesce(max(level), 0) as best_level, coalesce(max(score), 0) as best_score,
       coalesce(sum(fights), 0) as fights, coalesce(sum(blocks_destroyed), 0) as blocks, count(*) filter (where death_cause = 'killed') as deaths,
       (select count(*) from player_machines where player_id = ${id}) as machines
     from runs where player_id = ${id}`;
@@ -33,7 +33,7 @@ export async function playerSummary(id: string): Promise<PlayerSummary | null> {
     rating: Number(r.rating),
     rank: r.rank == null ? null : Number(r.rank),
     tier: r.tier as string,
-    best_score: Number(r.best_score),
+    best_score: Number(t.best_score),   // straight from the runs: the rating table only catches up on the nightly recompute
     totals: { runs: Number(t.runs), seconds: Number(t.seconds), kills: Number(t.kills), best_level: Number(t.best_level), fights: Number(t.fights), blocks: Number(t.blocks), deaths: Number(t.deaths), machines: Number(t.machines) },
     trophies: trophies.map((x) => ({ id: x.trophy_id as string, at: new Date(x.unlocked_at as string).toISOString() })),
     recent: recent.map((x) => ({ id: x.id as string, date: x.ended_at ? new Date(x.ended_at as string).toISOString() : null, score: Number(x.score), level: Number(x.level), lines: Number(x.lines), red_lines: Number(x.red_lines), fights: Number(x.fights), kills: Number(x.kills), death_cause: x.death_cause as string, duration_s: Number(x.duration_s) })),
