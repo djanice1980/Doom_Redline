@@ -163,6 +163,9 @@ private:
     void profileAction(int action);   // 0 rename, 1 email, 2 delete, on the selected row
     void deleteProfile(const std::string& name);
     bool renameProfile(const std::string& from, const std::string& to);
+    void applyAccountPlayers(const Json& existing);      // the "existing" list from a confirm or poll reply
+    void queuePlayerDelete(const std::string& playerId, const std::string& token);   // survives the profile folder going away
+    void sendPendingDeletes();
     void openScreen(int screen);
     void closeScreen();
     void screenKey(int key, bool fromPad);
@@ -220,6 +223,17 @@ private:
     bool onlineOn_ = true;             // per-profile setting (settings.txt online=); on by default, nothing is posted until the email is approved
     bool onlineAsked_ = false;         // the "post your scores?" question has been asked for this profile (settings.txt online_asked=)
     float pollT_ = 0.f;                // seconds until the next registration poll
+    // Registering an address that already has players: the account's other
+    // profiles, offered so a deleted-and-remade profile can carry on as itself
+    // instead of leaving its history stranded on a second row.
+    struct AccountPlayer { std::string id, name, since; int runs = 0, bestScore = 0, machines = 0; bool sameName = false; };
+    std::vector<AccountPlayer> adoptChoices_;
+    bool adoptBusy_ = false;
+    // Deleting a registered profile: what the online record holds, so the
+    // question can say what would be erased.
+    std::string deleteProfileName_, deletePlayerId_, deleteToken_;
+    AccountPlayer deleteOnlineInfo_;
+    bool deleteInfoLoaded_ = false;
     float versionAgeT_ = 0.f;          // seconds since the last version check (re-checked on the title every ten minutes and when WHAT'S NEW opens)
     // Update notice and WHAT'S NEW (the service's /api/version, cached in <pref>/version.json).
     std::string latestVersion_, latestUrl_;
@@ -275,7 +289,7 @@ private:
     std::string wadPath_;              // the IWAD in use ("" on placeholder art)
     // Overlay screens on top of the title / pause menus.
     enum Screen { kScreenNone = 0, kScreenOptions, kScreenTrophies, kScreenProfiles, kScreenNameEntry, kScreenCredits, kScreenWadSetup, kScreenWadPath, kScreenEmailEntry,
-                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew };
+                  kScreenRegister, kScreenCode, kScreenLeaderboard, kScreenOnlineAsk, kScreenWhatsNew, kScreenAdopt, kScreenDeleteOnline };
     int screen_ = kScreenNone;
     int screenIndex_ = 0;
     int optionsScroll_ = 0;        // first option row in view (the list scrolls when the window is short)

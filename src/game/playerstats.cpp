@@ -102,6 +102,16 @@ void PlayerStats::load(const std::string& profileDir, const MachineInfo& machine
     save();
 }
 
+void PlayerStats::peek(const std::string& profileDir) {
+    auto id = readKv(fs::path(profileDir) / "identity.txt");
+    playerId_ = id.count("player_id") ? id["player_id"] : "";
+    email_ = id.count("email") ? id["email"] : "";
+    emailVerified_ = id.count("email_verified") && id["email_verified"] == "1";
+    token_ = id.count("token") ? id["token"] : "";
+    pendingPoll_ = id.count("pending_poll") ? id["pending_poll"] : "";
+    // dir_ stays empty on purpose: this copy must never save over the profile.
+}
+
 void PlayerStats::save() const {
     if (dir_.empty()) return;
     if (std::FILE* f = std::fopen((fs::path(dir_) / "identity.txt").string().c_str(), "w")) {

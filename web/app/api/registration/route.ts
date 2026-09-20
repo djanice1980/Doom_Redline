@@ -7,6 +7,7 @@ import { clientIp, rateLimited } from "@/lib/ratelimit";
 import { expired } from "@/lib/registration";
 import { error, json } from "@/lib/auth";
 import { ensureSchema } from "@/lib/schema";
+import { accountSiblings } from "@/lib/siblings";
 
 export const runtime = "nodejs";
 
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
   if (await rateLimited(`poll:ip:${clientIp(req)}`, 600, 3600)) return error("too many requests", 429);
 
   const db = sql();
-  const regs = await db`select id, status, poll_hash, token_enc, expires_at from registrations where player_id = ${playerId} and poll_hash is not null order by created_at desc limit 1`;
+  const regs = await db`select id, status, poll_hash, token_enc, expires_at, display_name from registrations where player_id = ${playerId} and poll_hash is not null order by created_at desc limit 1`;
   if (regs.length === 0 || !safeEqual(sha256(secret), regs[0].poll_hash as string)) return error("unknown registration", 404);
   const reg = regs[0];
   let status = reg.status as string;
@@ -30,7 +31,10 @@ export async function POST(req: Request) {
   if (status === "confirmed" && reg.token_enc) {
     const token = decrypt(reg.token_enc as string);
     await db`update registrations set token_enc = null where id = ${reg.id}`;
-    return json({ status, token });
+    // As in the code path: the account's other players, now that the address is proven.
+    const [p] = await db`select account_id from players where id = ${playerId}`;
+    const existing = await accountSiblings((p?.account_id as string | null) ?? null, playerId as string, (reg.display_name as string) ?? "");
+    return json({ status, token, player_id: playerId, existing });
   }
   return json({ status });
 }

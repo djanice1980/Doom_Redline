@@ -162,6 +162,62 @@ async function main() {
   const { decrypt } = await import("../lib/crypto");
   check(decrypt(a[0].email_enc as string) === "marine@example.com", "and decrypts with the data key");
 
+  // 9. deleting a profile and making a new one with the same name and address:
+  //    the confirm reply offers the old player, adopt merges the two.
+  const playerId2 = randomUUID(), installId2 = randomUUID();
+  r = await register(post("/api/register", { player_id: playerId2, install_id: installId2, email: "marine@example.com", display_name: "MARINE", machine_label: "LINUX / RADEON", version: "0.4.0" }));
+  check(r.status === 200, "the same address registers a second profile");
+  const mailAgain = await db`select detail from mail_log order by id desc limit 1`;
+  const code2 = /code into the game where it asks:\s+(\d{6})/.exec(mailAgain[0].detail as string)?.[1];
+  r = await confirm(post("/api/confirm", { player_id: playerId2, code: code2 }));
+  const conf2 = (await r.json()) as { token?: string; player_id?: string; existing?: { player_id: string; runs: number; best_score: number; same_name: boolean }[] };
+  const token2 = conf2.token as string;
+  check(conf2.player_id === playerId2, "confirm says which player the token is for");
+  check(conf2.existing?.length === 1 && conf2.existing[0].player_id === playerId, "the confirm reply offers the account's other player");
+  check(conf2.existing?.[0].runs === 1 && conf2.existing[0].best_score === 24680 && conf2.existing[0].same_name, "with its run count, best score and the matching name");
+  const accounts2 = await db`select count(distinct account_id) as n from players where id in (${playerId}, ${playerId2})`;
+  check(Number(accounts2[0].n) === 1, "both players sit on one account");
+  check(!conf2.existing?.some((e) => e.name === "SECOND"), "a player on a different address is not offered");
+  // A run posted by the new profile before it adopts still ends up on the old player.
+  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: playerId2, install_id: installId2, score: 5000 }, { Authorization: `Bearer ${token2}` }));
+  check(r.status === 200, "the new profile can post a run of its own");
+  const adopt = (await import("../app/api/player/adopt/route")).POST;
+  r = await adopt(post("/api/player/adopt", { player_id: playerId }, { Authorization: `Bearer ${token2}` }));
+  const ad = (await r.json()) as { ok?: boolean; player_id?: string; runs_moved?: number };
+  check(r.status === 200 && ad.player_id === playerId && ad.runs_moved === 1, `adopt moves the new profile onto the old player (${JSON.stringify(ad)})`);
+  const gone = await db`select count(*) as n from players where id = ${playerId2}`;
+  check(Number(gone[0].n) === 0, "the duplicate row is gone");
+  const both = await db`select count(*) as n from runs where player_id = ${playerId}`;
+  check(Number(both[0].n) === 2, "and both runs belong to the old player");
+  const machines2 = await db`select count(*) as n from player_machines where player_id = ${playerId}`;
+  check(Number(machines2[0].n) === 2, "the new machine came with it");
+  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: playerId, install_id: installId2, score: 6000 }, { Authorization: `Bearer ${token2}` }));
+  check(r.status === 200, "the token the game already has now posts as the old player");
+  r = await adopt(post("/api/player/adopt", { player_id: randomUUID() }, { Authorization: `Bearer ${token2}` }));
+  check(r.status === 404, "adopting a player that is not on the account is refused");
+  r = await adopt(post("/api/player/adopt", { player_id: playerId }, {}));
+  check(r.status === 401, "adopt needs a token");
+  // 10. the nightly sweep: a registered profile that was deleted and never played
+  const stale = randomUUID();
+  await db`insert into players (id, account_id, display_name, token_hash, created_at, last_seen)
+    select ${stale}, id, 'GHOST', 'x', now() - interval '60 days', now() - interval '60 days' from accounts limit 1`;
+  const fresh = randomUUID();
+  await db`insert into players (id, account_id, display_name, token_hash) select ${fresh}, id, 'NEWCOMER', 'y' from accounts limit 1`;
+  r = await cron(new Request("http://local/api/cron/ratings", { headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` } }));
+  const sweep = (await r.json()) as { pruned?: number };
+  check(r.status === 200 && sweep.pruned === 1, `the sweep prunes the month-old row with no runs (${JSON.stringify(sweep)})`);
+  const kept = await db`select count(*) as n from players where id in (${fresh}, ${playerId})`;
+  check(Number(kept[0].n) === 2, "and keeps the new one and the one that has played");
+  // 11. deleting the online record on request
+  const del = (await import("../app/api/player/delete/route")).POST;
+  r = await del(post("/api/player/delete", {}, {}));
+  check(r.status === 401, "delete needs a token");
+  r = await del(post("/api/player/delete", {}, { Authorization: `Bearer ${token2}` }));
+  const dl = (await r.json()) as { ok?: boolean; runs_deleted?: number };
+  check(r.status === 200 && dl.runs_deleted === 3, `delete removes the player and its runs (${JSON.stringify(dl)})`);
+  const after = await db`select (select count(*) from players where id = ${playerId}) as p, (select count(*) from runs where player_id = ${playerId}) as r`;
+  check(Number(after[0].p) === 0 && Number(after[0].r) === 0, "the row and its runs are gone");
+
   await db.end();
   if (failures) { console.error(`${failures} failure(s)`); process.exit(1); }
   console.log("smoke: all passed");

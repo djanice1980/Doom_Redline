@@ -16,7 +16,7 @@ export interface PendingRegistration {
   expires_at: string;
 }
 
-export async function completeRegistration(reg: PendingRegistration, method: "code" | "link"): Promise<{ token: string; accountId: string }> {
+export async function completeRegistration(reg: PendingRegistration, method: "code" | "link"): Promise<{ token: string; accountId: string; playerId: string }> {
   const token = newToken();
   const db = sql();
   const accountId = await db.begin(async (tx) => {
@@ -32,7 +32,7 @@ export async function completeRegistration(reg: PendingRegistration, method: "co
         token_enc = ${method === "link" ? encrypt(token) : null} where id = ${reg.id}`;
     return id;
   });
-  return { token, accountId };
+  return { token, accountId, playerId: reg.player_id };
 }
 
 export function expired(reg: { expires_at: string }): boolean {

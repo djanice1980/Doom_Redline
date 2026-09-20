@@ -276,7 +276,18 @@ with your own row pinned, and keeps the last copy for offline viewing. The
 address is stored encrypted and never shown; each player and each machine
 is asked separately, and nothing is stored until the code is typed. Runs
 that could not be posted wait in the profile's `runs/pending` folder and go
-out at the next launch. Scripted and cheat runs (`--scenario`, `--bot`,
+out at the next launch.
+
+One address can carry several players, so a profile deleted and made again
+would otherwise start a second history. Two questions keep that from
+happening. Registering an address that already has players offers them, each
+with its run count, best score, machines and start date: **CONTINUE AS**
+moves this profile's scores onto that player and there is one player again,
+**START FRESH** keeps them apart, which is what several people sharing one
+address want. Deleting a registered profile asks whether to remove its
+online record too, and says what that would erase; keeping it is the
+default, and is what makes CONTINUE AS possible later. A removal asked for
+while the machine is offline is sent at the next launch. Scripted and cheat runs (`--scenario`, `--bot`,
 `--god`, `--level` and friends) are never posted. The service itself lives
 in `web/` (its README explains the set-up); `docs/online-and-releases.md`
 has the design and what is stored.

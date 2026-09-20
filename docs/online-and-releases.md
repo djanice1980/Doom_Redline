@@ -367,6 +367,44 @@ sessions        one per launch: machine, player, duration, input mix
   three players, two machines and up to six confirmed registrations. Removing
   the account deletes all of them together (section 7's deletion path).
 
+### Deleting a profile and making it again (2026-09-20)
+
+A `players` row is written in exactly one place, `completeRegistration`, so a
+profile only ever reaches the table once its address is confirmed. The id
+comes from the profile folder, which means deleting a profile and making a
+new one with the same name and the same address mints a second id and leaves
+the first row holding all the history. Two prompts close that gap, at the two
+moments the game is in a position to ask.
+
+- **At registration.** The confirm reply and the link poll now carry
+  `player_id` and `existing`: the account's other players with run count,
+  best score, machine count, start date and whether the name matches
+  (`lib/siblings.ts`). Only after the address is proven, never from
+  `/api/register`, which would let anyone ask which addresses exist and what
+  the people behind them are called. With any, the game shows them and asks.
+  **CONTINUE AS** calls `POST /api/player/adopt` with the fresh token: both
+  rows must be on one account, the new row's runs, trophies and machines move
+  onto the old one, the token moves with them so the game keeps the token it
+  was just handed, the new row is deleted and ratings are recomputed. The game
+  writes the returned id into its identity file. **START FRESH** leaves both
+  alone, which is the right answer when two people share one address and both
+  called a profile PLAYER: merging on a name match alone would fuse them, so
+  the game always asks.
+- **At deletion.** Deleting a registered profile asks whether to remove the
+  online record too, showing what it holds (fetched from `/api/player/<id>`).
+  Keeping it is the default: deletion is irreversible and the question above
+  makes keeping recoverable. Removing calls `POST /api/player/delete` with the
+  player's token and cascades runs, trophies, machine links and rating. The
+  token lives inside the folder about to be removed, so the request is written
+  to `pending-deletes.txt` in the preferences folder *before* the folder goes,
+  and sent at the next launch if the machine is offline.
+- **Nightly sweep.** The ratings cron also deletes players with no runs, no
+  trophies and a month of silence, and then accounts with no players left.
+  That collects the orphans nobody adopts, without touching anything that has
+  been played or anything recent.
+- Old game builds are unaffected: they ignore the two new reply fields and
+  never call the new routes.
+
 ### Sending mail: Microsoft Graph
 
 - Vercel has no outbound mail of its own and its free tier is not a place to

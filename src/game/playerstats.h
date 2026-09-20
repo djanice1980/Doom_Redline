@@ -42,6 +42,9 @@ public:
     // Loads (or creates) the profile's identity and counters; starts a session
     // on `machine`. `padModel` is recorded when a gamepad is connected.
     void load(const std::string& profileDir, const MachineInfo& machine);
+    // Reads another profile's identity without starting a session on it or
+    // writing anything back (used when asking about a profile before deleting it).
+    void peek(const std::string& profileDir);
     void save() const;
     bool loaded() const { return !dir_.empty(); }
 
@@ -55,6 +58,8 @@ public:
     void setEmail(const std::string& email);   // resets verification when it changes
     const std::string& token() const { return token_; }   // the online service's per-player secret, set by a confirmed registration
     void setVerified(const std::string& token);
+    // The service merged this profile into an older player of the same account.
+    void setPlayerId(const std::string& id) { playerId_ = id; save(); }
     const std::string& pendingPoll() const { return pendingPoll_; }   // secret for polling a registration that is waiting for the email approval
     void setPendingPoll(const std::string& secret);
 

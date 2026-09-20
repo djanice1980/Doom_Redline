@@ -696,7 +696,27 @@ void App::profileAction(int action) {
         if (mode_ == Mode::Title && menu_.items.size() > 1) menu_.items[1] = "PLAYER: " + profileName_;
         openScreen(kScreenEmailEntry);
     } else if (action == 2) {
-        if (profileConfirmDelete_ == screenIndex_) { play("menu_select", 0.7f); deleteProfile(sel); }
+        if (profileConfirmDelete_ == screenIndex_) {
+            play("menu_select", 0.7f);
+            // A registered profile has a record on the service. Removing it is a
+            // separate, irreversible choice, so ask, with the numbers.
+            PlayerStats victim;
+            if (sel == profileName_) victim = stats_;
+            else victim.peek(profilesRoot() + sel + "/");
+            if (OnlineClient::available() && onlineOn_ && victim.emailVerified() && !victim.token().empty()) {
+                profileConfirmDelete_ = -1;
+                deleteProfileName_ = sel;
+                deletePlayerId_ = victim.playerId();
+                deleteToken_ = victim.token();
+                deleteOnlineInfo_ = {};
+                deleteInfoLoaded_ = false;
+                online_.player(deletePlayerId_);   // fills in what the record holds
+                screenIndex_ = 0;
+                openScreen(kScreenDeleteOnline);
+            } else {
+                deleteProfile(sel);
+            }
+        }
         else { profileConfirmDelete_ = screenIndex_; play("menu", 0.6f); }
     }
 }
@@ -760,6 +780,7 @@ void App::loadOnlineConfig() {
     onlineServer_ = online_.server();
     std::fprintf(stderr, "[online] %s (%s, %s)\n", onlineServer_.c_str(), OnlineClient::available() ? "http available" : "no http in this build", onlineOn_ ? "on" : "off");
     if (onlineOn_ && !stats_.token().empty()) submitPendingRuns();
+    sendPendingDeletes();              // profiles deleted while offline
     applyVersionInfo(Json(), false);   // the cached copy, if any
     checkVersion();
     pollT_ = 1.f;
@@ -855,6 +876,59 @@ void App::submitPendingRuns() {
     if (n) std::fprintf(stderr, "[online] %d pending run(s) queued for upload\n", n);
 }
 
+// The account's other players, as the confirm reply (or the link poll) listed
+// them. With any, the game asks whether this profile is one of them before it
+// starts a second history under the same address.
+void App::applyAccountPlayers(const Json& existing) {
+    adoptChoices_.clear();
+    for (size_t i = 0; i < existing.size(); ++i) {
+        const Json& e = existing[i];
+        AccountPlayer a;
+        a.id = e["player_id"].asString();
+        a.name = e["name"].asString();
+        a.since = e["since"].asString().substr(0, 10);
+        a.runs = e["runs"].asInt();
+        a.bestScore = e["best_score"].asInt();
+        a.machines = e["machines"].asInt();
+        a.sameName = e["same_name"].asBool();
+        if (!a.id.empty()) adoptChoices_.push_back(a);
+    }
+    // The likeliest match first: same name, then the one with the most behind it.
+    std::sort(adoptChoices_.begin(), adoptChoices_.end(), [](const AccountPlayer& x, const AccountPlayer& y) {
+        if (x.sameName != y.sameName) return x.sameName;
+        return x.runs > y.runs;
+    });
+    if (adoptChoices_.size() > 6) adoptChoices_.resize(6);
+}
+
+// A deletion that has to outlive the profile folder: the token lives inside the
+// folder being removed, so it is written here first and sent at the next launch
+// if the machine is offline right now.
+void App::queuePlayerDelete(const std::string& playerId, const std::string& token) {
+    if (playerId.empty() || token.empty()) return;
+    if (std::FILE* f = std::fopen((prefDir_ + "pending-deletes.txt").c_str(), "a")) {
+        std::fprintf(f, "%s %s\n", playerId.c_str(), token.c_str());
+        std::fclose(f);
+    }
+}
+
+void App::sendPendingDeletes() {
+    if (!OnlineClient::available()) return;
+    std::vector<std::pair<std::string, std::string>> queued;
+    if (std::FILE* f = std::fopen((prefDir_ + "pending-deletes.txt").c_str(), "rb")) {
+        char line[512];
+        while (std::fgets(line, sizeof line, f)) {
+            std::string l(line);
+            while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+            const size_t sp = l.find(' ');
+            if (sp != std::string::npos && sp + 1 < l.size()) queued.push_back({l.substr(0, sp), l.substr(sp + 1)});
+        }
+        std::fclose(f);
+    }
+    for (const auto& [id, token] : queued) online_.deletePlayer(token, id);
+    if (!queued.empty()) std::fprintf(stderr, "[online] %zu queued online deletion(s) being sent\n", queued.size());
+}
+
 void App::pollOnline() {
     for (const OnlineClient::Result& res : online_.poll()) {
         switch (res.kind) {
@@ -870,8 +944,11 @@ void App::pollOnline() {
                 stats_.setVerified(res.body["token"].asString());
                 announce("REGISTERED: " + registerEmail_, glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
                 play("pickup_weapon", 1.f);
+                applyAccountPlayers(res.body["existing"]);
                 closeScreen();
-                submitPendingRuns();
+                // This address already has players: ask before starting a second history.
+                if (!adoptChoices_.empty()) { screenIndex_ = 0; openScreen(kScreenAdopt); }
+                else submitPendingRuns();
             } else {
                 wadStatus_ = res.error.empty() ? "WRONG CODE" : res.error;
                 for (char& c : wadStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -926,7 +1003,61 @@ void App::pollOnline() {
             break;
         }
         case OnlineClient::Kind::Player:
+            // Only asked for when a registered profile is about to be deleted, so the
+            // question can say what the online record actually holds.
+            if (res.ok && res.tag == deletePlayerId_) {
+                deleteOnlineInfo_.name = res.body["name"].asString();
+                deleteOnlineInfo_.since = res.body["since"].asString().substr(0, 10);
+                deleteOnlineInfo_.runs = res.body["totals"]["runs"].asInt();
+                deleteOnlineInfo_.bestScore = res.body["best_score"].asInt();
+                deleteOnlineInfo_.machines = res.body["totals"]["machines"].asInt();
+                deleteInfoLoaded_ = true;
+            }
             break;
+        case OnlineClient::Kind::Adopt:
+            adoptBusy_ = false;
+            if (res.ok && !res.body["player_id"].asString().empty()) {
+                // The token the game holds now belongs to the older player.
+                stats_.setPlayerId(res.body["player_id"].asString());
+                const int moved = res.body["runs_moved"].asInt();
+                std::fprintf(stderr, "[online] adopted player %s (%d run(s) moved)\n", res.body["player_id"].asString().c_str(), moved);
+                announce("CARRYING ON AS YOUR EXISTING PLAYER", glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
+                play("pickup_weapon", 1.f);
+                adoptChoices_.clear();
+                closeScreen();
+                submitPendingRuns();
+            } else {
+                wadStatus_ = "COULD NOT MERGE: " + (res.error.empty() ? std::string("NO REPLY") : res.error);
+                for (char& c : wadStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                play("menu", 0.6f);
+            }
+            break;
+        case OnlineClient::Kind::DeletePlayer: {
+            // 401 means the server has already forgotten it: either way the queue entry is done.
+            const bool done = res.ok || res.status == 401 || res.status == 404;
+            if (done) {
+                std::vector<std::string> keep;
+                if (std::FILE* f = std::fopen((prefDir_ + "pending-deletes.txt").c_str(), "rb")) {
+                    char line[512];
+                    while (std::fgets(line, sizeof line, f)) {
+                        std::string l(line);
+                        while (!l.empty() && (l.back() == '\n' || l.back() == '\r')) l.pop_back();
+                        if (!l.empty() && l.rfind(res.tag, 0) != 0) keep.push_back(l);
+                    }
+                    std::fclose(f);
+                }
+                std::error_code ec;
+                if (keep.empty()) std::filesystem::remove(prefDir_ + "pending-deletes.txt", ec);
+                else if (std::FILE* f = std::fopen((prefDir_ + "pending-deletes.txt").c_str(), "wb")) {
+                    for (const std::string& l : keep) std::fprintf(f, "%s\n", l.c_str());
+                    std::fclose(f);
+                }
+                std::fprintf(stderr, "[online] online record %s removed (%d run(s))\n", res.tag.c_str(), res.body["runs_deleted"].asInt());
+            } else {
+                std::fprintf(stderr, "[online] could not remove %s (%s), will retry next launch\n", res.tag.c_str(), res.error.empty() ? "no reply" : res.error.c_str());
+            }
+            break;
+        }
         case OnlineClient::Kind::Poll: {
             const std::string status = res.body["status"].asString();
             if (res.ok && status == "confirmed" && !res.body["token"].asString().empty()) {
@@ -934,8 +1065,10 @@ void App::pollOnline() {
                 std::fprintf(stderr, "[online] registration approved from the email\n");
                 announce("REGISTERED: " + (registerEmail_.empty() ? stats_.email() : registerEmail_), glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
                 play("pickup_weapon", 1.f);
+                applyAccountPlayers(res.body["existing"]);
                 if (screen_ == kScreenCode) closeScreen();
-                submitPendingRuns();
+                if (!adoptChoices_.empty() && mode_ == Mode::Title) { screenIndex_ = 0; openScreen(kScreenAdopt); }
+                else submitPendingRuns();
             } else if (res.ok && (status == "declined" || status == "expired")) {
                 stats_.setPendingPoll("");
                 if (screen_ == kScreenCode) wadStatus_ = status == "declined" ? "THE REGISTRATION WAS DECLINED FROM THE EMAIL" : "THE LINK AND CODE HAVE EXPIRED, PRESS R FOR NEW ONES";
@@ -1299,6 +1432,47 @@ void App::screenKey(int key, bool fromPad) {
             else { onlineOn_ = false; saveSettings(); closeScreen(); }
         }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { onlineAsked_ = true; saveSettings(); closeScreen(); }
+        break;
+    }
+    case kScreenAdopt: {
+        // The account already has players: carry on as one, or start fresh.
+        const int n = static_cast<int>(adoptChoices_.size()) + 1;   // + START FRESH
+        if (adoptBusy_) break;
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
+            play("menu_select", 0.7f);
+            if (screenIndex_ < static_cast<int>(adoptChoices_.size())) {
+                adoptBusy_ = true;
+                wadStatus_.clear();
+                online_.adopt(stats_.token(), adoptChoices_[static_cast<size_t>(screenIndex_)].id);
+            } else {   // a different person on the same address: leave the old player alone
+                adoptChoices_.clear();
+                closeScreen();
+                submitPendingRuns();
+            }
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { adoptChoices_.clear(); closeScreen(); submitPendingRuns(); }
+        break;
+    }
+    case kScreenDeleteOnline: {
+        const int n = 3;
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
+            play("menu_select", 0.7f);
+            const std::string name = deleteProfileName_;
+            if (screenIndex_ == 1) {
+                // The token lives in the folder about to go: write the deletion down first.
+                queuePlayerDelete(deletePlayerId_, deleteToken_);
+            }
+            deleteProfileName_.clear(); deletePlayerId_.clear(); deleteToken_.clear();
+            if (screenIndex_ == 2) { closeScreen(); break; }
+            closeScreen();
+            deleteProfile(name);
+            sendPendingDeletes();
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { deleteProfileName_.clear(); deletePlayerId_.clear(); deleteToken_.clear(); closeScreen(); }
         break;
     }
     case kScreenWhatsNew: {
@@ -3865,6 +4039,55 @@ void App::addHud() {
                 y += lh * 1.4f;
             }
             text(W * 0.5f, H - lh * 1.5f, "YOU CAN CHANGE THIS ANY TIME UNDER OPTIONS > ONLINE AND PLAYER EMAIL", s * 0.65f, dim, 1);
+        } else if (screen_ == kScreenAdopt) {
+            // This address already has players. Offer them, with enough to tell them apart.
+            text(W * 0.5f, H * 0.14f, "YOU ALREADY HAVE A PLAYER HERE", s * 1.4f, white, 1);
+            float y = H * 0.14f + lh * 2.2f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap = 1.0f) { text(W * 0.5f, y, t, s * sc, c, 1); y += lh * gap; };
+            line("THIS EMAIL ADDRESS IS ALREADY POSTING SCORES FOR THE PLAYER(S) BELOW.", 0.72f, dim);
+            line("IF ONE OF THEM IS YOU, CARRY ON AS THEM AND KEEP THAT HISTORY:", 0.72f, dim);
+            line("THIS PROFILE'S SCORES JOIN THEIRS AND THERE IS ONE PLAYER, NOT TWO.", 0.72f, dim, 1.6f);
+            for (size_t i = 0; i < adoptChoices_.size(); ++i) {
+                const AccountPlayer& a = adoptChoices_[i];
+                const bool sel = screenIndex_ == static_cast<int>(i);
+                const std::string label = "CONTINUE AS " + a.name;
+                hotText(W * 0.5f, y, sel ? "> " + label + " <" : label, s * 1.05f, sel ? yellow : dim, 1, kHotScreenItem, static_cast<int>(i));
+                y += lh * 0.95f;
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "%d RUN%s   BEST %d   %d MACHINE%s   SINCE %s", a.runs, a.runs == 1 ? "" : "S", a.bestScore,
+                              a.machines, a.machines == 1 ? "" : "S", a.since.c_str());
+                text(W * 0.5f, y, buf, s * 0.68f, dim, 1);
+                y += lh * 1.25f;
+            }
+            {
+                const bool sel = screenIndex_ == static_cast<int>(adoptChoices_.size());
+                hotText(W * 0.5f, y, sel ? "> START FRESH, THIS IS A DIFFERENT PLAYER <" : "START FRESH, THIS IS A DIFFERENT PLAYER", s * 0.95f, sel ? yellow : dim, 1, kHotScreenItem, static_cast<int>(adoptChoices_.size()));
+                y += lh * 1.4f;
+            }
+            if (adoptBusy_) text(W * 0.5f, y, "MERGING...", s * 0.9f, yellow, 1);
+            else if (!wadStatus_.empty()) text(W * 0.5f, y, wadStatus_, s * 0.85f, glm::vec4(1.f, 0.5f, 0.3f, 1.f), 1);
+            text(W * 0.5f, H - lh * 1.5f, "SEVERAL PEOPLE CAN SHARE ONE ADDRESS: START FRESH KEEPS THEIR SCORES SEPARATE FROM YOURS", s * 0.65f, dim, 1);
+        } else if (screen_ == kScreenDeleteOnline) {
+            text(W * 0.5f, H * 0.16f, "DELETE " + deleteProfileName_, s * 1.4f, white, 1);
+            float y = H * 0.16f + lh * 2.2f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap = 1.0f) { text(W * 0.5f, y, t, s * sc, c, 1); y += lh * gap; };
+            line("THIS PLAYER ALSO HAS A RECORD ON THE LEADERBOARD.", 0.75f, dim);
+            if (deleteInfoLoaded_) {
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "%d RUN%s   BEST %d   %d MACHINE%s   SINCE %s", deleteOnlineInfo_.runs, deleteOnlineInfo_.runs == 1 ? "" : "S",
+                              deleteOnlineInfo_.bestScore, deleteOnlineInfo_.machines, deleteOnlineInfo_.machines == 1 ? "" : "S", deleteOnlineInfo_.since.c_str());
+                line(buf, 0.75f, yellow, 1.4f);
+            } else {
+                line("READING IT...", 0.7f, dim, 1.4f);
+            }
+            line("KEEPING IT MEANS THAT IF YOU MAKE THIS PLAYER AGAIN WITH THE SAME EMAIL", 0.7f, dim);
+            line("ADDRESS, THE GAME WILL OFFER TO CARRY ON WHERE THIS ONE LEFT OFF.", 0.7f, dim, 1.8f);
+            const char* opts[3] = {"DELETE THE PROFILE, KEEP THE ONLINE RECORD", "DELETE BOTH: THE RECORD AND ITS SCORES ARE GONE FOR GOOD", "CANCEL"};
+            for (int i = 0; i < 3; ++i) {
+                const bool sel = screenIndex_ == i;
+                hotText(W * 0.5f, y, sel ? std::string("> ") + opts[i] + " <" : opts[i], s * (i == 1 ? 0.95f : 1.f), sel ? (i == 1 ? glm::vec4(1.f, 0.5f, 0.35f, 1.f) : yellow) : dim, 1, kHotScreenItem, i);
+                y += lh * 1.4f;
+            }
         } else if (screen_ == kScreenWhatsNew) {
             text(W * 0.5f, H * 0.05f, updateAvailable_ ? "VERSION " + latestVersion_ + " IS OUT   (YOU HAVE " + std::string(REDLINE_VERSION) + ")" : "WHAT'S NEW   (VERSION " + std::string(REDLINE_VERSION) + ")", s * 1.3f, updateAvailable_ ? yellow : white, 1);
             // Flatten the changelog into lines that fit the width, then show a window of them.

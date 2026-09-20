@@ -13,6 +13,9 @@
 //   GET  leaderboard?board=<name>&player=<id> -> {board, rows:[...], me:{...}|null, total}
 //   POST registration {player_id, poll_secret} -> {status: pending|confirmed|declined|expired, token?}
 //   GET  version -> {latest, url, published_at, changelog:[{version, date, items:[...]}]}
+//   POST player/adopt  Authorization: Bearer <token>, {player_id: <the older player>}
+//                     -> {ok:true, player_id, runs_moved} | {error}
+//   POST player/delete Authorization: Bearer <token> -> {ok:true, runs_deleted} | {error}
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -28,7 +31,7 @@ namespace rl::game {
 
 class OnlineClient {
 public:
-    enum class Kind { Register, Confirm, SubmitRun, Leaderboard, Player, Version, Poll };
+    enum class Kind { Register, Confirm, SubmitRun, Leaderboard, Player, Version, Poll, Adopt, DeletePlayer };
     struct Result {
         Kind kind;
         int id = 0;
@@ -55,6 +58,10 @@ public:
     int player(const std::string& playerId);
     int version();                                                     // GET /api/version: latest release + changelog
     int pollRegistration(const std::string& playerId, const std::string& pollSecret);   // POST /api/registration
+    // This profile is really an older player of the same account: merge the two (the token stays valid).
+    int adopt(const std::string& token, const std::string& oldPlayerId);
+    // Erase this player from the service. `tag` carries the id, so a queued delete can be retired by name.
+    int deletePlayer(const std::string& token, const std::string& tag);
 
     std::vector<Result> poll();   // completed results since the last call
     bool busy() const;            // requests still queued or running

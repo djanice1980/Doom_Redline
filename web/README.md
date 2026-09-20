@@ -146,3 +146,13 @@ memory, gamepad model) are stored encrypted and shown only in aggregate on
 the stats page; nothing is stored for a player until the address owner has
 typed the code. To remove someone, delete their row in `accounts`: the
 players, machines, runs and trophies under it cascade.
+
+A player can also erase itself: `POST /api/player/delete` with that player's
+token, which the game sends when someone deletes a registered profile and
+asks for the online record to go too. `POST /api/player/adopt` is the other
+half of the same story: a profile deleted and made again mints a new player
+id, so after a registration the confirm reply lists the account's other
+players and the game offers to carry on as one of them, which moves the new
+row's runs onto the old one and deletes the new row. The nightly ratings
+cron sweeps up player rows with no runs, no trophies and a month of silence,
+then accounts with no players left.

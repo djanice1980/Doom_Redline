@@ -17,7 +17,7 @@ async function main() {
   let r = await register(post("/api/register", { player_id: playerId, install_id: installId, email: "local-test@example.com", display_name: name ?? "TESTER", machine_label: "LOCAL TEST", version: "dev" }));
   if (r.status !== 200) { console.error("register failed", r.status, await r.text()); process.exit(1); }
   const mail = await db`select detail from mail_log order by id desc limit 1`;
-  const code = /Your code:\s+(\d{6})/.exec(mail[0].detail as string)?.[1];
+  const code = /code into the game where it asks:\s+(\d{6})/.exec(mail[0].detail as string)?.[1];
   r = await confirm(post("/api/confirm", { player_id: playerId, code }));
   const j = (await r.json()) as { token?: string };
   if (!j.token) { console.error("confirm failed", r.status, j); process.exit(1); }

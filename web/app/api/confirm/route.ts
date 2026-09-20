@@ -6,6 +6,7 @@ import { clientIp, rateLimited } from "@/lib/ratelimit";
 import { completeRegistration, expired, type PendingRegistration } from "@/lib/registration";
 import { error, json } from "@/lib/auth";
 import { ensureSchema } from "@/lib/schema";
+import { accountSiblings } from "@/lib/siblings";
 
 export const runtime = "nodejs";
 
@@ -37,5 +38,7 @@ export async function POST(req: Request) {
     return error("wrong code", 400);
   }
   const { token, accountId } = await completeRegistration(reg as unknown as PendingRegistration, "code");
-  return json({ ok: true, token, account_id: accountId });
+  // Other players this address already has, so the game can offer to carry on as one of them.
+  const existing = await accountSiblings(accountId, playerId as string, reg.display_name as string);
+  return json({ ok: true, token, account_id: accountId, player_id: playerId, existing });
 }

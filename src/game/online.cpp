@@ -103,6 +103,20 @@ int OnlineClient::pollRegistration(const std::string& playerId, const std::strin
     return enqueue(Kind::Poll, "", [url, text] { return net::httpPost(url, text, {"Content-Type: application/json"}); });
 }
 
+int OnlineClient::adopt(const std::string& token, const std::string& oldPlayerId) {
+    Json body = Json::object();
+    body.set("player_id", oldPlayerId);
+    const std::string url = server_ + "/api/player/adopt", text = body.dump();
+    const std::vector<std::string> headers = {"Content-Type: application/json", "Authorization: Bearer " + token};
+    return enqueue(Kind::Adopt, oldPlayerId, [url, text, headers] { return net::httpPost(url, text, headers); });
+}
+
+int OnlineClient::deletePlayer(const std::string& token, const std::string& tag) {
+    const std::string url = server_ + "/api/player/delete";
+    const std::vector<std::string> headers = {"Content-Type: application/json", "Authorization: Bearer " + token};
+    return enqueue(Kind::DeletePlayer, tag, [url, headers] { return net::httpPost(url, "{}", headers); });
+}
+
 std::vector<OnlineClient::Result> OnlineClient::poll() {
     std::vector<Result> out;
     std::lock_guard<std::mutex> lock(mutex_);
