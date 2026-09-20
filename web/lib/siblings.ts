@@ -29,7 +29,7 @@ export async function accountSiblings(accountId: string | null, excludePlayerId:
       (select coalesce(max(score), 0) from runs r where r.player_id = p.id) as best_score,
       (select count(*) from player_machines m where m.player_id = p.id) as machines
     from players p
-    where p.account_id = ${accountId} and p.id <> ${excludePlayerId} and p.token_hash is not null
+    where p.account_id = ${accountId} and p.id <> ${excludePlayerId} and p.approved
     order by p.created_at`;
   const want = name.trim().toLowerCase();
   return rows.map((r) => ({

@@ -68,13 +68,6 @@ int OnlineClient::registerEmail(const std::string& playerId, const std::string& 
     return enqueue(Kind::Register, "", [url, text] { return net::httpPost(url, text, {"Content-Type: application/json"}); });
 }
 
-int OnlineClient::confirm(const std::string& playerId, const std::string& code) {
-    Json body = Json::object();
-    body.set("player_id", playerId).set("code", code);
-    const std::string url = server_ + "/api/confirm", text = body.dump();
-    return enqueue(Kind::Confirm, "", [url, text] { return net::httpPost(url, text, {"Content-Type: application/json"}); });
-}
-
 int OnlineClient::submitRun(const std::string& runJson, const std::string& token, const std::string& tag) {
     const std::string url = server_ + "/api/runs";
     const std::vector<std::string> headers = {"Content-Type: application/json", "Authorization: Bearer " + token};

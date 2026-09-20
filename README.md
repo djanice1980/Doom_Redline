@@ -262,19 +262,26 @@ unless you turn ONLINE on.
 
 ## Online leaderboard
 
-On by default, but nothing is posted until you approve an email address.
-Players who have not set one up are asked once on the title screen whether
-they want to. **PLAYER EMAIL** under OPTIONS starts a registration: the
-service sends one email with an **approve link** (and a six-digit code as a
-fallback); click the link, and the game notices by itself within a few
-seconds. From then on every finished game is posted (the player name, the
+On by default. **PLAYER EMAIL** under OPTIONS starts it and the service sends
+one email with a single **Approve** button: one click, nothing to type.
+Players who have not set an address up are asked once on the title screen
+whether they want to.
+
+Scores are posted from the moment you start, but **nobody can see them until
+you click that button**: the boards, player pages and the site's totals all
+show approved players only, and declining deletes everything collected. The
+game says so on the game-over screen while it waits, and notices the approval
+by itself within a few seconds. Permission belongs to the address rather than
+the profile, so another profile on a machine you have already approved needs
+no second email; deleting a profile takes its own permission with it.
+From then on every finished game is posted (the player name, the
 score and game statistics, and what the machine is) with your world rank
 shown on the game-over screen. **OPTIONS > ONLINE: OFF** keeps everything on
 the machine and also stops the update check. **LEADERBOARD** on the title
 screen shows the boards (all time, this week, fights, level, demons slain),
 with your own row pinned, and keeps the last copy for offline viewing. The
 address is stored encrypted and never shown; each player and each machine
-is asked separately, and nothing is stored until the code is typed. Runs
+is asked separately. Runs
 that could not be posted wait in the profile's `runs/pending` folder and go
 out at the next launch.
 

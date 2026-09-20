@@ -6,8 +6,9 @@
 //
 // Wire format (JSON, all routes under <server>/api):
 //   POST register     {player_id, install_id, email, display_name, machine_label, version}
-//                     -> {ok:true} (a code was emailed) | {error}
-//   POST confirm      {player_id, code}  -> {ok:true, token} | {error}
+//                     -> {ok:true, token, approved, poll_secret?} | {error}
+//                     The token comes back at once: the game posts from then on and the
+//                     approval only decides whether anyone else may see it.
 //   POST runs         Authorization: Bearer <token>, body = RunRecord JSON
 //                     -> {ok:true, rank, best_rank, total_players, tier} | {error}
 //   GET  leaderboard?board=<name>&player=<id> -> {board, rows:[...], me:{...}|null, total}
@@ -31,7 +32,7 @@ namespace rl::game {
 
 class OnlineClient {
 public:
-    enum class Kind { Register, Confirm, SubmitRun, Leaderboard, Player, Version, Poll, Adopt, DeletePlayer };
+    enum class Kind { Register, SubmitRun, Leaderboard, Player, Version, Poll, Adopt, DeletePlayer };
     struct Result {
         Kind kind;
         int id = 0;
@@ -52,7 +53,6 @@ public:
     static bool available() { return net::httpAvailable(); }
 
     int registerEmail(const std::string& playerId, const std::string& installId, const std::string& email, const std::string& displayName, const std::string& machineLabel, const std::string& version);
-    int confirm(const std::string& playerId, const std::string& code);
     int submitRun(const std::string& runJson, const std::string& token, const std::string& tag);
     int leaderboard(const std::string& board, const std::string& playerId);
     int player(const std::string& playerId);

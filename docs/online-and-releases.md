@@ -367,6 +367,35 @@ sessions        one per launch: machine, player, duration, input mix
   three players, two machines and up to six confirmed registrations. Removing
   the account deletes all of them together (section 7's deletion path).
 
+### Approval, not verification (2026-09-20)
+
+The consent model changed from "nothing is stored until you confirm" to
+"stored from the start, shown to nobody until you approve". Typing a code was
+more than the moment deserved, so there is no code any more: the email has one
+Approve button and `/api/confirm` is gone.
+
+- `/api/register` hands the game a token immediately and creates the player row
+  with `approved = false`. Finished games post from then on and are stored.
+- Every public read filters on it: `board_global` and the other four boards,
+  `public_stats`, `playerSummary` and `accountSiblings` all join `players` on
+  `approved`. `/api/runs` accepts an unapproved run and replies `{approved:
+  false}` with no standing, which is what the game shows on the game-over
+  screen.
+- Approving flips the flag and links the account, which is the moment anything
+  it has posted becomes visible. Declining calls `declineRegistration`, which
+  deletes the player row and cascades its runs, trophies and machine links.
+- **Permission belongs to the address, not the profile.** An `accounts` row
+  exists only for an address that has been approved at least once, so register
+  checks it: if the address has an account *and* this machine is already one of
+  its own (`player_machines`), the new profile is approved on the spot and no
+  mail is sent. A new machine on the same address is still asked, so knowing
+  somebody's address is not enough to post as them. Deleting a profile removes
+  its permission with it, and deleting the last one leaves the account with no
+  machines, so the next profile is asked again.
+- The wording had to change everywhere it appeared: the email, the approve page,
+  the in-game opt-in screen, both READMEs. Saying "nothing is stored" when
+  something is would be the kind of promise that matters.
+
 ### Deleting a profile and making it again (2026-09-20)
 
 A `players` row is written in exactly one place, `completeRegistration`, so a

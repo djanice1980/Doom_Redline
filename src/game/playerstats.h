@@ -57,6 +57,10 @@ public:
     bool emailVerified() const { return emailVerified_; }
     void setEmail(const std::string& email);   // resets verification when it changes
     const std::string& token() const { return token_; }   // the online service's per-player secret, set by a confirmed registration
+    // A token means the game may post; `emailVerified` means the address owner has
+    // approved and the service may show what was posted. The first comes back the
+    // moment a registration starts, the second when the emailed link is clicked.
+    void setToken(const std::string& token);
     void setVerified(const std::string& token);
     // The service merged this profile into an older player of the same account.
     void setPlayerId(const std::string& id) { playerId_ = id; save(); }

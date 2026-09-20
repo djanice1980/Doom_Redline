@@ -17,7 +17,7 @@ export interface PlayerSummary {
 export async function playerSummary(id: string): Promise<PlayerSummary | null> {
   const db = sql();
   const p = await db`select p.id, p.display_name, p.created_at, coalesce(g.rating, 0) as rating, g.rank, coalesce(g.tier, '') as tier, coalesce(g.best_score, 0) as best_score
-    from players p left join ratings g on g.player_id = p.id where p.id = ${id} and p.token_hash is not null`;
+    from players p left join ratings g on g.player_id = p.id where p.id = ${id} and p.approved`;
   if (p.length === 0) return null;
   const [t] = await db`select count(*) as runs, coalesce(sum(duration_s), 0) as seconds, coalesce(sum(kills), 0) as kills, coalesce(max(level), 0) as best_level, coalesce(max(score), 0) as best_score,
       coalesce(sum(fights), 0) as fights, coalesce(sum(blocks_destroyed), 0) as blocks, count(*) filter (where death_cause = 'killed') as deaths,

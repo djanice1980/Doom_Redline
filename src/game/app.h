@@ -251,8 +251,6 @@ private:
     std::string onlineTier_;
     std::string registerEmail_;        // address being registered
     bool registerBusy_ = false;        // a register/confirm request is in flight
-    std::string codeEntry_;            // the six digits being typed
-    int codeChar_ = 0;                 // gamepad digit picker
     Json leaderboard_;                 // last reply for the board on screen
     std::string leaderboardFetched_;   // "just now", "3 minutes ago", or "" (never)
     int leaderboardTab_ = 0;

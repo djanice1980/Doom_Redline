@@ -36,6 +36,11 @@ export async function POST(req: Request) {
     else await tx`update machines set last_seen = now() where install_id = ${r.install_id}`;
   });
 
+  // Unapproved: the run is stored but nothing about it is public yet, so there is no
+  // standing to report. The game says so on the game-over screen.
+  const [me] = await db`select approved from players where id = ${who.playerId}`;
+  if (!me?.approved) return json({ ok: true, approved: false });
+
   // Standing: this run's rank among every player's best, the player's best rank, the player count.
   const [rankRow] = await db`select 1 + count(*) as rank from board_global where value > ${r.score} and player_id <> ${who.playerId}`;
   const [bestRow] = await db`select 1 + count(*) as rank from board_global b where b.value > (select coalesce(max(score), 0) from runs where player_id = ${who.playerId})`;
@@ -43,6 +48,7 @@ export async function POST(req: Request) {
   const tier = await db`select tier from ratings where player_id = ${who.playerId}`;
   return json({
     ok: true,
+    approved: true,
     rank: Number(rankRow.rank),
     best_rank: Number(bestRow.rank),
     total_players: Number(totalRow.total),

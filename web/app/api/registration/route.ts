@@ -28,13 +28,14 @@ export async function POST(req: Request) {
     await db`update registrations set status = 'expired' where id = ${reg.id}`;
     status = "expired";
   }
-  if (status === "confirmed" && reg.token_enc) {
-    const token = decrypt(reg.token_enc as string);
-    await db`update registrations set token_enc = null where id = ${reg.id}`;
-    // As in the code path: the account's other players, now that the address is proven.
+  if (status === "confirmed") {
+    // The game already holds a token from /api/register; one is only parked here if
+    // it somehow had none. What matters is that it is approved now.
+    const token = reg.token_enc ? decrypt(reg.token_enc as string) : undefined;
+    if (reg.token_enc) await db`update registrations set token_enc = null where id = ${reg.id}`;
     const [p] = await db`select account_id from players where id = ${playerId}`;
     const existing = await accountSiblings((p?.account_id as string | null) ?? null, playerId as string, (reg.display_name as string) ?? "");
-    return json({ status, token, player_id: playerId, existing });
+    return json({ status, approved: true, ...(token ? { token } : {}), player_id: playerId, existing });
   }
-  return json({ status });
+  return json({ status, approved: false });
 }

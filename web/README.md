@@ -140,11 +140,13 @@ against the local server with `--online-server http://localhost:3000`.
 ## What is stored
 
 See `../docs/online-and-releases.md` sections 6, 7 and 9. In short: player
-names and gameplay numbers are public; email addresses are stored as an
+names and gameplay numbers of approved players are public, and nothing at all
+is shown for a player whose address has not been approved; email addresses are stored as an
 HMAC for lookup plus AES-GCM ciphertext; machine facts (OS, GPU, cores,
 memory, gamepad model) are stored encrypted and shown only in aggregate on
-the stats page; nothing is stored for a player until the address owner has
-typed the code. To remove someone, delete their row in `accounts`: the
+the stats page; a player's games are collected from the moment they register
+but shown to nobody until the address owner has clicked the emailed Approve
+button, and declining deletes them. To remove someone, delete their row in `accounts`: the
 players, machines, runs and trophies under it cascade.
 
 A player can also erase itself: `POST /api/player/delete` with that player's

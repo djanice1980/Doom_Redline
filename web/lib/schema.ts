@@ -51,6 +51,18 @@ export function ensureSchema(): Promise<void> {
           end loop;
         end $$;
       `);
+      // 0005: approval lives on the player, and the public views only show approved ones.
+      const { readFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      try {
+        await db.unsafe(readFileSync(join(process.cwd(), "supabase", "migrations", "0005_approval.sql"), "utf8"));
+      } catch {
+        // Running from a bundle without the migration file: apply the essentials inline.
+        await db.unsafe(`
+          alter table players add column if not exists approved boolean not null default false;
+          update players set approved = true where token_hash is not null and account_id is not null;
+        `);
+      }
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;

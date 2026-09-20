@@ -20,11 +20,10 @@ function check(cond: unknown, what: string) {
 async function main() {
   const { sql } = await import("../lib/db");
   const db = sql();
-  for (const f of ["0001_init.sql", "0002_links_and_polling.sql", "0003_hardening.sql", "0004_linter_quiet.sql"]) await db.unsafe(readFileSync(join(__dirname, "..", "supabase", "migrations", f), "utf8"));
+  for (const f of ["0001_init.sql", "0002_links_and_polling.sql", "0003_hardening.sql", "0004_linter_quiet.sql", "0005_approval.sql"]) await db.unsafe(readFileSync(join(__dirname, "..", "supabase", "migrations", f), "utf8"));
   for (const t of ["runs", "trophies", "player_machines", "registrations", "players", "accounts", "machines", "ratings", "mail_log", "rate_limits", "settings"]) await db.unsafe(`delete from ${t}`);
 
   const register = (await import("../app/api/register/route")).POST;
-  const confirm = (await import("../app/api/confirm/route")).POST;
   const runs = (await import("../app/api/runs/route")).POST;
   const leaderboard = (await import("../app/api/leaderboard/route")).GET;
   const player = (await import("../app/api/player/[id]/route")).GET;
@@ -37,23 +36,48 @@ async function main() {
   let r = await register(post("/api/register", { player_id: "nope", install_id: installId, email: "a@b.co", display_name: "MARINE" }));
   check(r.status === 400, "register rejects a bad player id");
   r = await register(post("/api/register", { player_id: playerId, install_id: installId, email: "marine@example.com", display_name: "MARINE", machine_label: "LINUX / RADEON", version: "0.1.0" }));
-  const regReply = (await r.clone().json()) as { ok?: boolean; poll_secret?: string };
+  const regReply = (await r.clone().json()) as { ok?: boolean; poll_secret?: string; token?: string; approved?: boolean };
   check(r.status === 200 && !!regReply.poll_secret, `register accepts and returns a poll secret (status ${r.status})`);
+  check(!!regReply.token && regReply.approved === false, "register hands over a token at once, not yet approved");
+  // Collected from the start: a run posts now and is stored, but shows up nowhere.
+  const earlyRun = {
+    run_id: randomUUID(), player_id: playerId, install_id: installId, display_name: "MARINE", version: "0.1.0", platform: "Linux",
+    started_at: "2026-09-20T10:00:00Z", ended_at: "2026-09-20T10:04:00Z", duration_s: 240, score: 4321, level: 2, lines: 9, red_lines: 1, fights: 1, pieces: 40, tetrises: 0, best_chain: 1,
+    kills_by_kind: [2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], kills: 3, highest_kind: 1, blocks_destroyed: 4, pickups: 2, weapons_owned: ["shotgun"], shots: { shotgun: 20, chaingun: 0, rocket_launcher: 0, plasma_rifle: 0 },
+    damage_taken: 20, bfg_used: false, death_cause: "killed", killed_by: 1, seed: 5, voxels: false, brutal: false, input: { keyboard: 50, mouse: 40, gamepad: 0 }, trophies: [],
+    machine: { platform: "Linux", os: "CachyOS", gpu: "Radeon 8060S", cores: 16, ram: 65536, pad: "" },
+  };
+  r = await runs(post("/api/runs", earlyRun, { Authorization: `Bearer ${regReply.token}` }));
+  const early = (await r.json()) as { ok?: boolean; approved?: boolean; rank?: number };
+  check(r.status === 200 && early.approved === false && early.rank === undefined, "an unapproved run is accepted but gets no standing back");
+  const storedEarly = await db`select count(*) as n from runs where player_id = ${playerId}`;
+  check(Number(storedEarly[0].n) === 1, "and it is stored");
+  r = await leaderboard(new Request("http://local/api/leaderboard?board=global"));
+  check(((await r.json()) as { rows: unknown[] }).rows.length === 0, "but the board shows nothing for it");
+  r = await player(new Request(`http://local/api/player/${playerId}`), { params: Promise.resolve({ id: playerId }) });
+  check(r.status === 404, "and the player page is not there yet");
   const mail = await db`select detail from mail_log order by id desc limit 1`;
-  const code = /code into the game where it asks:\s+(\d{6})/.exec(mail[0].detail as string)?.[1];
-  check(!!code, "a six-digit code was mailed (logged)");
-  const link = /(http:\/\/localhost:3000\/confirm\/[0-9a-f-]+\?t=[A-Za-z0-9_-]+)/.exec(mail[0].detail as string)?.[1];
-  check(!!link, "an approve link was mailed (logged)");
+  check(!/type this code|code into the game/i.test(mail[0].detail as string), "the mail asks for no code, just the link");
+  const linkParts = /\/confirm\/([0-9a-f-]+)\?t=([A-Za-z0-9_-]+)/.exec(mail[0].detail as string);
+  check(!!linkParts, "an approve link was mailed (logged)");
   const poll = (await import("../app/api/registration/route")).POST;
   r = await poll(post("/api/registration", { player_id: playerId, poll_secret: regReply.poll_secret }));
-  check(r.status === 200 && ((await r.json()) as { status: string }).status === "pending", "polling reports pending");
-  // 2. confirm: wrong code, then right
-  r = await confirm(post("/api/confirm", { player_id: playerId, code: code === "000000" ? "000001" : "000000" }));
-  check(r.status === 400, "confirm rejects a wrong code");
-  r = await confirm(post("/api/confirm", { player_id: playerId, code }));
-  const conf = (await r.json()) as { ok?: boolean; token?: string };
-  check(r.status === 200 && !!conf.token, "confirm returns a token");
-  const token = conf.token as string;
+  const pending = (await r.json()) as { status: string; approved?: boolean };
+  check(r.status === 200 && pending.status === "pending" && pending.approved === false, "polling reports pending and not approved");
+  // 2. approval, the only way in: one click on the emailed link
+  const confirmLink = (await import("../app/api/confirm-link/route")).POST;
+  r = await confirmLink(post("/api/confirm-link", { id: linkParts![1], t: "wrong-secret-wrong-secret", action: "approve" }));
+  check(r.status === 404, "a link with the wrong secret is refused");
+  r = await confirmLink(post("/api/confirm-link", { id: linkParts![1], t: linkParts![2], action: "approve" }));
+  check(r.status === 200 && ((await r.json()) as { status: string }).status === "confirmed", "approving by link confirms");
+  const token = regReply.token as string;
+  r = await poll(post("/api/registration", { player_id: playerId, poll_secret: regReply.poll_secret }));
+  const polled1 = (await r.json()) as { status: string; approved?: boolean };
+  check(polled1.status === "confirmed" && polled1.approved === true, "and the game learns it is approved by polling");
+  const approvedRow = await db`select approved from players where id = ${playerId}`;
+  check(approvedRow[0].approved === true, "the player row is approved");
+  r = await leaderboard(new Request("http://local/api/leaderboard?board=global"));
+  check(((await r.json()) as { rows: { value: number }[] }).rows[0]?.value === 4321, "and the run collected before approval is now on the board");
   const acc = await db`select count(*) as n from accounts`;
   check(Number(acc[0].n) === 1, "one account row, keyed by the email hash");
   const pm = await db`select count(*) as n from player_machines where player_id = ${playerId} and install_id = ${installId}`;
@@ -76,7 +100,7 @@ async function main() {
   r = await runs(post("/api/runs", run, { Authorization: `Bearer ${token}` }));
   check(r.status === 200, "posting the same run twice is harmless");
   const runRows = await db`select count(*) as n from runs`;
-  check(Number(runRows[0].n) === 1, "one run row after the duplicate");
+  check(Number(runRows[0].n) === 2, "two run rows after the duplicate: the early one and this");
   const jt = await db`select jsonb_typeof(kills_by_kind) as a, jsonb_typeof(shots) as o, jsonb_typeof(input) as i from runs limit 1`;
   check(jt[0].a === "array" && jt[0].o === "object" && jt[0].i === "object", "jsonb columns hold real JSON values, not strings");
   const tro = await db`select count(*) as n from trophies where player_id = ${playerId}`;
@@ -97,7 +121,7 @@ async function main() {
   // 5. player page data
   r = await player(new Request(`http://local/api/player/${playerId}`), { params: Promise.resolve({ id: playerId }) });
   const ps = (await r.json()) as { name: string; totals: { runs: number; machines: number }; trophies: unknown[] };
-  check(ps.name === "MARINE" && ps.totals.runs === 1 && ps.totals.machines === 1 && ps.trophies.length === 2, "the player summary is right");
+  check(ps.name === "MARINE" && ps.totals.runs === 2 && ps.totals.machines === 1 && ps.trophies.length === 2, "the player summary is right");
   // 6. ratings
   r = await cron(new Request("http://local/api/cron/ratings", { headers: { Authorization: "Bearer wrong" } }));
   check(r.status === 403, "the cron route needs the secret");
@@ -106,10 +130,9 @@ async function main() {
   const rating = await db`select tier, rank from ratings where player_id = ${playerId}`;
   check(rating[0]?.tier === "DOOM SLAYER" && Number(rating[0]?.rank) === 1, "the only player is DOOM SLAYER");
   // 6b. approval by link for a second player + machine, then decline for a third
-  const confirmLink = (await import("../app/api/confirm-link/route")).POST;
   const p2 = randomUUID(), m2 = randomUUID();
   r = await register(post("/api/register", { player_id: p2, install_id: m2, email: "second@example.com", display_name: "SECOND", machine_label: "WINDOWS / RTX", version: "0.3.0" }));
-  const reg2 = (await r.json()) as { poll_secret?: string };
+  const reg2 = (await r.json()) as { poll_secret?: string; token?: string };
   const mail2 = await db`select detail from mail_log order by id desc limit 1`;
   const link2 = /\/confirm\/([0-9a-f-]+)\?t=([A-Za-z0-9_-]+)/.exec(mail2[0].detail as string);
   check(!!link2, "second registration mailed a link");
@@ -118,15 +141,13 @@ async function main() {
   r = await confirmLink(post("/api/confirm-link", { id: link2![1], t: link2![2], action: "approve" }));
   check(r.status === 200 && ((await r.json()) as { status: string }).status === "confirmed", "approving by link confirms");
   r = await poll(post("/api/registration", { player_id: p2, poll_secret: reg2.poll_secret }));
-  const polled = (await r.json()) as { status: string; token?: string };
-  check(polled.status === "confirmed" && !!polled.token, "polling after a link approval hands over the token");
-  r = await poll(post("/api/registration", { player_id: p2, poll_secret: reg2.poll_secret }));
-  check(((await r.json()) as { token?: string }).token === undefined, "the token is handed over only once");
-  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: p2, install_id: m2, score: 100, level: 1, fights: 0, lines: 2, pieces: 10, tetrises: 0, kills_by_kind: [1,0,0,0,0,0,0,0,0,0,0,0,0], kills: 1, highest_kind: 0, death_cause: "stack", killed_by: -1, trophies: [] }, { Authorization: `Bearer ${polled.token}` }));
+  const polled = (await r.json()) as { status: string; approved?: boolean };
+  check(polled.status === "confirmed" && polled.approved === true, "polling after a link approval reports approved");
+  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: p2, install_id: m2, score: 100, level: 1, fights: 0, lines: 2, pieces: 10, tetrises: 0, kills_by_kind: [1,0,0,0,0,0,0,0,0,0,0,0,0], kills: 1, highest_kind: 0, death_cause: "stack", killed_by: -1, trophies: [] }, { Authorization: `Bearer ${reg2.token}` }));
   check(r.status === 200, "the link-approved player can post a run");
   const p3 = randomUUID(), m3 = randomUUID();
   r = await register(post("/api/register", { player_id: p3, install_id: m3, email: "third@example.com", display_name: "THIRD", machine_label: "", version: "0.3.0" }));
-  const reg3 = (await r.json()) as { poll_secret?: string };
+  const reg3 = (await r.json()) as { poll_secret?: string; token?: string };
   const mail3 = await db`select detail from mail_log order by id desc limit 1`;
   const link3 = /\/confirm\/([0-9a-f-]+)\?t=([A-Za-z0-9_-]+)/.exec(mail3[0].detail as string);
   r = await confirmLink(post("/api/confirm-link", { id: link3![1], t: link3![2], action: "decline" }));
@@ -134,7 +155,7 @@ async function main() {
   r = await poll(post("/api/registration", { player_id: p3, poll_secret: reg3.poll_secret }));
   check(((await r.json()) as { status: string }).status === "declined", "polling reports the decline");
   const p3rows = await db`select count(*) as n from players where id = ${p3}`;
-  check(Number(p3rows[0].n) === 0, "a declined registration stores no player");
+  check(Number(p3rows[0].n) === 0, "declining deletes the player it collected for");
   const vopts = await db`select c.relname, c.reloptions from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'public' and c.relkind = 'v'`;
   check(vopts.length === 6 && vopts.every((v) => JSON.stringify(v.reloptions ?? []).includes("security_invoker=on")), "every view runs as the caller (security_invoker)");
   const fn = await db`select proconfig from pg_proc where proname = 'recompute_ratings'`;
@@ -165,21 +186,25 @@ async function main() {
   // 9. deleting a profile and making a new one with the same name and address:
   //    the confirm reply offers the old player, adopt merges the two.
   const playerId2 = randomUUID(), installId2 = randomUUID();
-  r = await register(post("/api/register", { player_id: playerId2, install_id: installId2, email: "marine@example.com", display_name: "MARINE", machine_label: "LINUX / RADEON", version: "0.4.0" }));
-  check(r.status === 200, "the same address registers a second profile");
-  const mailAgain = await db`select detail from mail_log order by id desc limit 1`;
-  const code2 = /code into the game where it asks:\s+(\d{6})/.exec(mailAgain[0].detail as string)?.[1];
-  r = await confirm(post("/api/confirm", { player_id: playerId2, code: code2 }));
-  const conf2 = (await r.json()) as { token?: string; player_id?: string; existing?: { player_id: string; runs: number; best_score: number; same_name: boolean }[] };
+  const mailsBefore = await db`select count(*) as n from mail_log`;
+  r = await register(post("/api/register", { player_id: playerId2, install_id: installId, email: "marine@example.com", display_name: "MARINE", machine_label: "LINUX / RADEON", version: "0.5.0" }));
+  const conf2 = (await r.json()) as { token?: string; approved?: boolean };
   const token2 = conf2.token as string;
-  check(conf2.player_id === playerId2, "confirm says which player the token is for");
-  check(conf2.existing?.length === 1 && conf2.existing[0].player_id === playerId, "the confirm reply offers the account's other player");
-  check(conf2.existing?.[0].runs === 1 && conf2.existing[0].best_score === 24680 && conf2.existing[0].same_name, "with its run count, best score and the matching name");
+  check(r.status === 200 && conf2.approved === true, "a second profile on a machine this address already approved needs no email");
+  const mailsAfter = await db`select count(*) as n from mail_log`;
+  check(Number(mailsAfter[0].n) === Number(mailsBefore[0].n), "and no mail was sent for it");
+  const approved2 = await db`select approved, account_id from players where id = ${playerId2}`;
+  check(approved2[0].approved === true && !!approved2[0].account_id, "it is approved and on the same account");
+  // A profile on a machine the address has never approved still asks.
+  const p5 = randomUUID(), m5 = randomUUID();
+  r = await register(post("/api/register", { player_id: p5, install_id: m5, email: "marine@example.com", display_name: "MARINE", machine_label: "OTHER BOX", version: "0.5.0" }));
+  const reg5 = (await r.json()) as { approved?: boolean; poll_secret?: string };
+  check(r.status === 200 && reg5.approved === false && !!reg5.poll_secret, "but a new machine on the same address is asked");
   const accounts2 = await db`select count(distinct account_id) as n from players where id in (${playerId}, ${playerId2})`;
   check(Number(accounts2[0].n) === 1, "both players sit on one account");
   check(!conf2.existing?.some((e) => e.name === "SECOND"), "a player on a different address is not offered");
   // A run posted by the new profile before it adopts still ends up on the old player.
-  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: playerId2, install_id: installId2, score: 5000 }, { Authorization: `Bearer ${token2}` }));
+  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: playerId2, install_id: installId, score: 5000 }, { Authorization: `Bearer ${token2}` }));
   check(r.status === 200, "the new profile can post a run of its own");
   const adopt = (await import("../app/api/player/adopt/route")).POST;
   r = await adopt(post("/api/player/adopt", { player_id: playerId }, { Authorization: `Bearer ${token2}` }));
@@ -188,10 +213,10 @@ async function main() {
   const gone = await db`select count(*) as n from players where id = ${playerId2}`;
   check(Number(gone[0].n) === 0, "the duplicate row is gone");
   const both = await db`select count(*) as n from runs where player_id = ${playerId}`;
-  check(Number(both[0].n) === 2, "and both runs belong to the old player");
+  check(Number(both[0].n) === 3, "and every run belongs to the old player");
   const machines2 = await db`select count(*) as n from player_machines where player_id = ${playerId}`;
-  check(Number(machines2[0].n) === 2, "the new machine came with it");
-  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: playerId, install_id: installId2, score: 6000 }, { Authorization: `Bearer ${token2}` }));
+  check(Number(machines2[0].n) === 1, "still on the one machine it was made on");
+  r = await runs(post("/api/runs", { ...run, run_id: randomUUID(), player_id: playerId, install_id: installId, score: 6000 }, { Authorization: `Bearer ${token2}` }));
   check(r.status === 200, "the token the game already has now posts as the old player");
   r = await adopt(post("/api/player/adopt", { player_id: randomUUID() }, { Authorization: `Bearer ${token2}` }));
   check(r.status === 404, "adopting a player that is not on the account is refused");
@@ -214,7 +239,7 @@ async function main() {
   check(r.status === 401, "delete needs a token");
   r = await del(post("/api/player/delete", {}, { Authorization: `Bearer ${token2}` }));
   const dl = (await r.json()) as { ok?: boolean; runs_deleted?: number };
-  check(r.status === 200 && dl.runs_deleted === 3, `delete removes the player and its runs (${JSON.stringify(dl)})`);
+  check(r.status === 200 && dl.runs_deleted === 4, `delete removes the player and its runs (${JSON.stringify(dl)})`);
   const after = await db`select (select count(*) from players where id = ${playerId}) as p, (select count(*) from runs where player_id = ${playerId}) as r`;
   check(Number(after[0].p) === 0 && Number(after[0].r) === 0, "the row and its runs are gone");
 

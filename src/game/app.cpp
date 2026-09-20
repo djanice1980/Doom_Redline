@@ -704,7 +704,7 @@ void App::profileAction(int action) {
             PlayerStats victim;
             if (sel == profileName_) victim = stats_;
             else victim.peek(profilesRoot() + sel + "/");
-            if (OnlineClient::available() && onlineOn_ && victim.emailVerified() && !victim.token().empty()) {
+            if (OnlineClient::available() && onlineOn_ && !victim.token().empty()) {
                 profileConfirmDelete_ = -1;
                 deleteProfileName_ = sel;
                 deletePlayerId_ = victim.playerId();
@@ -952,27 +952,28 @@ void App::pollOnline() {
         switch (res.kind) {
         case OnlineClient::Kind::Register:
             registerBusy_ = false;
-            if (res.ok) { stats_.setPendingPoll(res.body["poll_secret"].asString()); pollT_ = 4.f; wadStatus_.clear(); openScreen(kScreenCode); play("menu_select", 0.7f); }
+            if (res.ok) {
+                // A token comes back at once, so finished games post from here on; the
+                // approval only decides whether anyone else can see them.
+                stats_.setToken(res.body["token"].asString());
+                if (res.body["approved"].asBool()) {
+                    // This address had already approved this machine: nothing to do.
+                    stats_.setVerified(res.body["token"].asString());
+                    announce("REGISTERED: " + registerEmail_, glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
+                    play("pickup_weapon", 1.f);
+                    closeScreen();
+                    submitPendingRuns();
+                } else {
+                    stats_.setPendingPoll(res.body["poll_secret"].asString());
+                    pollT_ = 4.f;
+                    wadStatus_.clear();
+                    openScreen(kScreenCode);
+                    play("menu_select", 0.7f);
+                    submitPendingRuns();
+                }
+            }
             else { wadStatus_ = "COULD NOT SEND: " + (res.error.empty() ? std::string("NO REPLY") : res.error); play("menu", 0.6f); }
             for (char& c : wadStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            break;
-        case OnlineClient::Kind::Confirm:
-            registerBusy_ = false;
-            if (res.ok && !res.body["token"].asString().empty()) {
-                stats_.setVerified(res.body["token"].asString());
-                announce("REGISTERED: " + registerEmail_, glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
-                play("pickup_weapon", 1.f);
-                applyAccountPlayers(res.body["existing"]);
-                closeScreen();
-                // This address already has players: ask before starting a second history.
-                if (!adoptChoices_.empty()) { screenIndex_ = 0; openScreen(kScreenAdopt); }
-                else submitPendingRuns();
-            } else {
-                wadStatus_ = res.error.empty() ? "WRONG CODE" : res.error;
-                for (char& c : wadStatus_) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                codeEntry_.clear();
-                play("menu", 0.6f);
-            }
             break;
         case OnlineClient::Kind::SubmitRun: {
             std::error_code ec;
@@ -983,7 +984,8 @@ void App::pollOnline() {
                 onlineRank_ = res.body["rank"].asInt();
                 onlineTotal_ = res.body["total_players"].asInt();
                 onlineTier_ = res.body["tier"].asString();
-                if (onlineRank_ > 0) onlineStatus_ = "WORLD RANK #" + std::to_string(onlineRank_) + (onlineTotal_ > 0 ? " OF " + std::to_string(onlineTotal_) : "") + (onlineTier_.empty() ? "" : "   " + onlineTier_);
+                if (!res.body["approved"].asBool()) onlineStatus_ = "SCORE POSTED, WAITING FOR YOUR EMAIL APPROVAL BEFORE ANYONE SEES IT";
+                else if (onlineRank_ > 0) onlineStatus_ = "WORLD RANK #" + std::to_string(onlineRank_) + (onlineTotal_ > 0 ? " OF " + std::to_string(onlineTotal_) : "") + (onlineTier_.empty() ? "" : "   " + onlineTier_);
                 else onlineStatus_ = "SCORE POSTED";
                 if (res.body["best_rank"].asInt() > 0 && res.body["best_rank"].asInt() < onlineRank_) onlineStatus_ += "   (YOUR BEST: #" + std::to_string(res.body["best_rank"].asInt()) + ")";
             } else if (res.status == 401 || res.status == 403) {
@@ -1078,8 +1080,11 @@ void App::pollOnline() {
         }
         case OnlineClient::Kind::Poll: {
             const std::string status = res.body["status"].asString();
-            if (res.ok && status == "confirmed" && !res.body["token"].asString().empty()) {
-                stats_.setVerified(res.body["token"].asString());
+            if (res.ok && status == "confirmed") {
+                // The token usually came back at registration; only take a new one if
+                // the service parked one for us.
+                const std::string t = res.body["token"].asString();
+                stats_.setVerified(t.empty() ? stats_.token() : t);
                 std::fprintf(stderr, "[online] registration approved from the email\n");
                 announce("REGISTERED: " + (registerEmail_.empty() ? stats_.email() : registerEmail_), glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.1f);
                 play("pickup_weapon", 1.f);
@@ -1300,13 +1305,13 @@ void App::openScreen(int screen) {
     if (screen == kScreenNameEntry) { nameEntry_.clear(); nameChar_ = 0; nameRename_ = false; wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenWadPath) { wadEntry_ = Assets::savedWadPath(prefDir_); wadStatus_.clear(); SDL_StartTextInput(window_); }
     if (screen == kScreenEmailEntry) { emailEntry_ = stats_.email(); wadStatus_.clear(); SDL_StartTextInput(window_); }
-    if (screen == kScreenCode) { codeEntry_.clear(); codeChar_ = 0; wadStatus_.clear(); SDL_StartTextInput(window_); }
+    if (screen == kScreenCode) wadStatus_.clear();
     if (screen == kScreenRegister) wadStatus_.clear();
     if (screen == kScreenWadSetup) wadStatus_.clear();
 }
 
 void App::closeScreen() {
-    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath || screen_ == kScreenEmailEntry || screen_ == kScreenCode) SDL_StopTextInput(window_);
+    if (screen_ == kScreenNameEntry || screen_ == kScreenWadPath || screen_ == kScreenEmailEntry) SDL_StopTextInput(window_);
     if (nameRequired_ && profileName_.empty()) { openScreen(kScreenNameEntry); return; }   // no dodging the name
     if (profileRequired_) { openScreen(kScreenProfiles); return; }                        // nor the choice of player
     screen_ = kScreenNone;
@@ -1418,86 +1423,10 @@ void App::screenKey(int key, bool fromPad) {
         break;
     }
     case kScreenCode: {
-        if (registerBusy_) break;
-        if (fromPad) {   // digit picker, like the name screen
-            if (key == SDLK_UP || key == SDLK_RIGHT) { codeChar_ = (codeChar_ + 1) % 10; return; }
-            if (key == SDLK_DOWN || key == SDLK_LEFT) { codeChar_ = (codeChar_ + 9) % 10; return; }
-            if (key == SDLK_RETURN) { if (codeEntry_.size() < 6) codeEntry_.push_back(static_cast<char>('0' + codeChar_)); play("menu", 0.6f); return; }
-            if (key == SDLK_BACKSPACE) { if (!codeEntry_.empty()) codeEntry_.pop_back(); return; }
-            if (key == SDLK_TAB) key = SDLK_KP_ENTER;
-            else if (key == SDLK_ESCAPE) { closeScreen(); return; }
-        }
-        if (key == SDLK_KP_ENTER || (!fromPad && key == SDLK_RETURN)) {
-            if (codeEntry_.size() != 6) { wadStatus_ = "THE CODE HAS SIX DIGITS"; play("menu", 0.6f); return; }
-            registerBusy_ = true;
-            wadStatus_ = "CHECKING...";
-            online_.confirm(stats_.playerId(), codeEntry_);
-        }
-        else if (!fromPad && key == SDLK_BACKSPACE) { if (!codeEntry_.empty()) codeEntry_.pop_back(); }
-        else if (key == SDLK_R) { registerBusy_ = true; wadStatus_ = "SENDING A NEW CODE..."; online_.registerEmail(stats_.playerId(), machine_.installId, registerEmail_, profileName_, machineLabel(), REDLINE_VERSION); }
-        else if (!fromPad && key == SDLK_ESCAPE) closeScreen();
-        break;
-    }
-    case kScreenOnlineAsk: {
-        const int n = 3;
-        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
-            play("menu_select", 0.7f);
-            onlineAsked_ = true;
-            if (screenIndex_ == 0) { onlineOn_ = true; saveSettings(); screen_ = kScreenNone; openScreen(kScreenEmailEntry); }
-            else if (screenIndex_ == 1) { saveSettings(); closeScreen(); }
-            else { onlineOn_ = false; saveSettings(); closeScreen(); }
-        }
-        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { onlineAsked_ = true; saveSettings(); closeScreen(); }
-        break;
-    }
-    case kScreenAdopt: {
-        // The account already has players: carry on as one, or start fresh.
-        const int n = static_cast<int>(adoptChoices_.size()) + 1;   // + START FRESH
-        if (adoptBusy_) break;
-        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
-            play("menu_select", 0.7f);
-            if (screenIndex_ < static_cast<int>(adoptChoices_.size())) {
-                adoptBusy_ = true;
-                wadStatus_.clear();
-                online_.adopt(stats_.token(), adoptChoices_[static_cast<size_t>(screenIndex_)].id);
-            } else {   // a different person on the same address: leave the old player alone
-                adoptChoices_.clear();
-                closeScreen();
-                submitPendingRuns();
-            }
-        }
-        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { adoptChoices_.clear(); closeScreen(); submitPendingRuns(); }
-        break;
-    }
-    case kScreenDeleteOnline: {
-        const int n = 3;
-        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
-        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
-            play("menu_select", 0.7f);
-            const std::string name = deleteProfileName_;
-            if (screenIndex_ == 1) {
-                // The token lives in the folder about to go: write the deletion down first.
-                queuePlayerDelete(deletePlayerId_, deleteToken_);
-            }
-            deleteProfileName_.clear(); deletePlayerId_.clear(); deleteToken_.clear();
-            if (screenIndex_ == 2) { closeScreen(); break; }
-            closeScreen();
-            deleteProfile(name);
-            sendPendingDeletes();
-        }
-        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { deleteProfileName_.clear(); deletePlayerId_.clear(); deleteToken_.clear(); closeScreen(); }
-        break;
-    }
-    case kScreenWhatsNew: {
-        if (key == SDLK_UP) whatsNewScroll_ = std::max(0, whatsNewScroll_ - 1);
-        else if (key == SDLK_DOWN) ++whatsNewScroll_;   // clamped when drawn
-        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) { SDL_OpenURL(latestUrl_.c_str()); play("menu_select", 0.7f); }
-        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
+        // No code to type any more: the email has one button. This screen just waits
+        // for the poll to notice, and can send the mail again.
+        if (key == SDLK_R) { registerBusy_ = true; wadStatus_ = "SENDING AGAIN..."; startRegistration(); }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE || key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) closeScreen();
         break;
     }
     case kScreenLeaderboard: {
@@ -1953,10 +1882,6 @@ void App::handleEvents() {
             padButton(e.gbutton.button, false);
             break;
         case SDL_EVENT_TEXT_INPUT:
-            if (screen_ == kScreenCode && e.text.text) {
-                for (const char* c = e.text.text; *c; ++c) if (*c >= '0' && *c <= '9' && codeEntry_.size() < 6) codeEntry_.push_back(*c);
-                break;
-            }
             if (screen_ == kScreenNameEntry && e.text.text) {
                 for (const char* c = e.text.text; *c; ++c) {
                     char ch = static_cast<char>(std::toupper(static_cast<unsigned char>(*c)));
@@ -4073,8 +3998,8 @@ void App::addHud() {
             rows.push_back({"MODELS", voxels_.available() ? (useVoxels_ ? "VOXELS (VOXEL DOOM)" : "SPRITES") : "SPRITES (NO VOXEL PACK FOUND)"});
             rows.push_back({"DOOM WAD", assets_.usingWad() ? assets_.wadName() + "  (ENTER TO CHANGE)" : "NONE - PLACEHOLDER ART  (ENTER)"});
             rows.push_back({"SOUNDTRACK WAD", !assets_.oggMusic.empty() ? std::filesystem::path(assets_.extrasPath).filename().string() + "  (" + std::to_string(assets_.oggMusic.size()) + " TRACKS)" : "NONE - CLASSIC ONLY  (ENTER)"});
-            rows.push_back({"PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (REGISTERED)" : onlineOn_ ? "  (NOT REGISTERED, ENTER)" : "  (NOT REGISTERED)")});
-            rows.push_back({"ONLINE", !OnlineClient::available() ? "NOT IN THIS BUILD" : !onlineOn_ ? "OFF  (SCORES STAY ON THIS MACHINE)" : !stats_.emailVerified() ? "ON  (REGISTER YOUR EMAIL TO POST SCORES)" : "ON  (POSTING SCORES)", OnlineClient::available()});
+            rows.push_back({"PLAYER EMAIL", stats_.email().empty() ? "NOT SET  (OPTIONAL, ENTER)" : stats_.email() + (stats_.emailVerified() ? "  (APPROVED)" : !stats_.token().empty() ? "  (WAITING FOR THE EMAIL LINK)" : onlineOn_ ? "  (NOT SET UP, ENTER)" : "  (NOT SET UP)")});
+            rows.push_back({"ONLINE", !OnlineClient::available() ? "NOT IN THIS BUILD" : !onlineOn_ ? "OFF  (SCORES STAY ON THIS MACHINE)" : stats_.emailVerified() ? "ON  (POSTING SCORES)" : !stats_.token().empty() ? "ON  (POSTING, HIDDEN UNTIL YOU CLICK THE EMAIL LINK)" : "ON  (SET AN EMAIL TO POST SCORES)", OnlineClient::available()});
             rows.push_back({"DOOM ART", doomArtOff_ ? "OFF  (PLACEHOLDER LOOK)" : "ON"});
             rows.push_back({"BRUTAL", !assets_.usingWad() ? "NEEDS DOOM ART" : brutal_ ? (assets_.brutalPack ? "ON  (COMMUNITY GORE PACK)" : "ON  (BLOOD, GIBS, CASINGS)") : "OFF", assets_.usingWad(), true});
             rows.push_back({"DUNGEON", dungeon_ ? "ON  (A CRYPT BEHIND THE WALL AFTER EVERY ARENA)" : "OFF  (ARENA FIGHTS ONLY)"});
@@ -4213,8 +4138,9 @@ void App::addHud() {
             line("REDLINE HAS A WORLD LEADERBOARD. WITH IT, EVERY FINISHED GAME IS POSTED", 0.72f, dim);
             line("(YOUR PLAYER NAME, THE SCORE AND GAME STATISTICS, AND WHAT THIS MACHINE IS)", 0.72f, dim);
             line("AND YOU SEE YOUR WORLD RANK AFTER EACH GAME.", 0.72f, dim, 1.4f);
-            line("IT NEEDS AN EMAIL ADDRESS: YOU GET ONE MESSAGE WITH AN APPROVE LINK, AND NOTHING", 0.72f, dim);
-            line("IS POSTED UNTIL YOU CLICK IT. THE ADDRESS IS STORED ENCRYPTED AND NEVER SHOWN.", 0.72f, dim, 1.8f);
+            line("IT NEEDS AN EMAIL ADDRESS. YOU GET ONE MESSAGE WITH AN APPROVE BUTTON: ONE CLICK,", 0.72f, dim);
+            line("NOTHING TO TYPE. UNTIL YOU CLICK IT YOUR SCORES ARE POSTED BUT SHOWN TO NOBODY,", 0.72f, dim);
+            line("AND DECLINING DELETES THEM. THE ADDRESS IS STORED ENCRYPTED AND NEVER SHOWN.", 0.72f, dim, 1.8f);
             const char* opts[3] = {"YES, SET IT UP", "NOT NOW", "NO, KEEP MY SCORES ON THIS MACHINE"};
             for (int i = 0; i < 3; ++i) {
                 const bool sel = screenIndex_ == i;
@@ -4327,19 +4253,19 @@ void App::addHud() {
             if (!wadStatus_.empty()) text(W * 0.5f, y, wadStatus_, s * 0.8f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
             text(W * 0.5f, H - lh * 1.5f, "ENTER SENDS   ESC NOT NOW   (YOU CAN REGISTER LATER UNDER OPTIONS > PLAYER EMAIL)", s * 0.65f, dim, 1);
         } else if (screen_ == kScreenCode) {
-            text(W * 0.5f, H * 0.16f, "CHECK YOUR EMAIL", s * 1.4f, white, 1);
-            text(W * 0.5f, H * 0.16f + lh * 1.6f, "SENT TO " + registerEmail_ + "   (CHECK THE SPAM FOLDER TOO)", s * 0.7f, dim, 1);
-            text(W * 0.5f, H * 0.16f + lh * 2.6f, "CLICK THE APPROVE LINK IN IT AND THIS SCREEN FINISHES BY ITSELF, OR TYPE THE CODE:", s * 0.7f, dim, 1);
-            { const float f2 = 0.5f + 0.5f * std::sin(time_ * 3.f); text(W * 0.5f, H * 0.16f + lh * 3.5f, "WAITING FOR YOUR APPROVAL...", s * 0.65f, glm::vec4(0.7f, 0.9f, 1.f, 0.5f + 0.5f * f2), 1); }
-            float f = 0.5f + 0.5f * std::sin(time_ * 6.f);
-            std::string shown;
-            for (int i = 0; i < 6; ++i) { shown += i < static_cast<int>(codeEntry_.size()) ? codeEntry_[static_cast<size_t>(i)] : (i == static_cast<int>(codeEntry_.size()) && f > 0.5f ? '_' : '-'); shown += ' '; }
-            text(W * 0.5f, H * 0.38f, shown, s * 2.4f, yellow, 1);
-            if (pad_) text(W * 0.5f, H * 0.52f, "GAMEPAD: UP/DOWN PICK A DIGIT  [" + std::to_string(codeChar_) + "]  A ADD  B DELETE  START DONE", s * 0.75f, dim, 1);
-            hotText(W * 0.5f - 40.f, H * 0.60f, registerBusy_ ? "CHECKING..." : "CONFIRM", 0.95f * s, yellow, 2, kHotScreenItem, 0);
-            hotText(W * 0.5f + 40.f, H * 0.60f, "CANCEL", 0.95f * s, dim, 0, kHotBack, 0);
-            if (!wadStatus_.empty()) text(W * 0.5f, H * 0.60f + lh * 1.3f, wadStatus_, s * 0.85f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
-            text(W * 0.5f, H - lh * 1.5f, "TYPE THE SIX DIGITS AND PRESS ENTER   R SENDS A NEW EMAIL   ESC LATER (THE LINK KEEPS WORKING)", s * 0.65f, dim, 1);
+            text(W * 0.5f, H * 0.18f, "CHECK YOUR EMAIL", s * 1.5f, white, 1);
+            float y = H * 0.18f + lh * 2.f;
+            auto line = [&](const std::string& t, float sc, glm::vec4 c, float gap = 1.0f) { textFit(W * 0.5f, y, t, s * sc, c, 1, W - 48.f); y += lh * gap; };
+            line("SENT TO " + registerEmail_, 0.85f, yellow, 1.1f);
+            line("(IT MAY BE IN THE SPAM FOLDER)", 0.7f, dim, 1.8f);
+            line("ONE CLICK ON THE APPROVE BUTTON IS ALL IT TAKES.", 0.8f, white, 1.0f);
+            line("THIS SCREEN FINISHES BY ITSELF WHEN YOU DO.", 0.8f, white, 1.8f);
+            line("YOUR SCORES ARE ALREADY BEING POSTED, BUT NOBODY CAN SEE THEM", 0.7f, dim);
+            line("UNTIL YOU APPROVE. DECLINING DELETES THEM.", 0.7f, dim, 2.0f);
+            { const float f2 = 0.5f + 0.5f * std::sin(time_ * 3.f); text(W * 0.5f, y, registerBusy_ ? "SENDING..." : "WAITING FOR YOUR APPROVAL...", s * 0.9f, glm::vec4(0.7f, 0.9f, 1.f, 0.5f + 0.5f * f2), 1); y += lh * 1.6f; }
+            hotText(W * 0.5f, y, "CLOSE", 0.95f * s, dim, 1, kHotBack, 0);
+            if (!wadStatus_.empty()) text(W * 0.5f, y + lh * 1.3f, wadStatus_, s * 0.85f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
+            textFit(W * 0.5f, H - lh * 1.5f, "R SENDS THE EMAIL AGAIN   ESC CLOSES (THE LINK KEEPS WORKING, AND SO DOES THE GAME)", s * 0.65f, dim, 1, W - 48.f);
         } else if (screen_ == kScreenLeaderboard) {
             static const char* tabs[] = {"GLOBAL", "THIS WEEK", "FIGHTS", "LEVEL", "DEMONS SLAIN"};
             text(W * 0.5f, H * 0.06f, "LEADERBOARD", s * 1.5f, white, 1);

@@ -165,6 +165,11 @@ void PlayerStats::setEmail(const std::string& email) {
     save();
 }
 
+void PlayerStats::setToken(const std::string& token) {
+    token_ = token;
+    save();
+}
+
 void PlayerStats::setVerified(const std::string& token) {
     token_ = token;
     emailVerified_ = !token.empty();
