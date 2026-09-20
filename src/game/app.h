@@ -109,6 +109,8 @@ private:
     void addHud();
     void addLights();
     void text(float x, float y, const std::string& s, float scale, glm::vec4 color, int align = 0);
+    // As text(), but shrunk just enough to fit `maxWidth` (never enlarged). Returns the scale used.
+    float textFit(float x, float y, const std::string& s, float scale, glm::vec4 color, int align, float maxWidth);
     // Text turned by `angle` radians (counter-clockwise) about its own centre at (cx, cy).
     void textRot(float cx, float cy, const std::string& s, float scale, glm::vec4 color, float angle);
     // Mouse: every menu item, option row and BACK/CANCEL label registers a hotspot as it is drawn.

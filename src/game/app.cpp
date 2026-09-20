@@ -3495,6 +3495,13 @@ void App::text(float x, float y, const std::string& s, float scale, glm::vec4 co
     }
 }
 
+float App::textFit(float x, float y, const std::string& str, float scale, glm::vec4 color, int align, float maxWidth) {
+    const float w = static_cast<float>(assets_.textWidth(str, scale));
+    if (w > maxWidth && w > 1.f && maxWidth > 0.f) scale *= maxWidth / w;
+    text(x, y, str, scale, color, align);
+    return scale;
+}
+
 void App::textRot(float cx, float cy, const std::string& s, float scale, glm::vec4 color, float angle) {
     // Every glyph is a screen quad the shader turns about its own anchor (pos.w), so the
     // line is laid out flat about (0, 0), each anchor is turned the same way, and the
@@ -3534,7 +3541,9 @@ void App::addHud() {
     float lh = (assets_.fontHeight + 4) * s;
     bool inFps = (mode_ == Mode::Fps || mode_ == Mode::Countdown || mode_ == Mode::FlyIn || mode_ == Mode::FlyOut || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)) || (mode_ == Mode::GameOver && diedInFps_));
 
-    if (!inFps) {
+    // A full-screen overlay (players, options, leaderboard...) replaces the page: drawing
+    // the block HUD and the key hints behind it only shows through and collides with titles.
+    if (!inFps && screen_ == kScreenNone) {
         float x = 24.f, y = 24.f;
         text(x, y, "SCORE", s, dim); y += lh;
         text(x, y, std::to_string(game_->score()), s, white); y += lh * 1.4f;
@@ -3814,11 +3823,17 @@ void App::addHud() {
         text(W * 0.5f, ty, "STACK THE BLOCKS. SOME OF THEM ARE RED.", s * 0.85f, white, 1); ty += lh * 0.95f;
         text(W * 0.5f, ty, "WHEN A ROW IS ALL RED THE BOARD TIPS OVER", s * 0.85f, white, 1); ty += lh * 0.95f;
         text(W * 0.5f, ty, "AND EVERY RED CLUSTER BECOMES A DEMON.", s * 0.85f, white, 1); ty += lh * 1.4f;
-        for (size_t i = 0; i < menu_.items.size(); ++i) {
-            bool sel = static_cast<int>(i) == menu_.index;
-            float f = sel ? (0.7f + 0.3f * std::sin(time_ * 6.f)) : 1.f;
-            std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
-            hotText(W * 0.5f, ty + static_cast<float>(i) * lh * 1.25f, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1, kHotMenu, static_cast<int>(i));
+        {
+            // The menu closes up rather than running into the status strip at the bottom
+            // (eight items on a short window would otherwise overlap the player line).
+            const float room = (H - lh * 3.3f - lh * 0.6f) - ty;
+            const float step = std::min(lh * 1.25f, room / static_cast<float>(std::max<size_t>(menu_.items.size(), 1)));
+            for (size_t i = 0; i < menu_.items.size(); ++i) {
+                bool sel = static_cast<int>(i) == menu_.index;
+                float f = sel ? (0.7f + 0.3f * std::sin(time_ * 6.f)) : 1.f;
+                std::string label = sel ? ("> " + menu_.items[i] + " <") : menu_.items[i];
+                hotText(W * 0.5f, ty + static_cast<float>(i) * step, label, s * 1.1f, sel ? glm::vec4(1.f, 0.9f * f, 0.3f * f, 1.f) : dim, 1, kHotMenu, static_cast<int>(i));
+            }
         }
         if (updateAvailable_) {
             // A sticker to the right of the menu, tilted, that zooms in and out three times
@@ -3954,11 +3969,19 @@ void App::addHud() {
                 const bool sel = static_cast<int>(i) == screenIndex_;
                 const bool current = profileList_[i] == profileName_;
                 const ProfileInfo& pi = profileInfo_[i];
-                hotText(W * 0.5f - 20.f, y, (sel ? "> " : "") + profileList_[i] + (current ? "  (CURRENT)" : ""), s, sel ? yellow : dim, 2, kHotScreenItem, static_cast<int>(i));
+                // Names on the left of the middle, what they have done on the right; both
+                // shrink rather than run off the edge on a narrow window or a long name.
+                const float leftW = W * 0.5f - 20.f - 24.f, rightW = W - 24.f - (W * 0.5f + 20.f);
+                const std::string nameLine = (sel ? "> " : "") + profileList_[i] + (current ? "  (CURRENT)" : "");
+                float nameScale = s;
+                if (static_cast<float>(assets_.textWidth(nameLine, nameScale)) > leftW) nameScale *= leftW / static_cast<float>(assets_.textWidth(nameLine, nameScale));
+                hotText(W * 0.5f - 20.f, y, nameLine, nameScale, sel ? yellow : dim, 2, kHotScreenItem, static_cast<int>(i));
                 std::string info = "BEST " + std::to_string(pi.best) + "   " + std::to_string(pi.trophies) + "/" + std::to_string(trophies_.total()) + " TROPHIES   " + PlayerStats::formatDuration(pi.played) + (pi.email ? "   EMAIL SET" : "");
-                text(W * 0.5f + 20.f, y + lh * 0.15f, info, s * 0.6f, sel ? white : grey, 0);
+                textFit(W * 0.5f + 20.f, y + lh * 0.15f, info, s * 0.6f, sel ? white : grey, 0, rightW);
                 if (sel && profileConfirmDelete_ == static_cast<int>(i)) {
-                    text(W * 0.5f + 20.f, y + lh * 0.85f, "DELETE " + profileList_[i] + " AND ALL ITS SCORES, TROPHIES AND STATS?   ENTER YES   ESC NO", s * 0.6f, warn, 0);
+                    // The confirm gets the whole width rather than the right-hand column:
+                    // it is much longer than the row it belongs to.
+                    textFit(W * 0.5f, y + lh * 0.85f, "DELETE " + profileList_[i] + " AND ALL ITS SCORES, TROPHIES AND STATS?   ENTER YES   ESC NO", s * 0.6f, warn, 1, W - 48.f);
                 } else if (sel) {
                     float ax = W * 0.5f + 20.f;
                     const char* acts[3] = {"RENAME", "EMAIL", "DELETE"};
@@ -3976,8 +3999,8 @@ void App::addHud() {
             hotText(W * 0.5f, y + lh * 0.2f, selNew ? "> NEW PLAYER <" : "NEW PLAYER", s, selNew ? yellow : dim, 1, kHotScreenItem, static_cast<int>(profileList_.size()));
             if (!profileRequired_) hotText(W * 0.5f, y + lh * 1.8f, "BACK", s, dim, 1, kHotBack, 0);
             if (!wadStatus_.empty()) text(W * 0.5f, H - lh * 3.2f, wadStatus_, s * 0.75f, glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1);
-            text(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES, SETTINGS AND PLAY TIME", s * 0.7f, dim, 1);
-            text(W * 0.5f, H - lh * 1.1f, pad_ ? "A PLAY   X RENAME   Y DELETE   B BACK" : "ENTER PLAY   R RENAME   E EMAIL   DEL DELETE   ESC BACK", s * 0.7f, dim, 1);
+            textFit(W * 0.5f, H - lh * 2.f, "EACH PLAYER KEEPS THEIR OWN SCORES, TROPHIES, SETTINGS AND PLAY TIME", s * 0.7f, dim, 1, W - 48.f);
+            textFit(W * 0.5f, H - lh * 1.1f, pad_ ? "A PLAY   X RENAME   Y DELETE   B BACK" : "ENTER PLAY   R RENAME   E EMAIL   DEL DELETE   ESC BACK", s * 0.7f, dim, 1, W - 48.f);
         } else if (screen_ == kScreenCredits) {
             text(W * 0.5f, H * 0.12f, "REDLINE", s * 2.6f, glm::vec4(1.f, 0.15f, 0.1f, 1.f), 1);
             float y = H * 0.12f + lh * 3.2f;
