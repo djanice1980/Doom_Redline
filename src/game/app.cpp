@@ -1139,7 +1139,10 @@ void App::applyVersionInfo(const Json& info, bool fromNetwork) {
     changelog_ = j["changelog"];
     const bool was = updateAvailable_;
     updateAvailable_ = !latestVersion_.empty() && versionNewer(latestVersion_, REDLINE_VERSION);
-    if (mode_ == Mode::Title && menu_.items.size() > 5) menu_.items[5] = updateAvailable_ ? "WHAT'S NEW: VERSION " + latestVersion_ : "WHAT'S NEW";
+    // Find the item rather than trusting its position: the title menu has grown before.
+    if (mode_ == Mode::Title)
+        for (std::string& it : menu_.items)
+            if (it.rfind("WHAT'S NEW", 0) == 0) it = updateAvailable_ ? "WHAT'S NEW: VERSION " + latestVersion_ : "WHAT'S NEW";
     if (updateAvailable_ && !was && fromNetwork) { announce("VERSION " + latestVersion_ + " IS OUT: SEE WHAT'S NEW ON THE TITLE SCREEN", glm::vec4(0.8f, 1.f, 0.8f, 1.f), 1.f); play("pickup_item", 0.8f); }
 }
 
@@ -1428,6 +1431,68 @@ void App::screenKey(int key, bool fromPad) {
         // for the poll to notice, and can send the mail again.
         if (key == SDLK_R) { registerBusy_ = true; wadStatus_ = "SENDING AGAIN..."; startRegistration(); }
         else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE || key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) closeScreen();
+        break;
+    }
+    case kScreenOnlineAsk: {
+        const int n = 3;
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
+            play("menu_select", 0.7f);
+            onlineAsked_ = true;
+            if (screenIndex_ == 0) { onlineOn_ = true; saveSettings(); screen_ = kScreenNone; openScreen(kScreenEmailEntry); }
+            else if (screenIndex_ == 1) { saveSettings(); closeScreen(); }
+            else { onlineOn_ = false; saveSettings(); closeScreen(); }
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { onlineAsked_ = true; saveSettings(); closeScreen(); }
+        break;
+    }
+    case kScreenAdopt: {
+        // The account already has players: carry on as one, or start fresh.
+        const int n = static_cast<int>(adoptChoices_.size()) + 1;   // + START FRESH
+        if (adoptBusy_) break;
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
+            play("menu_select", 0.7f);
+            if (screenIndex_ < static_cast<int>(adoptChoices_.size())) {
+                adoptBusy_ = true;
+                wadStatus_.clear();
+                online_.adopt(stats_.token(), adoptChoices_[static_cast<size_t>(screenIndex_)].id);
+            } else {   // a different person on the same address: leave the old player alone
+                adoptChoices_.clear();
+                closeScreen();
+                submitPendingRuns();
+            }
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { adoptChoices_.clear(); closeScreen(); submitPendingRuns(); }
+        break;
+    }
+    case kScreenDeleteOnline: {
+        const int n = 3;
+        if (key == SDLK_UP) { screenIndex_ = (screenIndex_ + n - 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_DOWN) { screenIndex_ = (screenIndex_ + 1) % n; play("menu", 0.6f); }
+        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) {
+            play("menu_select", 0.7f);
+            const std::string name = deleteProfileName_;
+            if (screenIndex_ == 1) {
+                // The token lives in the folder about to go: write the deletion down first.
+                queuePlayerDelete(deletePlayerId_, deleteToken_);
+            }
+            deleteProfileName_.clear(); deletePlayerId_.clear(); deleteToken_.clear();
+            if (screenIndex_ == 2) { closeScreen(); break; }
+            closeScreen();
+            deleteProfile(name);
+            sendPendingDeletes();
+        }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) { deleteProfileName_.clear(); deletePlayerId_.clear(); deleteToken_.clear(); closeScreen(); }
+        break;
+    }
+    case kScreenWhatsNew: {
+        if (key == SDLK_UP) whatsNewScroll_ = std::max(0, whatsNewScroll_ - 1);
+        else if (key == SDLK_DOWN) ++whatsNewScroll_;   // clamped when drawn
+        else if (key == SDLK_RETURN || key == SDLK_SPACE || key == SDLK_KP_ENTER) { SDL_OpenURL(latestUrl_.c_str()); play("menu_select", 0.7f); }
+        else if (key == SDLK_ESCAPE || key == SDLK_BACKSPACE) closeScreen();
         break;
     }
     case kScreenLeaderboard: {
@@ -3937,11 +4002,14 @@ void App::addHud() {
             line(0.f, latestVersion_, s * 2.6f * zoom, glm::vec4(0.7f, 1.f, 0.7f, f));
             line(lh * 1.5f * zoom, "IS OUT! SEE WHAT'S NEW", s * 0.8f * zoom, dim);
             const float bw = static_cast<float>(assets_.textWidth("IS OUT! SEE WHAT'S NEW", s * 0.8f)) + lh, bh = lh * 4.5f;
-            hotRect(cx - bw * 0.5f, cy - bh * 0.5f, bw, bh, kHotMenu, 5);   // the WHAT'S NEW item
+            int wnIdx = 0;   // the sticker activates the WHAT'S NEW item, wherever it sits
+            for (size_t i = 0; i < menu_.items.size(); ++i) if (menu_.items[i].rfind("WHAT'S NEW", 0) == 0) wnIdx = static_cast<int>(i);
+            hotRect(cx - bw * 0.5f, cy - bh * 0.5f, bw, bh, kHotMenu, wnIdx);
         }
         if (!allProfileScores_.empty()) {
-            // Right-hand column, top right under the key hints: the best runs of every player on this machine.
-            float hy = H * 0.21f;
+            // Right-hand column, hard against the top now that the key hints have moved
+            // to the CONTROLS page: the best runs of every player on this machine.
+            float hy = 4.f * s;
             text(W - 24.f, hy, "HIGH SCORES", s * 0.8f, yellow, 2);
             hy += lh * 0.9f;
             int shown = 0;
@@ -4101,46 +4169,66 @@ void App::addHud() {
             hotText(W * 0.5f, y, "< BACK   (ESC)", s * 0.85f, yellow, 1, kHotBack, 0);
         } else if (screen_ == kScreenControls) {
             // Everything that used to be printed in the corner of the play field, keyboard
-            // and pad side by side. The rows are stepped to fit whatever height we have,
-            // so a short window shrinks the page rather than running off the bottom.
+            // and pad side by side. The three columns are measured first and the block is
+            // centred on what they actually come to, so the page does not sit off to one
+            // side; the row step comes from the window height, so a short window shrinks
+            // the page rather than running it off the bottom.
             text(W * 0.5f, H * 0.06f, "CONTROLS", s * 1.8f, white, 1);
-            const float labelR = W * 0.34f, keyX = W * 0.37f, padX = W * 0.70f, colW = W * 0.29f;
+            struct CRow { const char* label; const char* kb; const char* pad; bool section; };
+            static const CRow crows[] = {
+                {"FALLING BLOCKS", "", "", true},
+                {"MOVE", "LEFT / RIGHT  OR  A / D", "D-PAD  OR  LEFT STICK", false},
+                {"SOFT DROP", "DOWN  OR  S", "D-PAD DOWN  OR  STICK DOWN", false},
+                {"ROTATE", "UP, W  OR  X", "A  OR  RB", false},
+                {"ROTATE BACK", "Z  OR  CTRL", "B  OR  LB", false},
+                {"HARD DROP", "SPACE", "X  OR  D-PAD UP", false},
+                {"THE FIGHT", "", "", true},
+                {"MOVE", "W A S D  OR  ARROWS", "LEFT STICK", false},
+                {"LOOK", "MOUSE", "RIGHT STICK", false},
+                {"FIRE", "CLICK, SPACE  OR  CTRL", "A  OR  RIGHT TRIGGER", false},
+                {"RUN", "SHIFT", "LEFT TRIGGER  OR  L3", false},
+                {"CHANGE WEAPON", "1 - 4, Q / E  OR  WHEEL", "LB / RB  OR  X / Y", false},
+                {"ANYWHERE", "", "", true},
+                {"PAUSE AND MENU", "ESC", "START", false},
+                {"MENUS", "ARROWS, ENTER, MOUSE", "D-PAD AND A,  B GOES BACK", false},
+                {"MUSIC", "M MUTE     N NEXT SET", "", false},
+                {"SCREENSHOT", "F12", "", false},
+                {"FULLSCREEN", "ALT + ENTER", "", false},
+            };
             const float yTop = H * 0.06f + lh * 2.2f;
             const float step = std::min(lh * 0.95f, (H * 0.90f - yTop) / 24.f);
-            const float rs = s * 0.8f * std::min(1.f, step / (lh * 0.95f));
+            float rs = s * 0.8f * std::min(1.f, step / (lh * 0.95f));
+            // Column widths at that size, then shrink once more if the three of them plus
+            // their gaps are wider than the window.
+            float labelW = 0.f, keyW = 0.f, padW = 0.f;
+            for (const CRow& r : crows) {
+                labelW = std::max(labelW, static_cast<float>(assets_.textWidth(r.label, r.section ? rs * 1.05f : rs)));
+                keyW = std::max(keyW, static_cast<float>(assets_.textWidth(r.kb, rs)));
+                padW = std::max(padW, static_cast<float>(assets_.textWidth(r.pad, rs)));
+            }
+            float gap1 = 14.f * rs, gap2 = 20.f * rs;   // in glyph pixels: roughly three and four characters
+            float total = labelW + gap1 + keyW + gap2 + padW;
+            if (total > W - 48.f) {
+                const float k = (W - 48.f) / total;
+                rs *= k; labelW *= k; keyW *= k; padW *= k; gap1 *= k; gap2 *= k; total = W - 48.f;
+            }
+            const float labelR = (W - total) * 0.5f + labelW, keyX = labelR + gap1, padX = keyX + keyW + gap2;
             float y = yTop;
             text(keyX, y, "KEYBOARD AND MOUSE", rs * 0.85f, yellow, 0);
             text(padX, y, "GAMEPAD", rs * 0.85f, yellow, 0);
             y += step * 1.2f;
-            auto section = [&](const char* name) {
-                y += step * 0.5f;
-                text(labelR, y, name, rs * 1.05f, glm::vec4(1.f, 0.35f, 0.25f, 1.f), 2);
-                y += step * 1.05f;
-            };
-            auto ctrl = [&](const char* what, const char* kb, const char* pad) {
-                text(labelR, y, what, rs, dim, 2);
-                textFit(keyX, y, kb, rs, white, 0, colW);
-                textFit(padX, y, pad, rs, white, 0, colW);
+            for (const CRow& r : crows) {
+                if (r.section) {
+                    y += step * 0.5f;
+                    text(labelR, y, r.label, rs * 1.05f, glm::vec4(1.f, 0.35f, 0.25f, 1.f), 2);
+                    y += step * 1.05f;
+                    continue;
+                }
+                text(labelR, y, r.label, rs, dim, 2);
+                text(keyX, y, r.kb, rs, white, 0);
+                text(padX, y, r.pad, rs, white, 0);
                 y += step;
-            };
-            section("FALLING BLOCKS");
-            ctrl("MOVE", "LEFT / RIGHT  OR  A / D", "D-PAD  OR  LEFT STICK");
-            ctrl("SOFT DROP", "DOWN  OR  S", "D-PAD DOWN  OR  STICK DOWN");
-            ctrl("ROTATE", "UP, W  OR  X", "A  OR  RB");
-            ctrl("ROTATE BACK", "Z  OR  CTRL", "B  OR  LB");
-            ctrl("HARD DROP", "SPACE", "X  OR  D-PAD UP");
-            section("THE FIGHT");
-            ctrl("MOVE", "W A S D  OR  ARROWS", "LEFT STICK");
-            ctrl("LOOK", "MOUSE", "RIGHT STICK");
-            ctrl("FIRE", "CLICK, SPACE  OR  CTRL", "A  OR  RIGHT TRIGGER");
-            ctrl("RUN", "SHIFT", "LEFT TRIGGER  OR  L3");
-            ctrl("CHANGE WEAPON", "1 - 4, Q / E  OR  WHEEL", "LB / RB  OR  X / Y");
-            section("ANYWHERE");
-            ctrl("PAUSE AND MENU", "ESC", "START");
-            ctrl("MENUS", "ARROWS, ENTER, MOUSE", "D-PAD AND A,  B GOES BACK");
-            ctrl("MUSIC", "M MUTE     N NEXT SET", "");
-            ctrl("SCREENSHOT", "F12", "");
-            ctrl("FULLSCREEN", "ALT + ENTER", "");
+            }
             y += step * 0.7f;
             textFit(W * 0.5f, y, "RED BLOCKS REFUSE TO CLEAR.   A FULL RED ROW TIPS THE BOARD OVER.", rs, red, 1, W - 48.f);
             y += step * 1.5f;
