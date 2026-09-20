@@ -22,6 +22,7 @@ struct DungeonRoom {
     // the core::Shape index it came from (-1 = a plain rectangle, used for the
     // entrance and the boss hall, where a predictable floor matters).
     int shape = -1;
+    int theme = 0;     // which texture set dresses it (see Assets::kCryptThemes)
     int rot = 0;       // which way round that piece lies
     int cell = 3;      // tiles per mino
     int cx() const { return x0 + w / 2; }
@@ -32,6 +33,14 @@ struct DungeonRoom {
 struct DungeonTorch {
     glm::vec3 pos;      // sprite feet, just off the wall face
     glm::vec3 normal;   // wall face normal (into the room)
+};
+
+// Scenery standing in the crypt: which sprite, and where.
+struct DungeonDecor {
+    enum Kind : uint8_t { Column = 0, Candle, Hanging, Impaled, Stalagmite, Skulls, KindCount };
+    glm::vec3 pos;
+    Kind kind = Column;
+    int variant = 0;
 };
 
 class Dungeon {
@@ -70,6 +79,10 @@ public:
     const DungeonRoom& bossRoom() const { return rooms_[bossRoom_]; }
     const DungeonRoom& entranceRoom() const { return rooms_[0]; }
     const std::vector<DungeonTorch>& torches() const { return torches_; }
+    const std::vector<DungeonDecor>& decor() const { return decor_; }
+    // Which texture set a tile belongs to: its room's, or the corridor set.
+    int themeAt(int i, int j) const { return (i < 0 || i >= w_ || j < 0 || j >= d_) ? kCorridorTheme : themes_[static_cast<size_t>(j * w_ + i)]; }
+    static constexpr int kHallTheme = 4, kCorridorTheme = 5;
     glm::vec3 bossStand() const;   // an open floor tile at the middle of the hall
     // The way into the boss hall, sealed until the player finds the key.
     const std::vector<std::pair<int, int>>& doorTiles() const { return doorTiles_; }
@@ -86,6 +99,8 @@ private:
     void carveRoom(const DungeonRoom& r);
     void decorate(const DungeonRoom& r, std::mt19937& rng);   // pillars and alcoves inside a room
     void sealBossRoom();
+    void assignThemes();
+    void placeDecor(std::mt19937& rng);
     void nearestFloor(const DungeonRoom& r, int& i, int& j) const;
     void carveCorridor(int x0, int z0, int x1, int z1, int width);
     void set(int i, int j, Tile t) { if (i >= 0 && i < w_ && j >= 0 && j < d_) tiles_[static_cast<size_t>(j * w_ + i)] = t; }
@@ -94,6 +109,8 @@ private:
     std::vector<Tile> tiles_;
     std::vector<DungeonRoom> rooms_;
     std::vector<DungeonTorch> torches_;
+    std::vector<uint8_t> themes_;
+    std::vector<DungeonDecor> decor_;
     std::vector<std::pair<int, int>> doorTiles_;
     glm::vec3 keyPos_{0.f};
     bool haveKey_ = false;

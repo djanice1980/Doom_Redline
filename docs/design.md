@@ -279,6 +279,21 @@ instanced draw.
   and ammunition spread over the rooms, plus any weapon they have not got yet.
   If the cost still exceeds what they could carry and pick up, the weakest
   monsters are dropped until it does, down to a floor of eight.
+- **Six texture sets dress it** (`Assets::cryptWall/Floor/Ceil`, keys `cwall0`..):
+  four room themes (grey crypt, marble tomb, iron works, flesh), one for the boss
+  hall and one for the corridors, each a wall texture plus a floor and ceiling
+  flat, every one falling back through several Doom lump names and finally to our
+  procedural tile. Each room draws a theme at random; `assignThemes` writes a
+  theme per tile, walls taking the theme of the floor they face. `buildEnvironment`
+  now buckets its cubes by texture and emits one draw range per bucket, so each
+  keeps its own normal and roughness maps. Torch colour follows the theme: blue in
+  the marble and iron rooms, fire elsewhere, and the hall's reach further and sit
+  higher because it is six cubes tall.
+- **Scenery** (`Dungeon::placeDecor`, `DungeonDecor`): columns, candles,
+  stalagmites, impaled bodies, hanging corpses and skull piles, placed on floor
+  tiles that touch a wall and spaced from each other and from the torches. Rooms
+  get two to four, the flesh theme gets the grislier set, the boss hall gets ten,
+  and corridors get a candle every so often. Candles carry a small warm light.
 - Testing: `--scenario dungeon` (arena pre-cleared), `REDLINE_LOG_DUNGEON=1`
   (ASCII layout with `m`onsters, the `B`oss, `+` items, the `K`ey and the `D`oor,
   plus the budget and any trim), and the bot's `navNext` (a breadth-first search

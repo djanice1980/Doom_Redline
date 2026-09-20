@@ -132,6 +132,74 @@ glm::vec3 Dungeon::bossStand() const {
     return tileCentre(i, j);
 }
 
+// Every tile takes the theme of the room whose box it falls in, or the corridor
+// set outside them; a wall takes the theme of the floor it faces.
+void Dungeon::assignThemes() {
+    themes_.assign(static_cast<size_t>(w_ * d_), static_cast<uint8_t>(kCorridorTheme));
+    for (const DungeonRoom& r : rooms_)
+        for (int j = r.z0; j < r.z0 + r.d; ++j)
+            for (int i = r.x0; i < r.x0 + r.w; ++i)
+                if (i >= 0 && i < w_ && j >= 0 && j < d_) themes_[static_cast<size_t>(j * w_ + i)] = static_cast<uint8_t>(r.theme);
+    // Walls sit outside a room's box, so give each one the theme of a floor beside it.
+    std::vector<uint8_t> copy = themes_;
+    for (int j = 0; j < d_; ++j)
+        for (int i = 0; i < w_; ++i) {
+            if (tile(i, j) == Floor) continue;
+            for (int dj = -1; dj <= 1; ++dj)
+                for (int di = -1; di <= 1; ++di)
+                    if (tile(i + di, j + dj) == Floor && i + di >= 0 && i + di < w_ && j + dj >= 0 && j + dj < d_)
+                        copy[static_cast<size_t>(j * w_ + i)] = themes_[static_cast<size_t>((j + dj) * w_ + i + di)];
+        }
+    themes_ = copy;
+}
+
+// Scenery against the walls: columns and candles in the rooms, and the boss hall
+// gets what a boss hall should have.
+void Dungeon::placeDecor(std::mt19937& rng) {
+    decor_.clear();
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    for (const DungeonRoom& r : rooms_) {
+        if (r.entrance) continue;
+        const int want = r.boss ? 10 : 2 + static_cast<int>(u(rng) * 3.f);
+        for (int n = 0; n < want; ++n)
+            for (int attempt = 0; attempt < 30; ++attempt) {
+                const int i = r.x0 + 1 + static_cast<int>(u(rng) * static_cast<float>(std::max(1, r.w - 2)));
+                const int j = r.z0 + 1 + static_cast<int>(u(rng) * static_cast<float>(std::max(1, r.d - 2)));
+                if (tile(i, j) != Floor) continue;
+                // Against something: a bare middle of the floor is where the fight happens.
+                bool nextToWall = false;
+                const int di[4] = {1, -1, 0, 0}, dj[4] = {0, 0, 1, -1};
+                for (int k = 0; k < 4; ++k) nextToWall = nextToWall || tile(i + di[k], j + dj[k]) == Wall;
+                if (!nextToWall) continue;
+                glm::vec3 p = tileCentre(i, j);
+                bool crowded = false;
+                for (const DungeonDecor& d : decor_) crowded = crowded || glm::length(d.pos - p) < 2.2f;
+                for (const DungeonTorch& t : torches_) crowded = crowded || glm::length(t.pos - p) < 1.6f;
+                if (crowded) continue;
+                DungeonDecor d;
+                d.pos = p;
+                d.variant = static_cast<int>(u(rng) * 3.f) % 3;
+                const float roll = u(rng);
+                if (r.boss) d.kind = roll < 0.45f ? DungeonDecor::Hanging : roll < 0.7f ? DungeonDecor::Skulls : roll < 0.85f ? DungeonDecor::Impaled : DungeonDecor::Column;
+                else if (r.theme == 3) d.kind = roll < 0.4f ? DungeonDecor::Impaled : roll < 0.7f ? DungeonDecor::Stalagmite : DungeonDecor::Skulls;
+                else d.kind = roll < 0.45f ? DungeonDecor::Column : roll < 0.8f ? DungeonDecor::Candle : DungeonDecor::Stalagmite;
+                decor_.push_back(d);
+                break;
+            }
+    }
+    // A candle every so often down the corridors, so they are not bare.
+    int every = 0;
+    for (int j = 1; j < d_ - 1; ++j)
+        for (int i = 1; i < w_ - 1; ++i) {
+            if (tile(i, j) != Floor || themeAt(i, j) != kCorridorTheme) continue;
+            bool nextToWall = false;
+            const int di[4] = {1, -1, 0, 0}, dj[4] = {0, 0, 1, -1};
+            for (int k = 0; k < 4; ++k) nextToWall = nextToWall || tile(i + di[k], j + dj[k]) == Wall;
+            if (!nextToWall || ++every % 13 != 0) continue;
+            decor_.push_back({tileCentre(i, j), DungeonDecor::Candle, 0});
+        }
+}
+
 bool Dungeon::doorAt(float x, float z) const {
     int i, j;
     if (!worldToTile(x, z, i, j)) return false;
@@ -159,6 +227,7 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
     tiles_.assign(static_cast<size_t>(w_ * d_), Rock);
     rooms_.clear();
     torches_.clear();
+    decor_.clear();
 
     // The entrance room sits right behind the gate, centred on x = 0.
     const int gx = w_ / 2;   // tile column at x = 0
@@ -169,6 +238,7 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
         r.x0 = gx - r.w / 2;
         r.z0 = 4;
         r.entrance = true;
+        r.theme = kCorridorTheme;
         rooms_.push_back(r);
     }
     // The boss's hall: big, at the far end.
@@ -179,6 +249,7 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
         r.x0 = 2 + static_cast<int>(u(rng) * static_cast<float>(std::max(1, w_ - 4 - r.w)));
         r.z0 = d_ - 2 - r.d;
         r.boss = true;
+        r.theme = kHallTheme;
         rooms_.push_back(r);
     }
     // Ordinary rooms take the shape of a piece, drawn from the ones the player
@@ -204,6 +275,7 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
     for (int k = 1; k < nRooms; ++k) {
         for (int attempt = 0; attempt < 300; ++attempt) {
             DungeonRoom r;
+            r.theme = static_cast<int>(u(rng) * 4.f) % 4;
             r.shape = pickShape();
             r.rot = static_cast<int>(u(rng) * 4.f) & 3;
             r.cell = 2 + static_cast<int>(u(rng) * 2.99f);   // 2..4 tiles per mino
@@ -300,6 +372,8 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
             if (border) set(i, j, Wall);
         }
 
+    assignThemes();
+
     // Torches on room walls every few tiles, and along the corridors now and then.
     auto torchAt = [&](int i, int j, int ni, int nj) {   // wall tile (i,j), floor neighbour direction (ni,nj)
         glm::vec3 c = tileCentre(i, j);
@@ -328,6 +402,7 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
             if (tile(i - 1, j) == Wall) torchAt(i - 1, j, 1, 0);
             else if (tile(i, j - 1) == Wall) torchAt(i, j - 1, 0, 1);
         }
+    placeDecor(rng);
 }
 
 std::vector<glm::vec3> Dungeon::spawnSpots(std::mt19937& rng, int count) const {

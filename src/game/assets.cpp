@@ -341,6 +341,27 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addFlat("floor", {"FLOOR4_8", "FLAT5_4", "FLOOR0_1"}, proc::floorTexture(64), floorLump);
     addFlat("ceiling", {"CEIL3_5", "FLAT20", "CEIL5_1"}, proc::wallTexture(64), ceilingLump);
 
+    // The crypt's six sets. Each falls back through a few names so a WAD that lacks
+    // one still gets something, and to our own procedural tile if it lacks them all.
+    struct ThemeDef { std::initializer_list<const char*> wall, floor, ceil; };
+    const ThemeDef themes[kCryptThemes] = {
+        {{"GSTONE1", "STONE2", "STONE", "BROWN1"},     {"FLAT5_4", "FLOOR7_1", "FLAT1"},  {"FLAT5_5", "CEIL3_5"}},   // grey crypt
+        {{"MARBLE1", "MARBLE2", "MARBLE3", "STONE3"},  {"DEM1_5", "FLOOR7_2", "FLAT1"},   {"FLAT1", "CEIL5_1"}},     // marble tomb
+        {{"METAL", "METAL1", "SHAWN2", "COMPBLUE"},    {"FLOOR0_6", "FLAT14", "FLAT1"},   {"CEIL5_2", "FLAT10"}},    // iron works
+        {{"SKIN2", "SKSPINE1", "ROCKRED1", "FIREBLU1"},{"FLOOR1_7", "FLAT10", "FLAT5_4"}, {"FLAT5_5", "CEIL5_1"}},   // flesh
+        {{"SP_HOT1", "FIREBLU1", "MARBLE3", "GSTONE2"},{"FLOOR7_2", "DEM1_5", "FLAT5_4"}, {"FLAT1", "CEIL5_2"}},     // the boss hall
+        {{"BROWN1", "STONE3", "BROWNGRN", "STARTAN3"}, {"FLAT1", "FLOOR5_1", "FLAT5_4"},  {"CEIL5_1", "FLAT10"}},    // corridors
+    };
+    for (int t = 0; t < kCryptThemes; ++t) {
+        const std::string n = std::to_string(t);
+        cryptWall[t] = "cwall" + n;
+        cryptFloor[t] = "cfloor" + n;
+        cryptCeil[t] = "cceil" + n;
+        addTexture(cryptWall[t], themes[t].wall, proc::wallTexture(64), cryptWallLump[t]);
+        addFlat(cryptFloor[t], themes[t].floor, proc::floorTexture(64), cryptFloorLump[t]);
+        addFlat(cryptCeil[t], themes[t].ceil, proc::wallTexture(64), cryptCeilLump[t]);
+    }
+
     // A companion WAD supplies what the chosen one lacks: doom2.wad next to doom.wad brings
     // the Doom 2 monsters (and their sounds) into the roster.
     std::optional<wad::Wad> wad2;
@@ -456,6 +477,18 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
     addSprite(torchBlue, "TBLU", "ABCD", 8.f);
     addSprite(torchGreen, "TGRN", "ABCD", 8.f);
     addSprite(candelabra, "CBRA", "A", 1.f);
+    // Crypt scenery: columns, candles, and the things hanging in the boss hall.
+    addSprite(column[0], "COL1", "A", 1.f);
+    addSprite(column[1], "COL2", "A", 1.f);
+    addSprite(column[2], "COL5", "AB", 4.f);
+    addSprite(candle, "CAND", "A", 1.f);
+    addSprite(hanging[0], "GOR2", "A", 1.f);
+    addSprite(hanging[1], "GOR3", "A", 1.f);
+    addSprite(hanging[2], "GOR5", "A", 1.f);
+    addSprite(impaled[0], "POL1", "A", 1.f);
+    addSprite(impaled[1], "POL6", "AB", 4.f);
+    addSprite(stalagmite, "SMIT", "A", 1.f);
+    addSprite(skullPile, "POL4", "A", 1.f);
     addSprite(lamp, "COLU", "A", 1.f);
     addSprite(barrel, "BAR1", "AB", 4.f);
     const char* balls[kProjectileTypes] = {"BAL1", "BAL2", "BAL7", "MISL", "PLSS", "FATB", "MANF", "APLS"};

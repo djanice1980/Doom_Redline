@@ -8,6 +8,7 @@
 #include <SDL3/SDL_vulkan.h>
 
 #include <algorithm>
+#include <map>
 #include <chrono>
 #include <filesystem>
 #include <cmath>
@@ -2871,8 +2872,14 @@ void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& t
 void App::buildEnvironment() {
     envCubes_.clear();
     envRanges_.clear();
-    // Floor cubes first, then walls: each group is one draw range with its own material slot.
-    std::vector<render::CubeInstance> floorCubes, wallCubes;
+    // One bucket per texture, each emitted as its own draw range so it can carry its
+    // own normal and roughness maps. The arena is two textures; the crypt is many.
+    std::map<std::string, std::vector<render::CubeInstance>> buckets;
+    auto isFloorTex = [&](const std::string& tex) {
+        if (tex == assets_.floor) return true;
+        for (int t = 0; t < Assets::kCryptThemes; ++t) if (tex == assets_.cryptFloor[t]) return true;
+        return false;
+    };
     auto push = [&](glm::vec3 pos, const std::string& tex, glm::vec4 color) {
         const render::AtlasRegion& r = assets_.region(tex);
         render::CubeInstance c;
@@ -2880,12 +2887,12 @@ void App::buildEnvironment() {
         c.color = color;
         c.emissive = glm::vec4(0.f);
         c.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
-        const bool floor = tex == assets_.floor;
+        const bool floor = isFloorTex(tex);
         // The floor is the glossy, reflective surface (flag bit 2): polished enough for the
         // ray-traced reflections to read, the roughness map still breaks them up.
         c.params = glm::vec4(floor ? 0.22f : 0.9f, 0.f, 0.f, floor ? 2.f : 0.f);
         c.rot = glm::vec4(0.f);
-        (floor ? floorCubes : wallCubes).push_back(c);
+        buckets[tex].push_back(c);
     };
     const int halfW = 15;
     const int depth = 23;
@@ -2915,19 +2922,21 @@ void App::buildEnvironment() {
         }
     }
     if (envDungeon_) {
-        // The crypt: floor and ceiling over every floor tile, walls three high wherever
-        // rock borders floor. Darker and greener than the arena, a lintel over the gate.
+        // The crypt: floor and ceiling over every floor tile, walls to the ceiling
+        // wherever rock borders floor. Each room is dressed from its own texture set,
+        // so the place is not one surface end to end.
         const Dungeon& d = fps_.dungeon();
-        const glm::vec4 floorTint(0.55f, 0.52f, 0.46f, 1.f), wallTint(0.58f, 0.6f, 0.52f, 1.f), ceilTint(0.36f, 0.36f, 0.34f, 1.f);
+        const glm::vec4 floorTint(0.72f, 0.70f, 0.66f, 1.f), wallTint(0.78f, 0.78f, 0.74f, 1.f), ceilTint(0.46f, 0.45f, 0.44f, 1.f);
         for (int j = 0; j < d.depth(); ++j)
             for (int i = 0; i < d.width(); ++i) {
                 const glm::vec3 c = d.tileCentre(i, j);
                 const int h = d.ceilingAt(i, j);
+                const int t = std::clamp(d.themeAt(i, j), 0, Assets::kCryptThemes - 1);
                 if (d.tile(i, j) == Dungeon::Floor) {
-                    push({c.x, -0.5f, c.z}, assets_.floor, floorTint);
-                    push({c.x, static_cast<float>(h) + 0.5f, c.z}, assets_.wall, ceilTint);
+                    push({c.x, -0.5f, c.z}, assets_.cryptFloor[t], floorTint);
+                    push({c.x, static_cast<float>(h) + 0.5f, c.z}, assets_.cryptCeil[t], ceilTint);
                 } else if (d.tile(i, j) == Dungeon::Wall) {
-                    for (int y = 0; y < h; ++y) push({c.x, y + 0.5f, c.z}, assets_.wall, wallTint);
+                    for (int y = 0; y < h; ++y) push({c.x, y + 0.5f, c.z}, assets_.cryptWall[t], wallTint);
                 }
             }
         // The way into the boss hall: a slab of rock across the corridor while it is shut.
@@ -2939,10 +2948,23 @@ void App::buildEnvironment() {
         // The wall's footprint gets a floor: the passage runs across the rail and through it.
         for (float x = -Dungeon::kGateHalf + 0.5f; x < Dungeon::kGateHalf; x += 1.f) push({x, -0.5f, -2.5f}, assets_.floor, floorTint);
     }
-    envRanges_.push_back({0, static_cast<uint32_t>(floorCubes.size()), materialSlot(assets_.floorLump)});
-    envRanges_.push_back({static_cast<uint32_t>(floorCubes.size()), static_cast<uint32_t>(wallCubes.size()), materialSlot(assets_.wallLump)});
-    envCubes_ = std::move(floorCubes);
-    envCubes_.insert(envCubes_.end(), wallCubes.begin(), wallCubes.end());
+    // Which Doom lump each texture came from, so a bucket gets the right material maps.
+    auto lumpFor = [&](const std::string& key) -> const std::string& {
+        static const std::string none;
+        if (key == assets_.floor) return assets_.floorLump;
+        if (key == assets_.wall) return assets_.wallLump;
+        for (int t = 0; t < Assets::kCryptThemes; ++t) {
+            if (key == assets_.cryptWall[t]) return assets_.cryptWallLump[t];
+            if (key == assets_.cryptFloor[t]) return assets_.cryptFloorLump[t];
+            if (key == assets_.cryptCeil[t]) return assets_.cryptCeilLump[t];
+        }
+        return none;
+    };
+    for (auto& [key, cubes] : buckets) {
+        if (cubes.empty()) continue;
+        envRanges_.push_back({static_cast<uint32_t>(envCubes_.size()), static_cast<uint32_t>(cubes.size()), materialSlot(lumpFor(key))});
+        envCubes_.insert(envCubes_.end(), cubes.begin(), cubes.end());
+    }
 }
 
 // Torches, lamps and barrels around the arena, each with its own flickering light.
@@ -2953,8 +2975,38 @@ void App::buildProps() {
         props_.push_back({&a, pos, px, lc, lr, lh, static_cast<float>(props_.size()) * 1.7f});
     };
     const glm::vec3 red(1.f, 0.42f, 0.12f), blue(0.35f, 0.5f, 1.f), green(0.4f, 1.f, 0.45f), warm(1.f, 0.75f, 0.45f), white(0.9f, 0.9f, 1.f);
-    // Torches along the dungeon's walls, while there is one.
-    for (const DungeonTorch& t : fps_.dungeon().torches()) prop(assets_.torchRed, t.pos, 0.031f, warm, 6.5f, 1.7f);
+    // Torches along the dungeon's walls, coloured by the room they light, and the
+    // scenery standing about: columns, candles, and worse things in the boss hall.
+    {
+        const Dungeon& d = fps_.dungeon();
+        for (const DungeonTorch& t : d.torches()) {
+            int i, j;
+            const int theme = d.worldToTile(t.pos.x, t.pos.z, i, j) ? d.themeAt(i, j) : Dungeon::kCorridorTheme;
+            // Cool light in the iron and marble rooms, fire everywhere else. Green was
+            // tried and drowned the whole crypt in one colour.
+            const bool cool = theme == 1 || theme == 2;
+            const SpriteAnim& a = cool ? assets_.torchBlue : assets_.torchRed;
+            const glm::vec3 col = theme == 2 ? glm::vec3(0.45f, 0.6f, 1.f)
+                                : theme == 1 ? glm::vec3(0.7f, 0.78f, 1.f)
+                                : theme == 3 || theme == Dungeon::kHallTheme ? glm::vec3(1.f, 0.3f, 0.12f)
+                                : warm;
+            // Blue reads darker, so give it more; the hall is six cubes high, so its
+            // torches reach further and sit higher or the ceiling stays black.
+            const bool inHall = theme == Dungeon::kHallTheme;
+            prop(a.empty() ? assets_.torchRed : a, t.pos, 0.031f, col * (cool ? 1.35f : 1.f), inHall ? 9.f : 6.2f, inHall ? 2.6f : 1.7f);
+        }
+        for (const DungeonDecor& dec : d.decor()) {
+            switch (dec.kind) {
+            case DungeonDecor::Column: prop(assets_.column[dec.variant % 3], dec.pos, 0.031f, {}, 0.f, 0.f); break;
+            case DungeonDecor::Candle: prop(assets_.candle, dec.pos, 0.031f, warm, 2.2f, 0.45f); break;
+            case DungeonDecor::Hanging: prop(assets_.hanging[dec.variant % 3], dec.pos, 0.031f, {}, 0.f, 0.f); break;
+            case DungeonDecor::Impaled: prop(assets_.impaled[dec.variant % 2], dec.pos, 0.031f, {}, 0.f, 0.f); break;
+            case DungeonDecor::Stalagmite: prop(assets_.stalagmite, dec.pos, 0.031f, {}, 0.f, 0.f); break;
+            case DungeonDecor::Skulls: prop(assets_.skullPile, dec.pos, 0.031f, {}, 0.f, 0.f); break;
+            default: break;
+            }
+        }
+    }
     // Red torches flank the board against the back wall.
     prop(assets_.torchRed, {-7.5f, 0.f, -1.85f}, 0.031f, red, 7.f, 1.7f);
     prop(assets_.torchRed, {7.5f, 0.f, -1.85f}, 0.031f, red, 7.f, 1.7f);
@@ -4521,7 +4573,7 @@ void App::buildScene() {
     frame_.fogDensity = glm::mix(0.012f, 0.035f, tilt);
     frame_.fogColor = glm::mix(glm::vec3(0.03f, 0.03f, 0.05f), glm::vec3(0.06f, 0.02f, 0.02f), tilt);
     if (inDungeon) {   // torch-lit stone: darker, and the fog goes with the depth
-        frame_.ambient = glm::vec3(0.10f, 0.09f, 0.09f);
+        frame_.ambient = glm::vec3(0.15f, 0.14f, 0.14f);
         frame_.fogDensity = 0.05f;
         frame_.fogColor = glm::vec3(0.02f, 0.015f, 0.012f);
     }

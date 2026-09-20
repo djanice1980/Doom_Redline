@@ -98,6 +98,13 @@ public:
     static std::optional<std::filesystem::path> findFontPack(const std::string& baseDir);
     // Doom lump names actually used for wall/floor/ceiling (empty on placeholder art); keys the material maps.
     std::string wallLump, floorLump, ceilingLump;
+    // The crypt dresses each room from one of these sets, so a dungeon is not one
+    // texture end to end: 0-3 are room themes, 4 is the boss hall, 5 the corridors.
+    static constexpr int kCryptThemes = 6;
+    std::string cryptWall[kCryptThemes], cryptFloor[kCryptThemes], cryptCeil[kCryptThemes];
+    std::string cryptWallLump[kCryptThemes], cryptFloorLump[kCryptThemes], cryptCeilLump[kCryptThemes];
+    // Crypt scenery, all optional: whatever the WAD has is what gets placed.
+    SpriteAnim column[3], candle, hanging[3], impaled[2], stalagmite, skullPile;
     std::string crosshair = "crosshair";
     std::string white = "__white";
     std::string ring = "__ring";   // soft ring for the line-clear shockwave (procedural, always present)

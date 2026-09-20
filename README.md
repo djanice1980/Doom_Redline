@@ -469,7 +469,10 @@ Every room is shaped like one of the seven pieces, drawn from the ones you
 actually dropped, so a game full of S pieces gives a crypt of staggered halls
 and the whole layout is seeded from how you played. Bigger rooms have pillars,
 and the hall always does, since a cyberdemon in a bare box is a shooting
-gallery. The hall is sealed: find the skull key, hidden in the room furthest
+gallery. Rooms are dressed from six texture sets, a grey crypt, a marble tomb,
+iron works, something fleshier, the corridors and the boss hall, with the torch
+colour following the room and columns, candles, stalagmites and worse standing
+against the walls. The hall is sealed: find the skull key, hidden in the room furthest
 from it, and the door opens as you reach it.
 
 The crypt is populated from the level and from the stack: more blocks on the
