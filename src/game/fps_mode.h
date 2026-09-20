@@ -86,7 +86,7 @@ struct WeaponSlot {
     int ammo = 0;
 };
 
-enum class PickupKind { Stim = 0, Medikit, Bullets, Rockets, Cells, Chaingun, RocketLauncher, PlasmaGun, Count };
+enum class PickupKind { Stim = 0, Medikit, Bullets, Rockets, Cells, Chaingun, RocketLauncher, PlasmaGun, Key, Count };
 constexpr int kPickupKinds = static_cast<int>(PickupKind::Count);
 
 struct Pickup {
@@ -219,7 +219,8 @@ struct FpsEvent {
     enum class Type { Shoot, EnemyHit, EnemyDied, EnemyAttack, Explosion, PlayerHit, FireballHit, AllClear, PlayerDead, EnemySight,
                       Pickup, WeaponSwitch, RocketBlast, PlasmaHit, BlockBroken, Absorb, Score, KilledGrown, EnemyGibbed,
                       CasingBounce, BulletHole, VileFire, VileBlast,
-                      GateFalls, DungeonOpen, Wake, BossSeen, BossDead } type;   // the dungeon: the back wall goes, the crypt opens, a sleeper wakes, the boss   // VileFire: a = 0 the flame starts, 1 it crackles
+                      GateFalls, DungeonOpen, Wake, BossSeen, BossDead,
+                      KeyFound, DoorLocked, DoorOpened } type;   // the dungeon: the back wall goes, the crypt opens, a sleeper wakes, the boss   // VileFire: a = 0 the flame starts, 1 it crackles
     glm::vec3 pos{0.f};
     int tier = 0;
     int a = 0;   // weapon id (Shoot/WeaponSwitch), pickup kind (Pickup), blocks destroyed (Explosion/RocketBlast)
@@ -251,6 +252,8 @@ public:
     Stage stage() const { return stage_; }
     float stageT() const { return stageT_; }
     const Dungeon& dungeon() const { return dungeon_; }
+    bool hasKey() const { return hasKey_; }          // the boss hall's key is in hand
+    bool doorOpen() const { return doorOpen_; }
     const Enemy* boss() const;          // the dungeon boss once it exists (dead or alive)
     bool bossSeen() const { return bossSeen_; }
     int boardBlocks() const { return boardBlocks_; }   // blocks on the board when the fight began (the boss scales with it)
@@ -330,6 +333,9 @@ private:
     void hurtPlayer(float dmg, glm::vec3 from, int kind = -1);   // kind: the monster responsible, for the run record
     void push(FpsEvent::Type t, glm::vec3 p = {}, int tier = 0, int a = 0, int kind = -1) { events_.push_back({t, p, tier, a, kind < 0 ? tier : kind}); }
     int pickKind(int tier);
+    // What a roster is expected to cost the player, from a rough battle simulation.
+    struct FightBudget { float health = 0.f; float ammo[kWeaponCount] = {}; };
+    FightBudget simulateFight(const std::vector<int>& kinds) const;
     void openDungeon(core::Game& game);
     void populateDungeon();
     bool outOfWorld(glm::vec3 p) const;
@@ -372,6 +378,9 @@ private:
     int boardBlocks_ = 0;
     bool bossSeen_ = false;
     bool bossDead_ = false;
+    bool hasKey_ = false;
+    bool doorOpen_ = false;
+    float lockedHintT_ = 0.f;   // so bumping the door does not spam the message
 };
 
 }  // namespace rl::game

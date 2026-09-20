@@ -5,6 +5,7 @@
 // at random, each one linked to the nearest room already reachable, a loop or
 // two for good measure), with a big room at the far end for the boss. Pure
 // layout: the FpsMode populates it and the App draws it.
+#include <array>
 #include <random>
 #include <utility>
 #include <vector>
@@ -14,9 +15,15 @@
 namespace rl::game {
 
 struct DungeonRoom {
-    int x0 = 0, z0 = 0, w = 0, d = 0;   // tile rectangle (inclusive x0..x0+w-1, z0..z0+d-1)
+    int x0 = 0, z0 = 0, w = 0, d = 0;   // bounding box (inclusive x0..x0+w-1, z0..z0+d-1)
     bool entrance = false;
     bool boss = false;
+    // Ordinary rooms are shaped like one of the seven pieces, scaled up: `shape` is
+    // the core::Shape index it came from (-1 = a plain rectangle, used for the
+    // entrance and the boss hall, where a predictable floor matters).
+    int shape = -1;
+    int rot = 0;       // which way round that piece lies
+    int cell = 3;      // tiles per mino
     int cx() const { return x0 + w / 2; }
     int cz() const { return z0 + d / 2; }
     bool contains(int i, int j) const { return i >= x0 && i < x0 + w && j >= z0 && j < z0 + d; }
@@ -29,7 +36,7 @@ struct DungeonTorch {
 
 class Dungeon {
 public:
-    enum Tile : uint8_t { Rock = 0, Floor = 1, Wall = 2 };   // Wall: rock that borders floor (the drawn faces)
+    enum Tile : uint8_t { Rock = 0, Floor = 1, Wall = 2, Door = 3 };   // Wall: rock bordering floor; Door: the sealed way into the boss hall
     static constexpr int kRoomHeight = 4;   // rooms and corridors are four cubes high, the boss's hall six: a cyberdemon
     static constexpr int kHallHeight = 6;   // (3.3 m) and the mastermind stand up straight and the player can look up at them
     static constexpr float kWallHeight = 4.f;   // the ordinary ceiling height (solid above it)
@@ -38,8 +45,10 @@ public:
     static constexpr float kGateHalf = 2.f;
     static constexpr float kZTop = -3.f;   // the dungeon's first tile row starts here and runs towards -z
 
-    // Lays the dungeon out; bigger and busier with the level.
-    void generate(uint32_t seed, int level);
+    // Lays the dungeon out; bigger and busier with the level. `pieces` is how many of
+    // each piece the player locked into the board, which decides what the rooms look
+    // like: the crypt is built out of the game that made it.
+    void generate(uint32_t seed, int level, const std::array<int, 7>& pieces);
     void clear() { tiles_.clear(); rooms_.clear(); torches_.clear(); }
     bool empty() const { return tiles_.empty(); }
 
@@ -61,6 +70,12 @@ public:
     const DungeonRoom& bossRoom() const { return rooms_[bossRoom_]; }
     const DungeonRoom& entranceRoom() const { return rooms_[0]; }
     const std::vector<DungeonTorch>& torches() const { return torches_; }
+    glm::vec3 bossStand() const;   // an open floor tile at the middle of the hall
+    // The way into the boss hall, sealed until the player finds the key.
+    const std::vector<std::pair<int, int>>& doorTiles() const { return doorTiles_; }
+    bool doorAt(float x, float z) const;
+    glm::vec3 keyPos() const { return keyPos_; }   // where the key waits (y = 0)
+    bool hasKey() const { return haveKey_; }
 
     // Floor tiles in rooms other than the entrance and the boss room, spread about; `count` at most.
     std::vector<glm::vec3> spawnSpots(std::mt19937& rng, int count) const;
@@ -69,6 +84,9 @@ public:
 
 private:
     void carveRoom(const DungeonRoom& r);
+    void decorate(const DungeonRoom& r, std::mt19937& rng);   // pillars and alcoves inside a room
+    void sealBossRoom();
+    void nearestFloor(const DungeonRoom& r, int& i, int& j) const;
     void carveCorridor(int x0, int z0, int x1, int z1, int width);
     void set(int i, int j, Tile t) { if (i >= 0 && i < w_ && j >= 0 && j < d_) tiles_[static_cast<size_t>(j * w_ + i)] = t; }
     int w_ = 0, d_ = 0;
@@ -76,6 +94,9 @@ private:
     std::vector<Tile> tiles_;
     std::vector<DungeonRoom> rooms_;
     std::vector<DungeonTorch> torches_;
+    std::vector<std::pair<int, int>> doorTiles_;
+    glm::vec3 keyPos_{0.f};
+    bool haveKey_ = false;
 };
 
 }  // namespace rl::game

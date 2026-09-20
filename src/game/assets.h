@@ -38,7 +38,7 @@ constexpr int kEnemyTiers = 7;        // the difficulty ladder: zombie, imp, dem
 constexpr int kEnemyKinds = 13;       // + Doom 2 variants: chaingunner, hell knight, revenant, mancubus, arachnotron, arch-vile
 constexpr int kProjectileTypes = 8;   // imp / cacodemon / baron fireballs, rocket, plasma, revenant missile, mancubus fireball, arachnotron plasma
 constexpr int kWeaponArt = 4;         // shotgun, chaingun, rocket launcher, plasma rifle
-constexpr int kPickupArt = 8;         // stim, medikit, bullets, rockets, cells, chaingun, launcher, plasma gun
+constexpr int kPickupArt = 9;         // stim, medikit, bullets, rockets, cells, chaingun, launcher, plasma gun, the crypt key
 
 struct WeaponArt {
     std::string name;

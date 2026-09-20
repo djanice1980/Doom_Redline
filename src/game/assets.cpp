@@ -239,7 +239,7 @@ void Assets::loadProcedural(audio::Audio& audio) {
         anim(a.fire, "gun_fire", 2, 10.f, [](int i) { return proc::gunFrame(1 + i); });
         anim(a.flash, "gun_flash", 1, 10.f, [](int) { return proc::muzzleFlash(48); });
     }
-    const uint8_t pickupCols[kPickupArt][3] = {{200, 60, 60}, {230, 230, 230}, {200, 170, 60}, {120, 120, 120}, {80, 160, 240}, {160, 160, 170}, {90, 140, 90}, {90, 110, 200}};
+    const uint8_t pickupCols[kPickupArt][3] = {{200, 60, 60}, {230, 230, 230}, {200, 170, 60}, {120, 120, 120}, {80, 160, 240}, {160, 160, 170}, {90, 140, 90}, {90, 110, 200}, {230, 60, 50}};
     for (int k = 0; k < kPickupArt; ++k) {
         std::string key = "pickup" + std::to_string(k);
         Image img = proc::solid(k >= 5 ? 28 : 14, k >= 5 ? 12 : 10, pickupCols[k][0], pickupCols[k][1], pickupCols[k][2]);
@@ -441,7 +441,7 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         a.flashFor = wdefs[w].flashFor;
         if (*wdefs[w].cool) addSprite(a.cooldown, wdefs[w].gun, wdefs[w].cool, 1.f);
     }
-    const char* pickupSprites[kPickupArt] = {"STIM", "MEDI", "CLIP", "ROCK", "CELL", "MGUN", "LAUN", "PLAS"};
+    const char* pickupSprites[kPickupArt] = {"STIM", "MEDI", "CLIP", "ROCK", "CELL", "MGUN", "LAUN", "PLAS", "RSKU"};   // RSKU: the red skull key
     for (int k = 0; k < kPickupArt; ++k) ok &= addSprite(pickups[k], pickupSprites[k], "A", 1.f);
     ok &= addSprite(explosion, "MISL", "BCD", 12.f);
     // Gore (brutal mode): blood drops, the pool of blood and flesh, bullet puffs. Missing lumps just lose the effect.

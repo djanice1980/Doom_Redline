@@ -929,6 +929,23 @@ void App::sendPendingDeletes() {
     if (!queued.empty()) std::fprintf(stderr, "[online] %zu queued online deletion(s) being sent\n", queued.size());
 }
 
+// The test bot walks straight at what it wants, which wedges it on corners and in
+// doorways. If it has stopped making ground while trying to move, sidestep for a
+// while and flip the direction now and then until it comes free.
+void App::botUnstick(FpsInput& in, float dt) {
+    const glm::vec3 p = fps_.playerPos();
+    const bool trying = std::fabs(in.moveZ) > 0.01f || std::fabs(in.moveX) > 0.01f;
+    if (trying && glm::length(p - botLastPos_) < 0.02f) botStuckT_ += dt;
+    else botStuckT_ = 0.f;
+    botLastPos_ = p;
+    if (botStuckT_ < 0.6f) return;
+    if (std::fmod(botStuckT_, 1.4f) < dt) botSide_ = -botSide_;
+    // Strafe, but leave the aim alone: nudging the look here made the bot spin
+    // instead of shooting, so it never killed what it was stuck on.
+    in.moveX = botSide_;
+    in.moveZ = 0.35f;
+}
+
 void App::pollOnline() {
     for (const OnlineClient::Result& res : online_.poll()) {
         switch (res.kind) {
@@ -2301,6 +2318,22 @@ void App::handleFpsEvents() {
             announce("BOSS: " + art.name, glm::vec4(1.f, 0.3f, 0.2f, 1.f), 1.8f);
             play(art.sightSound, 1.f, 0.85f);
             break;
+        case FpsEvent::Type::KeyFound:
+            std::fprintf(stderr, "[dungeon] the skull key is taken\n");
+            play("pickup_weapon", 1.f);
+            announce("SKULL KEY: THE BOSS HALL IS OPEN", glm::vec4(1.f, 0.5f, 0.4f, 1.f), 1.4f);
+            break;
+        case FpsEvent::Type::DoorLocked:
+            std::fprintf(stderr, "[dungeon] the hall is sealed; the key is elsewhere\n");
+            play("menu", 0.7f, 0.6f);
+            announce("SEALED: FIND THE SKULL KEY", glm::vec4(1.f, 0.6f, 0.4f, 1.f), 1.2f);
+            break;
+        case FpsEvent::Type::DoorOpened:
+            std::fprintf(stderr, "[dungeon] the hall is open\n");
+            play("levelup", 0.9f, 0.8f);
+            shakeT_ = std::max(shakeT_, 0.3f);
+            announce("THE HALL OPENS", glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1.4f);
+            break;
         case FpsEvent::Type::BossDead:
             announce("BOSS SLAIN", glm::vec4(1.f, 0.9f, 0.4f, 1.f), 2.f);
             play("levelup", 1.f, 1.1f);
@@ -2333,7 +2366,7 @@ void App::update(float dt) {
         const bool fightMode = mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut
                             || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)) || (mode_ == Mode::GameOver && diedInFps_);
         if (!fightMode && fps_.stage() != FpsMode::Stage::Arena) fps_.closeDungeon();
-        if (static_cast<int>(fps_.stage()) != envStage_ || envDungeon_ != !fps_.dungeon().empty()) { buildEnvironment(); buildProps(); }
+        if (static_cast<int>(fps_.stage()) != envStage_ || envDungeon_ != !fps_.dungeon().empty() || envDoorOpen_ != fps_.doorOpen()) { buildEnvironment(); buildProps(); }
     }
     if (mode_ == Mode::Blocks || mode_ == Mode::Alert || mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut) run_.duration += dt;
     pollOnline();
@@ -2609,12 +2642,55 @@ void App::update(float dt) {
         in.run = fpsIn_.run || fpsIn_.padRun;
         if (opts_.bot) {
             // Aim at the nearest living enemy's chest; advance when it is far or hidden.
-            const Enemy* target = nullptr;
+            // Stick with one target for a few seconds. Picking the nearest every frame
+            // makes the bot oscillate between two equidistant demons and never reach
+            // either, which is exactly what it did in the crypt's long corridors.
+            const std::vector<Enemy>& all = fps_.enemies();
+            botTargetT_ -= dt;
+            const Enemy* held = (botTargetIdx_ >= 0 && botTargetIdx_ < static_cast<int>(all.size()) && all[static_cast<size_t>(botTargetIdx_)].alive())
+                              ? &all[static_cast<size_t>(botTargetIdx_)] : nullptr;
+            const float heldDist = held ? glm::length(held->pos - fps_.eye()) : 1e9f;
+            int nearestIdx = -1;
             float best = 1e9f;
-            for (const Enemy& en : fps_.enemies()) {
-                if (!en.alive()) continue;
-                float d = glm::length(en.pos - fps_.eye());
-                if (d < best) { best = d; target = &en; }
+            for (size_t i = 0; i < all.size(); ++i) {
+                if (!all[i].alive()) continue;
+                const float d = glm::length(all[i].pos - fps_.eye());
+                if (d < best) { best = d; nearestIdx = static_cast<int>(i); }
+            }
+            if (!held || botTargetT_ <= 0.f || best < heldDist * 0.6f) {
+                botTargetIdx_ = nearestIdx;
+                botTargetT_ = 3.f;
+                botHaveWaypoint_ = false;
+                botNavT_ = 0.f;
+            }
+            const Enemy* target = (botTargetIdx_ >= 0 && botTargetIdx_ < static_cast<int>(all.size()) && all[static_cast<size_t>(botTargetIdx_)].alive())
+                                ? &all[static_cast<size_t>(botTargetIdx_)] : nullptr;
+            // The boss hall is locked: fetch the key first, or the bot bumps the door
+            // for the rest of the fight.
+            glm::vec3 errand(0.f);
+            bool onErrand = false;
+            if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.hasKey())
+                for (const Pickup& p : fps_.pickups())
+                    if (p.kind == PickupKind::Key) { errand = p.pos; onErrand = true; break; }
+            if (onErrand && (!target || glm::length(target->pos - fps_.eye()) > 6.f)) {
+                botNavT_ -= dt;
+                if (botNavT_ <= 0.f) { botNavT_ = 0.2f; botHaveWaypoint_ = fps_.navNext(fps_.playerPos(), errand, botWaypoint_, *game_); }
+                glm::vec3 w = (botHaveWaypoint_ ? botWaypoint_ : errand) - fps_.playerPos();
+                w.y = 0.f;
+                if (glm::length(w) > 1e-3f) {
+                    const float wantYaw = std::atan2(w.x, w.z);
+                    const float dyaw = std::remainder(wantYaw - fps_.yaw(), 2.f * kPi);
+                    in.lookDX = -dyaw / 0.0022f;
+                    in.lookDY = -fps_.pitch() / 0.0022f;
+                    in.moveZ = std::fabs(dyaw) < 0.6f ? 1.f : 0.3f;
+                    in.run = true;
+                }
+                botUnstick(in, dt);
+                fps_.update(dt, in, *game_);
+                handleFpsEvents();
+                if (fps_.playerDead()) { if (modeT_ > 0.f && fps_.damageFlash() <= 0.f) enterMode(Mode::GameOver); }
+                else if (fps_.finished()) enterMode(Mode::FlyOut);
+                break;
             }
             if (target) {
                 glm::vec3 chest = target->pos + glm::vec3(0.f, target->height * 0.7f, 0.f);
@@ -2643,6 +2719,10 @@ void App::update(float dt) {
                 if (usable(kPlasmaRifle)) want = kPlasmaRifle;
                 if (usable(kRocketLauncher) && len > 4.5f) want = kRocketLauncher;
                 if (want != fps_.currentWeapon()) in.selectWeapon = want;
+                if (std::getenv("REDLINE_LOG_BOT") && frameCount_ % 120 == 0)
+                    std::fprintf(stderr, "[bot] target %s at %.1fm clear=%d waypoint=%d stuck=%.1f key=%d door=%d\n",
+                                 assets_.enemies[std::clamp(target->kind, 0, kEnemyKinds - 1)].name.c_str(), len, clear ? 1 : 0,
+                                 botHaveWaypoint_ ? 1 : 0, botStuckT_, fps_.hasKey() ? 1 : 0, fps_.doorOpen() ? 1 : 0);
                 if (clear) {
                     botBlockedT_ = 0.f;
                     in.moveZ = len > 7.f ? 1.f : 0.f;
@@ -2660,6 +2740,7 @@ void App::update(float dt) {
                 }
             }
         }
+        if (opts_.bot) botUnstick(in, dt);
         fps_.update(dt, in, *game_);
         handleFpsEvents();
         if (fps_.playerDead()) {
@@ -2821,6 +2902,7 @@ void App::buildEnvironment() {
     const bool gateOpen = fps_.stage() != FpsMode::Stage::Arena;
     envStage_ = static_cast<int>(fps_.stage());
     envDungeon_ = !fps_.dungeon().empty();
+    envDoorOpen_ = fps_.doorOpen();
     for (int y = 0; y < height; ++y) {
         for (int x = -halfW; x < halfW; ++x) {
             if (!(gateOpen && std::fabs(x + 0.5f) < Dungeon::kGateHalf && y < kGateHeight))
@@ -2847,6 +2929,12 @@ void App::buildEnvironment() {
                 } else if (d.tile(i, j) == Dungeon::Wall) {
                     for (int y = 0; y < h; ++y) push({c.x, y + 0.5f, c.z}, assets_.wall, wallTint);
                 }
+            }
+        // The way into the boss hall: a slab of rock across the corridor while it is shut.
+        if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.doorOpen())
+            for (const auto& [ti, tj] : d.doorTiles()) {
+                const glm::vec3 c = d.tileCentre(ti, tj);
+                for (int y = 0; y < d.ceilingAt(ti, tj); ++y) push({c.x, y + 0.5f, c.z}, assets_.wall, glm::vec4(0.75f, 0.22f, 0.18f, 1.f));
             }
         // The wall's footprint gets a floor: the passage runs across the rail and through it.
         for (float x = -Dungeon::kGateHalf + 0.5f; x < Dungeon::kGateHalf; x += 1.f) push({x, -0.5f, -2.5f}, assets_.floor, floorTint);
@@ -3724,7 +3812,7 @@ void App::addHud() {
             // The boss's health, once it has been seen; before that, a hint that it is down
             // there. Both sit clear above the weapon roster, which owns the row at hy - 1.3.
             const float by = hy - lh * 3.6f;
-            if (!fps_.bossSeen()) text(W * 0.5f, hy - lh * 2.7f, "ENTER THE DUNGEON AND KILL THE BOSS", s * 0.7f, glm::vec4(1.f, 0.5f, 0.4f, 0.8f + 0.2f * std::sin(time_ * 3.f)), 1);
+            if (!fps_.bossSeen()) text(W * 0.5f, hy - lh * 2.7f, fps_.doorOpen() ? "ENTER THE DUNGEON AND KILL THE BOSS" : fps_.hasKey() ? "YOU HAVE THE SKULL KEY: OPEN THE HALL" : "THE HALL IS SEALED: FIND THE SKULL KEY", s * 0.7f, glm::vec4(1.f, 0.5f, 0.4f, 0.8f + 0.2f * std::sin(time_ * 3.f)), 1);
             else if (boss->alive()) {
                 const std::string& name = assets_.enemies[std::clamp(boss->kind, 0, kEnemyKinds - 1)].name;
                 text(W * 0.5f, by, name, s * 0.8f, glm::vec4(1.f, 0.35f, 0.3f, 1.f), 1);

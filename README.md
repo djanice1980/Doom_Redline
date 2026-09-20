@@ -465,9 +465,20 @@ three rooms and the hall; by level 9 it is eight rooms on a 64 x 79 grid.
 Rooms and corridors are four cubes high, the hall six, so a cyberdemon
 stands up straight in it.
 
+Every room is shaped like one of the seven pieces, drawn from the ones you
+actually dropped, so a game full of S pieces gives a crypt of staggered halls
+and the whole layout is seeded from how you played. Bigger rooms have pillars,
+and the hall always does, since a cyberdemon in a bare box is a shooting
+gallery. The hall is sealed: find the skull key, hidden in the room furthest
+from it, and the door opens as you reach it.
+
 The crypt is populated from the level and from the stack: more blocks on the
 board when the fight began means more demons in the rooms (one per fourteen
-blocks, plus one per level, plus one) and a tougher boss. Its demons are
+blocks, plus one per level, plus one) and a tougher boss. What it leaves on
+the floor is worked out by simulating the fight ahead, monster by monster with
+the weapons you are carrying, and placing the health and ammunition you would
+be short of. If a roster would cost more than you could possibly survive, the
+weakest of them are dropped until it would not. Its demons are
 asleep (Doom's ambush): one wakes when it sees you, when you come within a
 few metres, or when you shoot it, and the ordinary ones never fly, so
 nothing drifts through walls. The boss waits in the hall with a few guards:

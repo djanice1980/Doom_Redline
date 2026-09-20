@@ -205,6 +205,7 @@ void Game::lock() {
     if (!active_) return;
     const Piece& p = *active_;
     int colour = static_cast<int>(p.shape);
+    ++pieceCounts_[static_cast<size_t>(p.shape)];
     bool anyAbove = false;
     for (int i = 0; i < 4; ++i) {
         auto [cx, cy] = p.cells()[i];

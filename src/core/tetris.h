@@ -195,6 +195,10 @@ public:
     const Prizes& prizes() const { return prizes_; }   // banked so far
     Prizes takePrizes();                               // hand them to the fight and reset
     const Prizes& lastClearPrizes() const { return lastPrizes_; }
+    // Every piece locked into the board so far, by shape. The dungeon is built
+    // from these, so the crypt behind the wall is shaped by how the game was played.
+    const std::array<int, static_cast<size_t>(Shape::Count)>& pieceCounts() const { return pieceCounts_; }
+    int piecesLocked() const { int n = 0; for (int c : pieceCounts_) n += c; return n; }
     int stackRows() const;                        // filled height of the stack in rows
     float danger() const;                         // 0..1 corruption pressure
     bool panic() const { return stackRows() >= kBoardH - rules_.panicRows; }
@@ -258,6 +262,7 @@ private:
     int level_ = 1;
     int lines_ = 0;
     int redLineEvents_ = 0;
+    std::array<int, static_cast<size_t>(Shape::Count)> pieceCounts_{};
     bool collapseAll_ = false;   // settle phase moves every cell, not only red ones
     int combo_ = 0;
     int chain_ = 0;

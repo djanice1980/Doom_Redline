@@ -1,7 +1,10 @@
 #include "game/dungeon.h"
 
+#include "core/tetris.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace rl::game {
@@ -22,11 +25,11 @@ bool Dungeon::floorAt(float x, float z) const {
 int Dungeon::ceilingAt(int i, int j) const {
     const Tile t = tile(i, j);
     if (t == Rock) return 0;
-    if (t == Floor) return (!rooms_.empty() && bossRoom().contains(i, j)) ? kHallHeight : kRoomHeight;
+    if (t == Floor || t == Door) return (!rooms_.empty() && bossRoom().contains(i, j)) ? kHallHeight : kRoomHeight;
     int h = 0;
     for (int dj = -1; dj <= 1; ++dj)
         for (int di = -1; di <= 1; ++di)
-            if (tile(i + di, j + dj) == Floor) h = std::max(h, ceilingAt(i + di, j + dj));
+            if (tile(i + di, j + dj) == Floor || tile(i + di, j + dj) == Door) h = std::max(h, ceilingAt(i + di, j + dj));
     return h;
 }
 
@@ -36,9 +39,103 @@ float Dungeon::ceilingAt(float x, float z) const {
     return static_cast<float>(ceilingAt(i, j));
 }
 
+namespace {
+// A room shaped like a piece: each of the four minos becomes a `cell` x `cell`
+// block of tiles, so an S piece gives a staggered hall and an I piece a long one.
+// The blocks overlap by one tile so the room is a single connected floor.
+void pieceFootprint(int shape, int rot, int cell, std::vector<std::pair<int, int>>& out, int& w, int& d) {
+    out.clear();
+    const auto& minos = core::shapeCells(static_cast<core::Shape>(shape), rot);
+    int minX = 9, minY = 9, maxX = -9, maxY = -9;
+    for (auto [mx, my] : minos) { minX = std::min(minX, mx); minY = std::min(minY, my); maxX = std::max(maxX, mx); maxY = std::max(maxY, my); }
+    w = (maxX - minX + 1) * cell;
+    d = (maxY - minY + 1) * cell;
+    for (auto [mx, my] : minos)
+        for (int y = 0; y < cell; ++y)
+            for (int x = 0; x < cell; ++x) out.push_back({(mx - minX) * cell + x, (my - minY) * cell + y});
+}
+}  // namespace
+
 void Dungeon::carveRoom(const DungeonRoom& r) {
-    for (int j = r.z0; j < r.z0 + r.d; ++j)
-        for (int i = r.x0; i < r.x0 + r.w; ++i) set(i, j, Floor);
+    if (r.shape < 0) {
+        for (int j = r.z0; j < r.z0 + r.d; ++j)
+            for (int i = r.x0; i < r.x0 + r.w; ++i) set(i, j, Floor);
+        return;
+    }
+    // The bounding box was sized from the same footprint, so this fills within it.
+    std::vector<std::pair<int, int>> tiles;
+    int w = 0, d = 0;
+    pieceFootprint(r.shape, r.rot, r.cell, tiles, w, d);
+    for (auto [x, y] : tiles) set(r.x0 + x, r.z0 + y, Floor);
+}
+
+// Pillars: blocks of rock left standing inside a room. A pillar can never cut a
+// room in two as long as it keeps a clear ring, so this is always safe. The boss
+// hall always gets them, because a cyberdemon in a bare box is a shooting gallery.
+void Dungeon::decorate(const DungeonRoom& r, std::mt19937& rng) {
+    std::uniform_real_distribution<float> u(0.f, 1.f);
+    const bool hall = r.boss;
+    if (r.entrance) return;
+    if (!hall && (r.w < 6 || r.d < 6 || u(rng) < 0.5f)) return;
+    const int inset = hall ? 3 : 2, step = hall ? 5 : 3, size = hall ? 2 : 1;
+    for (int j = r.z0 + inset; j + size <= r.z0 + r.d - inset; j += step)
+        for (int i = r.x0 + inset; i + size <= r.x0 + r.w - inset; i += step) {
+            // The middle of the hall stays clear: the boss stands there.
+            if (hall && std::abs(i - r.cx()) <= 3 && std::abs(j - r.cz()) <= 3) continue;
+            bool open = true;
+            for (int dj = -1; dj <= size && open; ++dj)
+                for (int di = -1; di <= size && open; ++di) open = tile(i + di, j + dj) == Floor;
+            if (!open) continue;
+            for (int dj = 0; dj < size; ++dj)
+                for (int di = 0; di < size; ++di) set(i + di, j + dj, Rock);
+        }
+}
+
+// The boss hall is sealed: every floor tile just outside it that leads in becomes a
+// door, solid until the player finds the key.
+void Dungeon::sealBossRoom() {
+    doorTiles_.clear();
+    if (rooms_.size() < 2) return;
+    const DungeonRoom& h = bossRoom();
+    for (int j = h.z0 - 1; j <= h.z0 + h.d; ++j)
+        for (int i = h.x0 - 1; i <= h.x0 + h.w; ++i) {
+            const bool ring = (i == h.x0 - 1 || i == h.x0 + h.w || j == h.z0 - 1 || j == h.z0 + h.d);
+            if (!ring || tile(i, j) != Floor) continue;
+            bool leadsIn = false;
+            const int di[4] = {1, -1, 0, 0}, dj[4] = {0, 0, 1, -1};
+            for (int k = 0; k < 4; ++k) {
+                const int ni = i + di[k], nj = j + dj[k];
+                if (h.contains(ni, nj) && tile(ni, nj) == Floor) leadsIn = true;
+            }
+            if (leadsIn) { set(i, j, Door); doorTiles_.push_back({i, j}); }
+        }
+}
+
+// The floor tile of `r` nearest (i, j), so corridors and items start on real floor.
+void Dungeon::nearestFloor(const DungeonRoom& r, int& i, int& j) const {
+    if (tile(i, j) == Floor) return;
+    int bi = i, bj = j, best = 1 << 30;
+    for (int y = r.z0; y < r.z0 + r.d; ++y)
+        for (int x = r.x0; x < r.x0 + r.w; ++x) {
+            if (tile(x, y) != Floor) continue;
+            const int dd = (x - i) * (x - i) + (y - j) * (y - j);
+            if (dd < best) { best = dd; bi = x; bj = y; }
+        }
+    i = bi; j = bj;
+}
+
+glm::vec3 Dungeon::bossStand() const {
+    if (rooms_.size() < 2) return {0.f, 0.f, kZTop - 1.f};
+    const DungeonRoom& h = bossRoom();
+    int i = h.cx(), j = h.cz();
+    nearestFloor(h, i, j);
+    return tileCentre(i, j);
+}
+
+bool Dungeon::doorAt(float x, float z) const {
+    int i, j;
+    if (!worldToTile(x, z, i, j)) return false;
+    return tile(i, j) == Door;
 }
 
 // An L-shaped corridor: along x first, then along z (the bend is where the two meet).
@@ -50,7 +147,7 @@ void Dungeon::carveCorridor(int x0, int z0, int x1, int z1, int width) {
         for (int k = -half; k < width - half; ++k) set(x1 + k, j, Floor);
 }
 
-void Dungeon::generate(uint32_t seed, int level) {
+void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& pieces) {
     std::mt19937 rng(seed);
     std::uniform_real_distribution<float> u(0.f, 1.f);
     const int L = std::max(1, level);
@@ -84,17 +181,33 @@ void Dungeon::generate(uint32_t seed, int level) {
         r.boss = true;
         rooms_.push_back(r);
     }
-    // Ordinary rooms: random rectangles that keep a tile of rock from every other room.
+    // Ordinary rooms take the shape of a piece, drawn from the ones the player
+    // actually dropped, so a game full of S pieces gives a crypt of staggered halls.
+    int total = 0;
+    for (int c : pieces) total += c;
+    auto pickShape = [&]() {
+        if (total <= 0) return static_cast<int>(u(rng) * 7.f) % 7;
+        // Weighted by the piece mix, but never so lopsided that one shape is the whole
+        // crypt: every piece keeps a floor of one seventh of the weight.
+        float weights[7], sum = 0.f;
+        for (int k = 0; k < 7; ++k) { weights[k] = static_cast<float>(pieces[k]) / static_cast<float>(total) + 0.14f; sum += weights[k]; }
+        float roll = u(rng) * sum;
+        for (int k = 0; k < 7; ++k) { roll -= weights[k]; if (roll <= 0.f) return k; }
+        return 6;
+    };
     auto overlaps = [&](const DungeonRoom& a) {
         for (const DungeonRoom& b : rooms_)
             if (a.x0 < b.x0 + b.w + 2 && b.x0 < a.x0 + a.w + 2 && a.z0 < b.z0 + b.d + 2 && b.z0 < a.z0 + a.d + 2) return true;
         return false;
     };
+    std::vector<std::pair<int, int>> tiles;
     for (int k = 1; k < nRooms; ++k) {
         for (int attempt = 0; attempt < 300; ++attempt) {
             DungeonRoom r;
-            r.w = 5 + static_cast<int>(u(rng) * 7.f);
-            r.d = 5 + static_cast<int>(u(rng) * 7.f);
+            r.shape = pickShape();
+            r.rot = static_cast<int>(u(rng) * 4.f) & 3;
+            r.cell = 2 + static_cast<int>(u(rng) * 2.99f);   // 2..4 tiles per mino
+            pieceFootprint(r.shape, r.rot, r.cell, tiles, r.w, r.d);
             r.x0 = 2 + static_cast<int>(u(rng) * static_cast<float>(std::max(1, w_ - 4 - r.w)));
             r.z0 = 2 + static_cast<int>(u(rng) * static_cast<float>(std::max(1, d_ - 4 - r.d)));
             if (r.x0 + r.w > w_ - 2 || r.z0 + r.d > d_ - 2) continue;
@@ -129,7 +242,12 @@ void Dungeon::generate(uint32_t seed, int level) {
         if (best < 0) break;
         const DungeonRoom& a = rooms_[static_cast<size_t>(best)];
         const DungeonRoom& b = rooms_[static_cast<size_t>(bestFrom)];
-        carveCorridor(b.cx(), b.cz(), a.cx(), a.cz(), a.boss ? 3 : 2);
+        // A piece-shaped room's bounding-box centre can sit in the notch of an L or a T,
+        // so join from a floor tile of each room instead.
+        int bx = b.cx(), bz = b.cz(), ax = a.cx(), az = a.cz();
+        nearestFloor(b, bx, bz);
+        nearestFloor(a, ax, az);
+        carveCorridor(bx, bz, ax, az, a.boss ? 3 : 2);
         linked[static_cast<size_t>(best)] = true;
     }
     // A loop or two so there is more than one way round.
@@ -138,7 +256,12 @@ void Dungeon::generate(uint32_t seed, int level) {
         for (int k = 0; k < loops; ++k) {
             const size_t a = 2 + static_cast<size_t>(u(rng) * static_cast<float>(rooms_.size() - 2)) % (rooms_.size() - 2);
             const size_t b = 2 + static_cast<size_t>(u(rng) * static_cast<float>(rooms_.size() - 2)) % (rooms_.size() - 2);
-            if (a != b) carveCorridor(rooms_[a].cx(), rooms_[a].cz(), rooms_[b].cx(), rooms_[b].cz(), 2);
+            if (a != b) {
+                int ax = rooms_[a].cx(), az = rooms_[a].cz(), bx = rooms_[b].cx(), bz = rooms_[b].cz();
+                nearestFloor(rooms_[a], ax, az);
+                nearestFloor(rooms_[b], bx, bz);
+                carveCorridor(ax, az, bx, bz, 2);
+            }
         }
     }
     // Nothing may touch the outer ring (it has to be rock so every face is closed).
@@ -146,6 +269,26 @@ void Dungeon::generate(uint32_t seed, int level) {
     for (int j = 0; j < d_; ++j) { set(0, j, Rock); set(w_ - 1, j, Rock); }
     // The gate row: only the passage is open.
     for (int i = 0; i < w_; ++i) if (i < gx - 2 || i >= gx + 2) set(i, 0, Rock);
+
+    // Pillars inside the bigger rooms, then the hall is sealed and the key is hidden
+    // in the room furthest from it.
+    for (const DungeonRoom& r : rooms_) decorate(r, rng);
+    sealBossRoom();
+    haveKey_ = false;
+    if (rooms_.size() > 2 && !doorTiles_.empty()) {
+        const DungeonRoom& hall = bossRoom();
+        size_t best = 2;
+        int bestD = -1;
+        for (size_t k = 2; k < rooms_.size(); ++k) {
+            const int dx = rooms_[k].cx() - hall.cx(), dz = rooms_[k].cz() - hall.cz();
+            const int dd = dx * dx + dz * dz;
+            if (dd > bestD) { bestD = dd; best = k; }
+        }
+        int kx = rooms_[best].cx(), kz = rooms_[best].cz();
+        nearestFloor(rooms_[best], kx, kz);
+        keyPos_ = tileCentre(kx, kz);
+        haveKey_ = true;
+    }
 
     // Walls are the rock tiles that border floor (8-neighbourhood, so corners close).
     for (int j = 0; j < d_; ++j)

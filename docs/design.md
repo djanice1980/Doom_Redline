@@ -249,10 +249,41 @@ instanced draw.
   stage or the presence of a dungeon changes; outside fight modes any dungeon
   is closed. In the crypt the sun's shadow box follows the eye (the ceiling
   shades it), ambient drops to 0.10 and the fog thickens.
+- **Rooms are shaped like the pieces that built them.** `generate` takes the
+  board's own piece histogram (`core::Game::pieceCounts`, counted as each piece
+  locks) and both seeds from it and draws each ordinary room's footprint from
+  one of the seven shapes, weighted by how often that piece was played with a
+  floor of one seventh so no shape takes over. Each mino becomes a 2-4 tile
+  block, so an S piece gives a staggered hall and an I piece a long one; the
+  entrance and the boss hall stay rectangles, where a predictable floor matters.
+  Corridors join from a real floor tile of each room (`nearestFloor`), since the
+  bounding-box centre of an L or a T can sit in its notch.
+- **Pillars**: blocks of rock left standing inside a room, always with a clear
+  ring so they cannot cut one in two. The hall always gets 2x2 ones for cover,
+  with the middle three tiles kept clear for the boss to stand in; ordinary
+  rooms take single tiles half the time.
+- **The hall is sealed.** `sealBossRoom` turns every floor tile just outside the
+  hall that leads into it into a `Door`, solid until the player finds the skull
+  key hidden in the room furthest from the hall. With the key in hand the door
+  stops blocking (so a player, or the test bot, can walk at it) and opens on
+  approach with an announcement. A crypt too small to hide a key opens the hall
+  from the start, so it is always finishable.
+- **What the crypt leaves on the floor comes from a battle simulation**
+  (`simulateFight`, after the one in Obsidian's level generator). The roster is
+  planned before anything spawns; each monster is then fought one at a time,
+  strongest first, with the best weapon still holding ammunition. Time to kill is
+  its health over the weapon's damage rate; the cost is its own damage rate over
+  that time, discounted for cover and movement (0.34, or 0.22 for melee, which
+  has to reach you). The result is the health and rounds the fight is expected to
+  need. Whatever the player cannot already pay for is placed as medikits, stims
+  and ammunition spread over the rooms, plus any weapon they have not got yet.
+  If the cost still exceeds what they could carry and pick up, the weakest
+  monsters are dropped until it does, down to a floor of eight.
 - Testing: `--scenario dungeon` (arena pre-cleared), `REDLINE_LOG_DUNGEON=1`
-  (ASCII layout with `m`onsters, the `B`oss and `+` items), and the bot's
-  `navNext` (a breadth-first search over 1 m tiles of everything walkable)
-  which lets `--bot` walk the crypt to the boss.
+  (ASCII layout with `m`onsters, the `B`oss, `+` items, the `K`ey and the `D`oor,
+  plus the budget and any trim), and the bot's `navNext` (a breadth-first search
+  over 1 m tiles of everything walkable) which lets `--bot` walk the crypt,
+  fetch the key and reach the boss.
 
 ## Test bot (`src/core/tetris_bot.h`)
 

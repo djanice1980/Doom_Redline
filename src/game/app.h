@@ -371,10 +371,16 @@ private:
     float botSide_ = 1.f;
     float updateNoticeT_ = 0.f;
     int envStage_ = 0;             // FpsMode::Stage the environment cubes were built for
-    bool envDungeon_ = false;      // whether they include a dungeon
+    bool envDungeon_ = false;
+    bool envDoorOpen_ = false;      // whether they include a dungeon
     glm::vec3 botWaypoint_{0.f};   // the fight bot's next path step (navNext), refreshed a few times a second
     float botNavT_ = 0.f;
     bool botHaveWaypoint_ = false;
+    int botTargetIdx_ = -1;         // the bot sticks with one target, or it paths between two and never arrives
+    float botTargetT_ = 0.f;
+    glm::vec3 botLastPos_{0.f};     // the test bot wedges itself on corners; this shakes it loose
+    float botStuckT_ = 0.f;
+    void botUnstick(FpsInput& in, float dt);
     core::TetrisBot tetrisBot_;    // --bot: plays the block phase too (one input every 0.12 s, a person's pace)
     float botTetrisT_ = 0.f;   // seconds the NEW VERSION sticker has been on the title (drives its zoom bursts)
     int countdownLast_ = -1;

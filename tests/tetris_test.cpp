@@ -653,7 +653,35 @@ static void testBotPlays() {
     }
 }
 
+static void testPieceCounts() {
+    // The dungeon is built from the pieces the player dropped, so the board has to
+    // remember them: one count per shape, only for pieces that actually locked.
+    Game g(5, fastRules());
+    CHECK(g.piecesLocked() == 0);
+    g.forcePiece(Shape::O, {});
+    g.spawnNow();
+    g.hardDrop();
+    runUntil(g, Phase::Falling);
+    CHECK(g.pieceCounts()[static_cast<size_t>(Shape::O)] == 1);
+    CHECK(g.piecesLocked() == 1);
+    int before = g.piecesLocked();
+    TetrisBot bot;
+    for (int i = 0; i < 20000 && g.piecesLocked() < before + 30 && g.phase() != Phase::GameOver; ++i) {
+        bot.step(g);
+        g.tick(0.02f);
+    }
+    CHECK(g.piecesLocked() >= before + 30);
+    int total = 0;
+    for (int c : g.pieceCounts()) total += c;
+    CHECK(total == g.piecesLocked());
+    // A seven-bag means no shape can be missing for long.
+    int seen = 0;
+    for (int c : g.pieceCounts()) seen += c > 0 ? 1 : 0;
+    CHECK(seen == static_cast<int>(Shape::Count));
+}
+
 int main() {
+    testPieceCounts();
     testBotPlays();
     testFloatingGroupFalls();
     testFightCleansesBoard();

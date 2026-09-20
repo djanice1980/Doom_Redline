@@ -186,6 +186,8 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
     stageT_ = 0.f;
     dungeon_.clear();
     bossSeen_ = bossDead_ = false;
+    hasKey_ = doorOpen_ = false;
+    lockedHintT_ = 0.f;
     boardBlocks_ = 0;
     for (int r = 0; r < core::kBoardH; ++r)
         for (int c = 0; c < core::kBoardW; ++c) boardBlocks_ += !game.at(c, r).empty();
@@ -302,7 +304,12 @@ std::vector<FpsEvent> FpsMode::drainEvents() {
 bool FpsMode::solidAt(glm::vec3 p, const core::Game& game) const {
     if (stage_ == Stage::Dungeon) {
         // Behind the back wall the dungeon's tiles rule: rock is solid to the ceiling, floor is open.
-        if (p.z <= Dungeon::kZTop) return !dungeon_.floorAt(p.x, p.z) && p.y <= std::max(Dungeon::kWallHeight, dungeon_.ceilingAt(p.x, p.z));
+        if (p.z <= Dungeon::kZTop) {
+            // Shut until the key turns up; with the key in hand it is already yielding,
+            // so the player (and the test bot) can walk at it rather than path around.
+            if (!doorOpen_ && !hasKey_ && dungeon_.doorAt(p.x, p.z)) return true;
+            return !dungeon_.floorAt(p.x, p.z) && !dungeon_.doorAt(p.x, p.z) && p.y <= std::max(Dungeon::kWallHeight, dungeon_.ceilingAt(p.x, p.z));
+        }
         // The gate: the wall's footprint and the board's end rail in front of it are open.
         if (p.z < 0.f && std::fabs(p.x) < Dungeon::kGateHalf) return false;
     }
@@ -909,6 +916,7 @@ void FpsMode::applyPickup(const Pickup& p) {
     case PickupKind::Chaingun: giveWeapon(kChaingun); break;
     case PickupKind::RocketLauncher: giveWeapon(kRocketLauncher); break;
     case PickupKind::PlasmaGun: giveWeapon(kPlasmaRifle); break;
+    case PickupKind::Key: hasKey_ = true; push(FpsEvent::Type::KeyFound, p.pos); break;
     default: break;
     }
     pickupFlash_ = 1.f;
@@ -1239,6 +1247,18 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
         else ++i;
     }
 
+    // --- the boss hall's door ---------------------------------------------
+    lockedHintT_ = std::max(0.f, lockedHintT_ - dt);
+    if (stage_ == Stage::Dungeon && !doorOpen_ && !dungeon_.doorTiles().empty() && health_ > 0.f) {
+        for (const auto& [ti, tj] : dungeon_.doorTiles()) {
+            const glm::vec3 c = dungeon_.tileCentre(ti, tj);
+            if (std::fabs(c.x - playerPos_.x) > 2.f || std::fabs(c.z - playerPos_.z) > 2.f) continue;
+            if (hasKey_) { doorOpen_ = true; push(FpsEvent::Type::DoorOpened, c); }
+            else if (lockedHintT_ <= 0.f) { lockedHintT_ = 4.f; push(FpsEvent::Type::DoorLocked, c); }
+            break;
+        }
+    }
+
     // --- end conditions ----------------------------------------------------
     if (!finished_ && !in.warmup) {
         if (stage_ == Stage::Arena) {
@@ -1287,6 +1307,7 @@ const Enemy* FpsMode::boss() const {
 }
 
 void FpsMode::closeDungeon() {
+    hasKey_ = doorOpen_ = false;
     stage_ = Stage::Arena;
     stageT_ = 0.f;
     dungeon_.clear();
@@ -1297,7 +1318,11 @@ void FpsMode::debugClearArena() {
 }
 
 void FpsMode::openDungeon(core::Game& game) {
-    dungeon_.generate(game.seed() * 31337u + static_cast<uint32_t>(level_) * 7u + static_cast<uint32_t>(game.redLineCount()), level_);
+    // The seed is the game that made it: the board's own seed, the fight number, and
+    // the piece mix, so two players who stack differently get different crypts.
+    uint32_t seed = game.seed() * 31337u + static_cast<uint32_t>(level_) * 7u + static_cast<uint32_t>(game.redLineCount()) * 104729u;
+    for (size_t k = 0; k < game.pieceCounts().size(); ++k) seed = seed * 1664525u + static_cast<uint32_t>(game.pieceCounts()[k]) * 1013904223u;
+    dungeon_.generate(seed, level_, game.pieceCounts());
     stage_ = Stage::Dungeon;
     stageT_ = 0.f;
     // The falling wall smashes a passage through the stack in front of the gate.
@@ -1320,15 +1345,57 @@ void FpsMode::openDungeon(core::Game& game) {
         for (int j = 0; j < dungeon_.depth(); ++j) {
             std::string row;
             for (int i = 0; i < dungeon_.width(); ++i) {
-                char ch = dungeon_.tile(i, j) == Dungeon::Floor ? '.' : dungeon_.tile(i, j) == Dungeon::Wall ? '#' : ' ';
+                const Dungeon::Tile t = dungeon_.tile(i, j);
+                char ch = t == Dungeon::Floor ? '.' : t == Dungeon::Wall ? '#' : t == Dungeon::Door ? 'D' : ' ';
                 const glm::vec3 c = dungeon_.tileCentre(i, j);
                 for (const Enemy& e : enemies_) if (e.inDungeon && std::fabs(e.pos.x - c.x) < 0.5f && std::fabs(e.pos.z - c.z) < 0.5f) ch = e.boss ? 'B' : 'm';
-                for (const Pickup& p : pickups_) if (std::fabs(p.home.x - c.x) < 0.5f && std::fabs(p.home.z - c.z) < 0.5f) ch = '+';
+                for (const Pickup& p : pickups_) if (std::fabs(p.home.x - c.x) < 0.5f && std::fabs(p.home.z - c.z) < 0.5f) ch = p.kind == PickupKind::Key ? 'K' : '+';
                 row += ch;
             }
             std::fprintf(stderr, "[dungeon] %s\n", row.c_str());
         }
     }
+}
+
+// A rough battle simulation, after the one in Obsidian's level generator: fight the
+// roster one monster at a time with the best weapon to hand, strongest first, and
+// add up what it costs in health and ammunition. What the player is short of is
+// what the crypt leaves on the floor, which beats guessing from the level number.
+FpsMode::FightBudget FpsMode::simulateFight(const std::vector<int>& kinds) const {
+    FightBudget b;
+    const float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(level_ - 1), 0.45f, 2.5f);
+    // Strongest first, the order a player would take them in.
+    std::vector<int> order = kinds;
+    std::sort(order.begin(), order.end(), [](int a, int c) { return enemyStats(a).hp > enemyStats(c).hp; });
+    // Ammunition the player is carrying, spent as the simulation runs.
+    float have[kWeaponCount];
+    for (int w = 0; w < kWeaponCount; ++w) have[w] = slots_[w].owned ? static_cast<float>(slots_[w].ammo) : 0.f;
+    for (int kind : order) {
+        const EnemyStats& st = enemyStats(kind);
+        const float hp = st.hp * hpScale;
+        // The best weapon still holding ammunition; the shotgun never runs dry.
+        int use = kShotgun;
+        float bestDps = weaponDef(kShotgun).damage / weaponDef(kShotgun).cycle;
+        for (int w = 1; w < kWeaponCount; ++w) {
+            if (!slots_[w].owned || have[w] <= 0.f) continue;
+            const float dps = weaponDef(w).damage / weaponDef(w).cycle;
+            if (dps > bestDps) { bestDps = dps; use = w; }
+        }
+        const WeaponDef& wd = weaponDef(use);
+        const float seconds = hp / std::max(1.f, bestDps);
+        if (wd.ammoPerPickup > 0) {
+            const float rounds = seconds / wd.cycle;
+            b.ammo[use] += rounds;
+            have[use] = std::max(0.f, have[use] - rounds);
+        }
+        // What it does back: its own damage rate, for as long as it takes to kill,
+        // discounted because the player is moving, using cover and not always in its
+        // line of fire. Melee has to reach you first, so it lands less.
+        const float incoming = st.damage / std::max(0.3f, st.attackInterval);
+        const float exposure = st.attack == AttackKind::Melee ? 0.22f : 0.34f;
+        b.health += incoming * seconds * exposure;
+    }
+    return b;
 }
 
 // Monsters for the rooms, scaled by the level and by how much of a stack there was:
@@ -1338,12 +1405,23 @@ void FpsMode::populateDungeon() {
     const int L = std::max(1, level_);
     const float hpScale = std::clamp(0.45f + 0.15f * static_cast<float>(L - 1), 0.45f, 2.5f);
     const int capTier = std::min(4, maxTierForLevel(L));   // the big two are the boss's job
+    // The roster is planned first and only then spawned, so the battle simulation can
+    // look at the whole fight and cut it back if it would be hopeless.
+    struct Planned { int tier, kind; glm::vec3 pos; float hpMul; bool boss; };
+    std::vector<Planned> plan;
     auto make = [&](int tier, glm::vec3 pos, float hpMul, bool boss) {
+        int kind = boss ? tier : pickKind(tier);
+        if (enemyStats(kind).flies) kind = kindAvailable_[8] && u(rng_) < 0.5f ? 8 : 2;   // no drifting through walls: a hell knight or a demon instead
+        plan.push_back({tier, kind, pos, hpMul, boss});
+    };
+    auto spawn = [&](const Planned& pl) {
         Enemy e;
-        e.tier = tier;
-        e.kind = boss ? tier : pickKind(tier);
-        if (enemyStats(e.kind).flies) e.kind = kindAvailable_[8] && u(rng_) < 0.5f ? 8 : 2;   // no drifting through walls: a hell knight or a demon instead
+        e.tier = pl.tier;
+        e.kind = pl.kind;
         const EnemyStats& st = enemyStats(e.kind);
+        const glm::vec3 pos = pl.pos;
+        const float hpMul = pl.hpMul;
+        const bool boss = pl.boss;
         e.pos = pos;
         e.maxHp = e.hp = st.hp * hpScale * hpMul;
         e.radius = st.radius;
@@ -1372,17 +1450,95 @@ void FpsMode::populateDungeon() {
     const int bossTier = L <= 2 ? 4 : L <= 5 ? 5 : 6;
     const float bossHp = 1.0f + static_cast<float>(boardBlocks_) / 80.f + 0.1f * static_cast<float>(L);
     const DungeonRoom& hall = dungeon_.bossRoom();
-    make(bossTier, dungeon_.tileCentre(hall.cx(), hall.cz()), bossHp, true);
+    make(bossTier, dungeon_.bossStand(), bossHp, true);
     for (const glm::vec3& p : dungeon_.bossGuardSpots(rng_, 2 + L / 3)) make(std::min(capTier, 1 + L / 3), p, 1.f, false);
-    // Something in every room: health and ammunition, so the crypt can be fought through.
-    const PickupKind kinds[] = {PickupKind::Medikit, PickupKind::Bullets, PickupKind::Rockets, PickupKind::Cells, PickupKind::Stim};
-    for (size_t k = 2; k < dungeon_.rooms().size(); ++k) {
-        const DungeonRoom& r = dungeon_.rooms()[k];
-        glm::vec3 c = dungeon_.tileCentre(r.cx(), r.cz());
-        spawnPickup(kinds[k % 5], c + glm::vec3(0.f, 0.6f, 0.f), c);
-        if (k % 2 == 0) spawnPickup(PickupKind::Medikit, c + glm::vec3(1.f, 0.6f, 0.f), c + glm::vec3(1.f, 0.f, 0.f));
+
+    // Simulate the whole roster. What the player can bring to it is what they carry
+    // plus the items the crypt can hold plus the heal each kill gives. If the fight
+    // still costs more than that it is not a fight, so the weakest are dropped until
+    // it is one.
+    auto costOf = [&](const std::vector<Planned>& p) {
+        std::vector<int> kinds;
+        float bossMul = 1.f;
+        for (const Planned& pl : p) { kinds.push_back(pl.kind); if (pl.boss) bossMul = pl.hpMul; }
+        FightBudget b = simulateFight(kinds);
+        b.health *= 1.f + 0.25f * (bossMul - 1.f);   // the boss's extra health is extra time under fire
+        return b;
+    };
+    FightBudget need = costOf(plan);
+    const int kept0 = static_cast<int>(plan.size());
+    while (plan.size() > 8) {
+        const float affordable = health_ + shield_ * 0.5f + 300.f + 5.f * static_cast<float>(plan.size());
+        if (need.health <= affordable) break;
+        // Drop the weakest that is not the boss.
+        size_t weakest = plan.size();
+        float worst = 1e9f;
+        for (size_t k = 0; k < plan.size(); ++k) {
+            if (plan[k].boss) continue;
+            const float hp = enemyStats(plan[k].kind).hp;
+            if (hp < worst) { worst = hp; weakest = k; }
+        }
+        if (weakest >= plan.size()) break;
+        plan.erase(plan.begin() + static_cast<long>(weakest));
+        need = costOf(plan);
     }
-    spawnPickup(PickupKind::Medikit, dungeon_.tileCentre(hall.x0 + 1, hall.z0 + 1) + glm::vec3(0.f, 0.6f, 0.f), dungeon_.tileCentre(hall.x0 + 1, hall.z0 + 1));
+    if (kept0 != static_cast<int>(plan.size()) && std::getenv("REDLINE_LOG_DUNGEON"))
+        std::fprintf(stderr, "[dungeon] roster trimmed from %d to %zu: the fight did not fit what the player could carry\n", kept0, plan.size());
+    for (const Planned& pl : plan) spawn(pl);
+
+    // What the crypt leaves lying about comes from the same simulation: whatever the
+    // roster is expected to cost that the player cannot already pay for.
+    std::vector<PickupKind> wanted;
+    // Health: what the fight costs beyond what is carried, in medikits with stims to round off.
+    float healthShort = need.health - (health_ + shield_ * 0.5f - 30.f);   // leave 30 in hand at the end
+    for (int n = 0; n < 12 && healthShort > 0.f; ++n) {
+        if (healthShort > 18.f) { wanted.push_back(PickupKind::Medikit); healthShort -= 25.f; }
+        else { wanted.push_back(PickupKind::Stim); healthShort -= 10.f; }
+    }
+    // Ammunition: per weapon, whatever the simulation spends past what is carried.
+    const PickupKind ammoFor[kWeaponCount] = {PickupKind::Bullets, PickupKind::Bullets, PickupKind::Rockets, PickupKind::Cells};
+    for (int w = 1; w < kWeaponCount; ++w) {
+        if (!slots_[w].owned) continue;
+        float shortfall = need.ammo[w] - static_cast<float>(slots_[w].ammo);
+        for (int n = 0; n < 8 && shortfall > 0.f; ++n) {
+            wanted.push_back(ammoFor[w]);
+            shortfall -= static_cast<float>(weaponDef(w).ammoPerPickup);
+        }
+    }
+    // A weapon the player has not got yet is worth more than any of it.
+    for (int w = kChaingun; w <= kPlasmaRifle; ++w)
+        if (!slots_[w].owned && level_ >= w) wanted.push_back(w == kChaingun ? PickupKind::Chaingun : w == kRocketLauncher ? PickupKind::RocketLauncher : PickupKind::PlasmaGun);
+    if (wanted.empty()) wanted.push_back(PickupKind::Stim);
+    // Spread them over the rooms, and always leave one medikit in the hall itself.
+    std::vector<glm::vec3> spots = dungeon_.spawnSpots(rng_, static_cast<int>(wanted.size()));
+    for (size_t k = 0; k < wanted.size() && k < spots.size(); ++k) {
+        Pickup p;
+        p.kind = wanted[k];
+        p.home = spots[k];
+        p.pos = spots[k];
+        p.landed = true;
+        pickups_.push_back(p);
+    }
+    if (std::getenv("REDLINE_LOG_DUNGEON"))
+        std::fprintf(stderr, "[dungeon] budget: %.0f health and %.0f/%.0f/%.0f rounds needed, carrying %.0f health %d armour -> %zu items\n",
+                     need.health, need.ammo[kChaingun], need.ammo[kRocketLauncher], need.ammo[kPlasmaRifle], health_, static_cast<int>(shield_), wanted.size());
+    {
+        const glm::vec3 c = dungeon_.tileCentre(hall.x0 + 1, hall.z0 + 1);
+        spawnPickup(PickupKind::Medikit, c + glm::vec3(0.f, 0.6f, 0.f), c);
+    }
+    // The key to the hall, in the room furthest from it. Without a key the hall is
+    // simply open, so a crypt too small to hide one is still finishable.
+    if (dungeon_.hasKey()) {
+        Pickup k;
+        k.kind = PickupKind::Key;
+        k.pos = dungeon_.keyPos() + glm::vec3(0.f, 0.55f, 0.f);
+        k.home = dungeon_.keyPos();
+        k.landed = true;
+        k.pos.y = 0.f;
+        pickups_.push_back(k);
+    } else {
+        doorOpen_ = true;
+    }
 }
 
 // Breadth-first search over 1 m tiles of everything walkable (the board's floor and the
