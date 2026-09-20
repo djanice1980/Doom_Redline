@@ -4,6 +4,15 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.7.0 (2026-09-20)
+- REDLINE opens on a title card in Doom's own shape, held for a moment and then melted away a column at a time to leave the game behind it. Any key cuts the wait short.
+- The card is built when the game loads out of the art your copy of Doom has, so the logo, the letters and the monsters on it are yours.
+- The same page, shaded blue, sits behind the new CONTROLS screen and behind a page on the way out that shows what you scored and where the next version lives.
+- CONTROLS lists everything the keyboard, the mouse and a gamepad do, side by side, and the key hints are gone from the corner of the play field.
+- The high scores on the title screen moved up to the top of the page with them.
+- The leaderboard is back on the title menu: a version check was overwriting it with a second WHAT'S NEW.
+- WHAT'S NEW, the leaderboard question, the adopt screen and the delete confirm can be closed again. Nothing answered a key on any of them.
+
 ## 0.6.0 (2026-09-20)
 - Setting up the leaderboard is one click now. The email has a single Approve button and there is no code to type.
 - Your scores are posted from the moment you set an address, but nobody can see them until you click that button: the boards, player pages and the site totals show approved players only. Declining deletes everything collected.
