@@ -102,6 +102,7 @@ private:
     void buildEnvironment();
     void addBoard();
     void addDecor();
+    void addDoorMark();   // the skull on the sealed boss door
     void addAmbient();
     void addHealthBars(float W, float H, float s, float lh);
     bool projectToScreen(glm::vec3 world, float& x, float& y) const;
@@ -174,6 +175,12 @@ private:
     void adjustOption(int dir);
     void trophy(const char* id);
     void openGamepad(uint32_t which);
+    // Rescans instead of latching onto the first pad: Steam Input takes the real
+    // device away and hands over a virtual one, and the two events arrive in
+    // either order. `prefer` is tried first when an event named a device.
+    void refreshGamepad(uint32_t prefer = 0);
+    void closeGamepad();
+    void logGamepadEnvironment() const;   // what SDL can see, and what Steam set
     void pollGamepad(float dt);
     void rumble(float low, float high, int ms);
     void padButton(int button, bool down);

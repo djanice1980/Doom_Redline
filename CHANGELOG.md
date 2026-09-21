@@ -4,6 +4,17 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.7.1 (2026-09-21)
+- The Linux downloads run on any x86-64 machine again. They were built on a CachyOS box, which stamps its own processor level into everything it links, so on an ordinary CPU they refused to start with "CPU ISA level is lower than required". Releases are now built in a stock container.
+- A controller works when the game is launched from Steam. Steam takes the pad you plugged in away and hands over one of its own, and the game was holding on to the one it saw first.
+- The door into the boss hall looks like a door: a Doom door with a pile of skulls on it, lit so it reads from down the corridor. It stays solid until it opens, so nothing in the hall can see you or shoot you through it.
+- Bosses have far less health. What is dangerous about the hall now is the court around them, several of the heaviest demons the level can field.
+- The boss hall is sized for its boss. The spider mastermind gets a room twice the floor it used to have.
+- Zombies and chaingunners stop shooting you from across the crypt: they hold fire past sixteen and twenty-four metres and close in instead.
+- A health bar only floats over a demon you can actually see.
+- UNTOUCHABLE is for clearing the arena without taking damage. The crypt and its boss no longer count against it.
+- The test bot looks where it is walking instead of at the ceiling, and goes to the door when the hall is sealed.
+
 ## 0.7.0 (2026-09-20)
 - REDLINE opens on a title card in Doom's own shape, held for a moment and then melted away a column at a time to leave the game behind it. Any key cuts the wait short.
 - The card is built when the game loads out of the art your copy of Doom has, so the logo, the letters and the monsters on it are yours.

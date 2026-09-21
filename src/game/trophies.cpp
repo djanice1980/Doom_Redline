@@ -15,7 +15,7 @@ const std::vector<TrophyDef>& trophyCatalogue() {
         {"tetris", "TETRIS", "CLEAR FOUR LINES AT ONCE"},
         {"combo3", "ON A ROLL", "THREE CLEARING PIECES IN A ROW"},
         {"chain", "CHAIN REACTION", "A CLEAR CAUSED BY THE COLLAPSE"},
-        {"untouchable", "UNTOUCHABLE", "WIN A FIGHT WITHOUT TAKING DAMAGE"},
+        {"untouchable", "UNTOUCHABLE", "CLEAR AN ARENA WITHOUT TAKING DAMAGE"},
         {"boss", "BOSS KILLER", "KILL A BARON OR BIGGER"},
         {"cyber", "CYBER SLAYER", "KILL A CYBERDEMON"},
         {"mastermind", "MASTERMIND", "KILL A SPIDER MASTERMIND"},

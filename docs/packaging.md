@@ -51,17 +51,28 @@ for testing.
 
 ## All artefacts in one go
 
-`packaging/build-release.sh` (run on Linux, from a configured `build/`)
-produces the tarball, the `.deb`, the Arch package, the AppImage, the
-Windows zip and the Windows installer. It needs `makepkg` (Arch), Docker
-(the Windows steps use `fedora:42` with mingw-w64 for the build and the
-`amake/innosetup` image, which runs Inno Setup's compiler under Wine, for
-the installer), and `linuxdeploy-x86_64.AppImage` from
-https://github.com/linuxdeploy/linuxdeploy/releases/tag/continuous (put it on
-`PATH` or set `LINUXDEPLOY=/path/to/it`). `--no-windows` skips the Docker
-steps. The `.deb` is written by CPack with an explicit dependency list
-(`libsdl3-0, libvorbisfile3, libvulkan1`) because `dpkg` is not on an Arch
-machine; the AppImage is an installed tree (`cmake --install --prefix /usr`
+`packaging/build-release.sh` (run on Linux) produces the tarball, the `.deb`,
+the Arch package, the AppImage, the Windows zip and the Windows installer. It
+needs Docker and nothing else: the four Linux artefacts are built by
+`packaging/linux/container-build.sh` in `archlinux:base-devel`, and the Windows
+ones in `fedora:42` with mingw-w64 plus the `amake/innosetup` image, which runs
+Inno Setup's compiler under Wine. `--no-windows` skips the Windows half.
+
+**Why the Linux artefacts are built in a container.** A binary linked on a
+CachyOS machine is refused by the loader on an ordinary CPU with "CPU ISA level
+is lower than required", even when its own code is plain x86-64. CachyOS's
+glibc is compiled for a microarchitecture level, its startup objects
+(`/usr/lib/Scrt1.o`) carry that level in `.note.gnu.property`, and the linker
+merges the note into everything it links. Separately, `makepkg` exports
+`-march=native` from CachyOS's `/etc/makepkg.conf`, which on a Zen 4/5 host puts
+real AVX-512 into the package. A stock Arch image has baseline startup objects
+and `-march=x86-64`, so what comes out of it runs anywhere. The script checks
+this before it starts and prints `x86 ISA needed` for the finished binaries at
+the end; both must say `x86-64-baseline` and nothing else.
+
+The `.deb` is written by CPack with an explicit dependency list
+(`libsdl3-0, libvorbisfile3, libvulkan1, libcurl4`) because `dpkg` is not on an
+Arch machine; the AppImage is an installed tree (`cmake --install --prefix /usr`
 into `build/AppDir`) with the shared libraries bundled by linuxdeploy, and the
 game finds its data folders through `bin/../share/redline` inside it.
 

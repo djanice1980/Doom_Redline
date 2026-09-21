@@ -277,6 +277,10 @@ public:
     bool startedInvulnerable() const { return startedInvuln_; }
     float damageFlash() const { return damageFlash_; }
     float damageTaken() const { return damageTaken_; }   // this fight, before armour
+    // Damage taken up to the moment the arena was cleared. The crypt and its boss are
+    // a second fight in the same breath, and asking for both of them untouched was
+    // asking for a trophy nobody was going to get.
+    float damageTakenInArena() const { return arenaDamage_; }
     float pickupFlash() const { return pickupFlash_; }
     float gunAnimT() const { return gunT_; }
     bool gunFiring() const { return gunT_ < weaponDef(weapon_).cycle * 1.2f && gunT_ < 0.6f; }
@@ -361,6 +365,7 @@ private:
     bool startedInvuln_ = false;
     float damageFlash_ = 0.f;
     float damageTaken_ = 0.f;
+    float arenaDamage_ = -1.f;   // -1 until the arena is cleared
     float pickupFlash_ = 0.f;
     float gunT_ = 10.f;
     int weapon_ = kShotgun;

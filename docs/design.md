@@ -596,11 +596,33 @@ it server-side. `stats_test` covers the round trip across two machines.
   interrupts the melt itself. `addCardBackdrop` draws the blue copy behind
   `kScreenControls` and `kScreenFarewell`. Scripted runs start past the card
   unless `REDLINE_SPLASH` is set, so every other capture lands on its frame.
+- The boss hall's door: `Dungeon::Door` tiles are solid in `solidAt` until
+  `doorOpen_`, which is what stops the hall's monsters seeing and shooting
+  through it (`lineOfSight` and the projectiles both go through `solidAt`). It
+  used to become passable the moment the key was picked up, so the player took
+  fire from a wall. It is drawn with a real Doom door texture
+  (`Assets::cryptDoor`, BIGDOOR7 and friends), a dim emissive, a point light and
+  a glowing skull billboard on whichever face the player is on (`addDoorMark`).
+  Walking within two metres of a door tile with the key opens it.
+- Hitscan reach: `hitscanRange(kind)` in fps_mode.cpp, 16 m for a zombieman,
+  24 m for a chaingunner, 45 m for the mastermind, 30 m otherwise. Past it they
+  hold fire and close in, and they do not wake from beyond it either. Doom had
+  no limit because Doom's rooms were small; a crypt corridor is forty metres.
+- Floating health bars are drawn only when a ray to the enemy's head is clear;
+  the three-line threat list in the corner is always drawn.
+- The UNTOUCHABLE trophy uses `damageTakenInArena()`, snapshotted when the gate
+  falls, so the crypt and its boss are not part of it.
 - Leaving: QUIT and Esc on the title call `quitGame`, which puts
   `kScreenFarewell` up (the blue page, the player's numbers, where to get the
   next version) until any key, or ten seconds. Scripted runs and the bot go
   straight out unless `REDLINE_FAREWELL` is set; the window's close button
   always exits at once.
+- The fight bot (`--bot`): aims at a target it holds for three seconds, but only
+  pitches off level when it has a clear shot (clamped to 0.45 rad); with no shot
+  it faces its next waypoint and keeps the head level. It fetches the skull key
+  first, then walks at the door, because a solid door cannot be pathed through.
+  `REDLINE_LOG_BOT=1` prints the frame, target, distance, whether the shot is
+  clear, the waypoint, the stuck timer and the pitch.
 - Ray tracing: `rtShadows_` defaults to 3 but is forced to 0 (and saved) on a
   GPU without ray queries, so the setting file reflects what runs.
 - Level card: 4 s after the fly-out; block gravity pauses while a piece would

@@ -80,8 +80,9 @@ void Dungeon::decorate(const DungeonRoom& r, std::mt19937& rng) {
     const int inset = hall ? 3 : 2, step = hall ? 5 : 3, size = hall ? 2 : 1;
     for (int j = r.z0 + inset; j + size <= r.z0 + r.d - inset; j += step)
         for (int i = r.x0 + inset; i + size <= r.x0 + r.w - inset; i += step) {
-            // The middle of the hall stays clear: the boss stands there.
-            if (hall && std::abs(i - r.cx()) <= 3 && std::abs(j - r.cz()) <= 3) continue;
+            // The middle of the hall stays clear: the boss stands there, and the
+            // biggest of them needs room to turn as well as to stand.
+            if (hall && std::abs(i - r.cx()) <= 4 && std::abs(j - r.cz()) <= 4) continue;
             bool open = true;
             for (int dj = -1; dj <= size && open; ++dj)
                 for (int di = -1; di <= size && open; ++di) open = tile(i + di, j + dj) == Floor;
@@ -222,8 +223,8 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
     // Size: level 1 is a crypt of three rooms and the boss's hall, level 9 and up a
     // sprawl of eight rooms. The grid grows with it (a margin of rock all round).
     const int nRooms = std::min(8, 2 + (L + 1) / 2);         // ordinary rooms, entrance included
-    w_ = std::min(64, 30 + 4 * L);
-    d_ = std::min(80, 34 + 5 * L);
+    w_ = std::min(68, 32 + 4 * L);   // room for the hall below and the crypt around it
+    d_ = std::min(84, 36 + 5 * L);
     tiles_.assign(static_cast<size_t>(w_ * d_), Rock);
     rooms_.clear();
     torches_.clear();
@@ -241,11 +242,15 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
         r.theme = kCorridorTheme;
         rooms_.push_back(r);
     }
-    // The boss's hall: big, at the far end.
+    // The boss's hall: big, at the far end, and sized for what will be standing in it.
+    // A baron needs a room; a cyberdemon needs a yard; the spider mastermind is two
+    // and a half metres across, fires hitscan and has a court around it, so it needs
+    // somewhere to be fought rather than cornered.
     {
+        const int bossTier = L <= 2 ? 0 : L <= 5 ? 1 : 2;   // baron, cyberdemon, mastermind
         DungeonRoom r;
-        r.w = std::min(w_ - 4, 15 + std::min(6, L / 2));
-        r.d = std::min(20, 15 + std::min(5, L / 2));
+        r.w = std::min(w_ - 4, 16 + 5 * bossTier + std::min(4, L / 3));
+        r.d = std::min(d_ - 6, 15 + 4 * bossTier + std::min(4, L / 3));
         r.x0 = 2 + static_cast<int>(u(rng) * static_cast<float>(std::max(1, w_ - 4 - r.w)));
         r.z0 = d_ - 2 - r.d;
         r.boss = true;

@@ -3,7 +3,7 @@
 # (run `makepkg -si` inside packaging/arch). No Doom data is included: the
 # game asks for doom.wad on first launch, or set REDLINE_WAD / ~/.local/share/redline/redline/wad.txt.
 pkgname=redline
-pkgver=0.7.0
+pkgver=0.7.1
 pkgrel=1
 pkgdesc="Tetris that tips over into a Doom fight (Vulkan, SDL3; needs your own doom.wad)"
 arch=('x86_64')
@@ -17,6 +17,16 @@ options=('!debug')
 _srcdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 
 build() {
+  # CachyOS ships /etc/makepkg.conf with -march=native. makepkg exports that into the
+  # build, and on a Zen 4/5 machine it puts AVX-512 into the binary, so the package
+  # only runs on the machine that built it ("CPU ISA level is lower than required"
+  # everywhere else). A package is meant to be installable, so pin a portable level.
+  # Note this is not enough on its own to make a *released* artefact portable: on
+  # CachyOS the glibc startup objects carry the microarchitecture level too, which is
+  # why packaging/linux/container-build.sh builds releases in a stock Arch container.
+  CFLAGS="${CFLAGS//-march=native/-march=x86-64}"
+  CXXFLAGS="${CXXFLAGS//-march=native/-march=x86-64}"
+  export CFLAGS CXXFLAGS
   cmake -S "$_srcdir" -B "$srcdir/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DREDLINE_BUILD_TESTS=OFF
   cmake --build "$srcdir/build"
 }

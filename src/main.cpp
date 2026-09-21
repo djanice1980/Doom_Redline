@@ -21,7 +21,7 @@ void usage() {
         "  --fullscreen\n"
         "  --igpu               Prefer the integrated GPU (or set REDLINE_GPU=<index>)\n"
         "  --seed <n>           Deterministic piece sequence\n"
-        "  --scenario <name>    title | blocks | redline | fps | corrupt | prize\n"
+        "  --scenario <name>    title | blocks | redline | fps | dungeon | corrupt | prize\n"
         "  --screenshot <png>   Save a screenshot after --frames frames and exit\n"
         "  --frames <n>         Frame count for --screenshot (fixed 60 Hz step)\n"
         "  --record <file.rgba> Append every 2nd frame (--record-every N) as raw RGBA; ffmpeg -f rawvideo -pix_fmt rgba -s WxH -r 30 -i file\n"

@@ -21,32 +21,12 @@ echo "== build"
 cmake --build build
 (cd build && ctest --output-on-failure)
 
-echo "== tarball"
-(cd build && cpack -G TGZ)
-
-echo "== deb"
-(cd build && cpack -G DEB -D CPACK_DEBIAN_PACKAGE_SHLIBDEPS=OFF -D CPACK_DEBIAN_PACKAGE_ARCHITECTURE=amd64 \
-  -D CPACK_DEBIAN_PACKAGE_DEPENDS="libsdl3-0, libvorbisfile3, libvulkan1, libcurl4t64 | libcurl4" \
-  -D CPACK_DEBIAN_PACKAGE_MAINTAINER="David Janice <djanice1980@gmail.com>" -D CPACK_DEBIAN_FILE_NAME=DEB-DEFAULT)
-
-if command -v makepkg >/dev/null; then
-  echo "== arch package"
-  (cd packaging/arch && makepkg -f --noconfirm)
-fi
-
-echo "== appimage"
-ld=${LINUXDEPLOY:-$(command -v linuxdeploy-x86_64.AppImage || command -v linuxdeploy || true)}
-if [ -z "$ld" ] || [ ! -x "$ld" ]; then   # fetch the tool into build/ when it is not around
-  ld="$here/build/linuxdeploy-x86_64.AppImage"
-  [ -x "$ld" ] || curl -sL -o "$ld" https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage && chmod +x "$ld"
-fi
-if [ -x "$ld" ]; then
-  rm -rf build/AppDir
-  DESTDIR="$here/build/AppDir" cmake --install build --prefix /usr >/dev/null
-  (cd build && APPIMAGE_EXTRACT_AND_RUN=1 "$ld" --appdir AppDir --output appimage > appimage.log 2>&1 && mv -f REDLINE-x86_64.AppImage "redline-$ver-x86_64.AppImage") || { echo "   AppImage failed, see build/appimage.log"; }
-else
-  echo "   (skipped: linuxdeploy not found)"
-fi
+# The four Linux artefacts are built in a stock Arch container, not here. A binary
+# linked on this machine carries CachyOS's microarchitecture level in its ELF notes
+# and is refused by the loader on an ordinary CPU; makepkg would also bake in
+# -march=native. See packaging/linux/container-build.sh for the whole story.
+echo "== linux artefacts (container)"
+packaging/linux/container-build.sh
 
 if [ "${1:-}" != "--no-windows" ]; then
   echo "== windows zip"
@@ -59,4 +39,5 @@ if [ "${1:-}" != "--no-windows" ]; then
 fi
 
 echo "== done"
-ls -la build/redline-*-Linux.tar.gz build/redline_*.deb build/redline-*.AppImage packaging/arch/redline-*.pkg.tar.zst build-win/redline-*-win64.zip build-win/redline-*-setup.exe 2>/dev/null
+ls -la "build/redline-$ver-Linux.tar.gz" "build/redline_${ver}_amd64.deb" "build/redline-$ver-x86_64.AppImage" \
+  "packaging/arch/redline-$ver-1-x86_64.pkg.tar.zst" "build-win/redline-$ver-win64.zip" "build-win/redline-$ver-setup.exe" 2>/dev/null

@@ -493,8 +493,17 @@ and the hall always does, since a cyberdemon in a bare box is a shooting
 gallery. Rooms are dressed from six texture sets, a grey crypt, a marble tomb,
 iron works, something fleshier, the corridors and the boss hall, with the torch
 colour following the room and columns, candles, stalagmites and worse standing
-against the walls. The hall is sealed: find the skull key, hidden in the room furthest
-from it, and the door opens as you reach it.
+against the walls. The hall is sealed by a door with a pile of skulls on it, lit
+so it reads as a door from down the corridor: find the skull key, hidden in the
+room furthest from it, and the door opens as you reach it. Until it does the
+door is solid, so nothing in the hall can see you or shoot through it.
+
+The hall itself is sized for what is standing in it: a room for a baron, a yard
+for a cyberdemon, and something you can actually fight in for the spider
+mastermind, which is two and a half metres across. Bosses are not walls of
+health. What makes the hall dangerous is the court around the boss, several of
+the heaviest demons the level can field, rather than a health bar that takes
+three minutes to empty.
 
 The crypt is populated from the level and from the stack: more blocks on the
 board when the fight began means more demons in the rooms (one per fourteen
@@ -727,7 +736,8 @@ keeps fights to the arena, `REDLINE_LOG_DUNGEON=1` prints each crypt's layout
 (rooms, monsters, items) to the log as it opens, `REDLINE_UPDATE_DEMO=<ver>`
 shows the new-version sticker for that version, `REDLINE_SPLASH=1` keeps the
 title card in a scripted capture (which otherwise starts past it) and
-`REDLINE_FAREWELL=1` keeps the page shown on the way out.
+`REDLINE_FAREWELL=1` keeps the page shown on the way out, and
+`REDLINE_LOG_BOT=1` prints what the test bot is doing frame by frame.
 
 ## Layout
 

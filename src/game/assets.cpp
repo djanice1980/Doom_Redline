@@ -384,6 +384,7 @@ void Assets::loadProcedural(audio::Audio& audio) {
     atlas_.add("block", proc::blockTexture(32));
     atlas_.add("block_red", proc::redBlockTexture(32));
     atlas_.add("wall", proc::wallTexture(64));
+    atlas_.add(cryptDoor, proc::redBlockTexture(64));   // no WAD: a red slab is still not the wall
     atlas_.add("floor", proc::floorTexture(64));
     atlas_.add("ceiling", proc::wallTexture(64));
     atlas_.add("crosshair", proc::crosshair(15));
@@ -554,6 +555,8 @@ bool Assets::loadFromWad(const fs::path& path, audio::Audio& audio) {
         atlas_.add(key, fallback);
     };
     addTexture("wall", {"STARTAN3", "STARG3", "BROWN1", "STONE2"}, proc::wallTexture(64), wallLump);
+    // Anything here reads as a door at a glance; the first few are the hell doors.
+    addTexture(cryptDoor, {"BIGDOOR7", "BIGDOOR4", "BIGDOOR2", "BIGDOOR1", "DOOR3", "DOOR1", "SPCDOOR1"}, proc::wallTexture(64), cryptDoorLump);
     addFlat("floor", {"FLOOR4_8", "FLAT5_4", "FLOOR0_1"}, proc::floorTexture(64), floorLump);
     addFlat("ceiling", {"CEIL3_5", "FLAT20", "CEIL5_1"}, proc::wallTexture(64), ceilingLump);
 

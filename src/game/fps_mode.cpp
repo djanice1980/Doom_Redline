@@ -68,6 +68,19 @@ const WeaponDef kWeapons[kWeaponCount] = {
     {"PLASMA RIFLE",   0.085f, 20.f, true,  kProjPlasma,  32.f,  0.f,  40,  200, 0.012f},
 };
 
+// How far a hitscan monster will shoot. Doom's zombies had unlimited range because
+// Doom's rooms were small; a crypt corridor is forty metres long, and being shot by
+// something too far away to see is not a fight, it is weather. The two bosses keep
+// their reach: you can always see them.
+float hitscanRange(int kind) {
+    switch (kind) {
+    case 0: return 16.f;    // zombieman
+    case 7: return 24.f;    // chaingunner
+    case 6: return 45.f;    // spider mastermind
+    default: return 30.f;
+    }
+}
+
 int tierForRegion(int size) {
     if (size <= 1) return 0;
     if (size <= 3) return 1;
@@ -204,6 +217,7 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
     shield_ = std::min(200.f, prizes.shield);
     damageFlash_ = 0.f;
     damageTaken_ = 0.f;
+    arenaDamage_ = -1.f;
     pickupFlash_ = 0.f;
     gunT_ = 10.f;
     level_ = level;
@@ -305,9 +319,12 @@ bool FpsMode::solidAt(glm::vec3 p, const core::Game& game) const {
     if (stage_ == Stage::Dungeon) {
         // Behind the back wall the dungeon's tiles rule: rock is solid to the ceiling, floor is open.
         if (p.z <= Dungeon::kZTop) {
-            // Shut until the key turns up; with the key in hand it is already yielding,
-            // so the player (and the test bot) can walk at it rather than path around.
-            if (!doorOpen_ && !hasKey_ && dungeon_.doorAt(p.x, p.z)) return true;
+            // Shut is shut. It used to stop being solid the moment the key was picked
+            // up, which let the hall's monsters see and shoot straight through a door
+            // that still looked like a wall: the player took fire from something they
+            // could not see or answer. Walking at it still opens it, from two metres
+            // away, so nothing has to be pathed around.
+            if (!doorOpen_ && dungeon_.doorAt(p.x, p.z)) return true;
             return !dungeon_.floorAt(p.x, p.z) && !dungeon_.doorAt(p.x, p.z) && p.y <= std::max(Dungeon::kWallHeight, dungeon_.ceilingAt(p.x, p.z));
         }
         // The gate: the wall's footprint and the board's end rail in front of it are open.
@@ -982,7 +999,8 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 e.senseT = 0.15f + 0.15f * u(rng_);
                 const glm::vec3 to = playerPos_ - e.pos;
                 const float d = std::sqrt(to.x * to.x + to.z * to.z);
-                const bool sees = d < 45.f && lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game);
+                const float wakeAt = enemyStats(e.kind).attack == AttackKind::Hitscan ? hitscanRange(e.kind) + 4.f : 45.f;
+                const bool sees = d < wakeAt && lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game);
                 if (d > 3.5f && !sees) continue;
                 e.dormant = false;
                 e.attackTimer = 0.5f + 0.9f * u(rng_);
@@ -1101,8 +1119,11 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 push(FpsEvent::Type::EnemyAttack, e.pos + glm::vec3(0.f, 1.f, 0.f), e.tier, 0, e.kind);
                 switch (st.attack) {
                 case AttackKind::Hitscan: {
+                    const float range = hitscanRange(e.kind);
+                    const glm::vec3 muzzle = e.pos + glm::vec3(0.f, 1.2f, 0.f);
+                    if (glm::length(playerCentre - muzzle) > range) break;   // too far to bother: it closes in instead
                     e.flashT = 1.f;
-                    if (lineOfSight(e.pos + glm::vec3(0.f, 1.2f, 0.f), playerCentre, game) && u(rng_) < 0.65f) hurtPlayer(st.damage, e.pos, e.kind);
+                    if (lineOfSight(muzzle, playerCentre, game) && u(rng_) < 0.65f) hurtPlayer(st.damage, e.pos, e.kind);
                     break;
                 }
                 case AttackKind::Projectile: {
@@ -1267,6 +1288,7 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                 if (finishDelay_ >= 1.2f) {
                     if (dungeonEnabled_) {
                         // The arena is clear: the back wall comes down and the crypt behind it opens.
+                        arenaDamage_ = damageTaken_;   // the trophy is for this half of the fight
                         stage_ = Stage::GateFalling;
                         stageT_ = 0.f;
                         finishDelay_ = 0.f;
@@ -1445,13 +1467,23 @@ void FpsMode::populateDungeon() {
         const float roll = std::pow(u(rng_), 1.7f);   // most are small fry
         make(std::min(capTier, static_cast<int>(roll * static_cast<float>(capTier + 1))), p, 1.f, false);
     }
-    // The boss: a baron early on, then a cyberdemon, then the mastermind; its health
-    // grows with the level and with the stack it came from.
+    // The boss: a baron early on, then a cyberdemon, then the mastermind. Its health
+    // still grows with the level and the stack it came from, but far less steeply than
+    // it used to: a boss that takes three minutes of sustained fire is a chore, not a
+    // fight. What it gets instead is a court. The hall is held by several of the worst
+    // the level can field, so the danger is the room rather than the health bar.
     const int bossTier = L <= 2 ? 4 : L <= 5 ? 5 : 6;
-    const float bossHp = 1.0f + static_cast<float>(boardBlocks_) / 80.f + 0.1f * static_cast<float>(L);
+    const float bossHp = std::min(2.6f, 0.6f + static_cast<float>(boardBlocks_) / 200.f + 0.05f * static_cast<float>(L));
     const DungeonRoom& hall = dungeon_.bossRoom();
     make(bossTier, dungeon_.bossStand(), bossHp, true);
-    for (const glm::vec3& p : dungeon_.bossGuardSpots(rng_, 2 + L / 3)) make(std::min(capTier, 1 + L / 3), p, 1.f, false);
+    const int guards = std::clamp(3 + (2 * L) / 3, 3, 10);
+    int g = 0;
+    for (const glm::vec3& p : dungeon_.bossGuardSpots(rng_, guards)) {
+        // Every third one is the heaviest the level can field, the rest a step below.
+        const int tier = (g % 3 == 0) ? capTier : std::max(1, capTier - 1 - (g % 2));
+        make(std::min(capTier, tier), p, 1.f, false);
+        ++g;
+    }
 
     // Simulate the whole roster. What the player can bring to it is what they carry
     // plus the items the crypt can hold plus the heal each kill gives. If the fight
@@ -1484,6 +1516,12 @@ void FpsMode::populateDungeon() {
     }
     if (kept0 != static_cast<int>(plan.size()) && std::getenv("REDLINE_LOG_DUNGEON"))
         std::fprintf(stderr, "[dungeon] roster trimmed from %d to %zu: the fight did not fit what the player could carry\n", kept0, plan.size());
+    if (std::getenv("REDLINE_LOG_DUNGEON")) {
+        int heavies = 0;
+        for (const Planned& pl : plan) if (!pl.boss && pl.tier >= 3) ++heavies;
+        std::fprintf(stderr, "[dungeon] boss %s %.0f hp in a %dx%d hall, %d heavies left standing of %zu\n",
+                     enemyStats(bossTier).name, enemyStats(bossTier).hp * hpScale * bossHp, hall.w, hall.d, heavies, plan.size());
+    }
     for (const Planned& pl : plan) spawn(pl);
 
     // What the crypt leaves lying about comes from the same simulation: whatever the

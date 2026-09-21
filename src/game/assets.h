@@ -122,6 +122,9 @@ public:
     // whatever art is available, shown at startup and melted away. The blue copy is
     // the same page shaded down, used behind the CONTROLS and the farewell pages.
     std::string titleCard, titleCardBlue;
+    // The sealed way into the boss hall wears a real Doom door, so it reads as a door
+    // rather than as another stretch of wall.
+    std::string cryptDoor = "crypt_door", cryptDoorLump;
 
     // Music: raw MUS lumps by name (D_E1M1 ...) and the GENMIDI OPL bank.
     std::map<std::string, std::vector<uint8_t>> music;

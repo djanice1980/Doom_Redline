@@ -176,6 +176,8 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (doomArtOff_ && assets_.usingWad()) setDoomArt(false);   // the profile prefers the placeholder look
     // The title card, up before anything else. Scripted captures start past it
     // unless they ask for it, so every other screenshot still lands on its frame.
+    logGamepadEnvironment();
+    refreshGamepad();   // SDL posts ADDED for what is already there, but say so plainly
     splashActive_ = !assets_.titleCard.empty() && opts_.scenario == "title"
                     && (opts_.frames == 0 || std::getenv("REDLINE_SPLASH"));
 }
@@ -534,7 +536,10 @@ void App::enterMode(Mode m) {
         flyTo_ = blocksCamera();
         ++redLinesSurvived_;
         trophy("red_line");
-        if (fps_.damageTaken() <= 0.f) trophy("untouchable");
+        {
+            const float untouched = fps_.damageTakenInArena() >= 0.f ? fps_.damageTakenInArena() : fps_.damageTaken();
+            if (untouched <= 0.f) trophy("untouchable");
+        }
         if (redLinesSurvived_ >= 5) trophy("survivor");
         break;
     case Mode::Blocks:
@@ -1188,6 +1193,54 @@ void App::startCelebration() {
 }
 
 // --- gamepad -----------------------------------------------------------------
+void App::closeGamepad() {
+    if (!pad_) return;
+    SDL_CloseGamepad(pad_);
+    pad_ = nullptr;
+    padHeld_ = {};
+    fpsIn_.padFire = fpsIn_.padRun = false;
+    fpsIn_.padMoveX = fpsIn_.padMoveZ = 0.f;
+    std::fprintf(stderr, "[pad] disconnected\n");
+}
+
+// Steam Input does not hand the game the controller you plugged in: it takes that
+// device away and presents a virtual pad in its place, a moment after the game has
+// started. The two events can arrive in either order, so holding on to the first
+// pad we ever saw loses the controller for the rest of the session. Look at what is
+// actually attached instead, on every add and every remove.
+void App::refreshGamepad(uint32_t prefer) {
+    if (pad_ && !SDL_GamepadConnected(pad_)) closeGamepad();
+    if (pad_) return;
+    if (prefer) openGamepad(prefer);
+    if (pad_) return;
+    int n = 0;
+    if (SDL_JoystickID* ids = SDL_GetGamepads(&n)) {
+        for (int i = 0; i < n && !pad_; ++i) openGamepad(ids[i]);
+        SDL_free(ids);
+    }
+    if (!pad_ && n > 0) std::fprintf(stderr, "[pad] %d gamepad(s) visible but none would open: %s\n", n, SDL_GetError());
+}
+
+// One line that says why there is or is not a controller, because the awkward case
+// is Steam: it hides the device you plugged in and presents one of its own, and
+// which of those SDL is willing to show depends on variables Steam sets for us.
+void App::logGamepadEnvironment() const {
+    int n = 0;
+    std::string names;
+    if (SDL_JoystickID* ids = SDL_GetGamepads(&n)) {
+        for (int i = 0; i < n; ++i) {
+            const char* nm = SDL_GetGamepadNameForID(ids[i]);
+            names += std::string(i ? ", " : "") + (nm ? nm : "?");
+        }
+        SDL_free(ids);
+    }
+    const char* allow = std::getenv("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD");
+    const char* only = std::getenv("SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT");
+    const char* overlay = std::getenv("SteamAppId");
+    std::fprintf(stderr, "[pad] %d visible at startup%s%s; steam: appid=%s allow_virtual=%s only=%s\n",
+                 n, n ? ": " : "", names.c_str(), overlay ? overlay : "no", allow ? allow : "unset", only ? only : "unset");
+}
+
 void App::openGamepad(uint32_t which) {
     if (pad_) return;
     pad_ = SDL_OpenGamepad(which);
@@ -1961,10 +2014,11 @@ void App::handleEvents() {
             }
             break;
         case SDL_EVENT_GAMEPAD_ADDED:
-            openGamepad(e.gdevice.which);
+            refreshGamepad(e.gdevice.which);
             break;
         case SDL_EVENT_GAMEPAD_REMOVED:
-            if (pad_ && SDL_GetGamepadID(pad_) == e.gdevice.which) { SDL_CloseGamepad(pad_); pad_ = nullptr; padHeld_ = {}; fpsIn_.padFire = fpsIn_.padRun = false; fpsIn_.padMoveX = fpsIn_.padMoveZ = 0.f; std::fprintf(stderr, "[pad] disconnected\n"); }
+            if (pad_ && SDL_GetGamepadID(pad_) == e.gdevice.which) closeGamepad();
+            refreshGamepad();   // Steam's swap: the replacement may already be here
             break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
             padButton(e.gbutton.button, true);
@@ -2692,9 +2746,20 @@ void App::update(float dt) {
             // for the rest of the fight.
             glm::vec3 errand(0.f);
             bool onErrand = false;
-            if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.hasKey())
+            if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.hasKey()) {
                 for (const Pickup& p : fps_.pickups())
                     if (p.kind == PickupKind::Key) { errand = p.pos; onErrand = true; break; }
+            } else if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.doorOpen() && fps_.hasKey()) {
+                // The door is solid until it opens, so anything in the hall cannot be
+                // pathed to: walk at the door and it yields.
+                const Dungeon& d = fps_.dungeon();
+                float best = 1e9f;
+                for (const auto& [ti, tj] : d.doorTiles()) {
+                    const glm::vec3 c = d.tileCentre(ti, tj);
+                    const float dist = glm::length(c - fps_.playerPos());
+                    if (dist < best) { best = dist; errand = c; onErrand = true; }
+                }
+            }
             if (onErrand && (!target || glm::length(target->pos - fps_.eye()) > 6.f)) {
                 botNavT_ -= dt;
                 if (botNavT_ <= 0.f) { botNavT_ = 0.2f; botHaveWaypoint_ = fps_.navNext(fps_.playerPos(), errand, botWaypoint_, *game_); }
@@ -2726,10 +2791,19 @@ void App::update(float dt) {
                 // path towards it instead, facing the way we go.
                 botNavT_ -= dt;
                 if (!clear && botNavT_ <= 0.f) { botNavT_ = 0.2f; botHaveWaypoint_ = fps_.navNext(fps_.playerPos(), target->pos, botWaypoint_, *game_); }
-                if (!clear && botHaveWaypoint_) {
-                    glm::vec3 w = botWaypoint_ - fps_.playerPos();
-                    w.y = 0.f;
-                    if (glm::length(w) > 1e-3f) { wantYaw = std::atan2(w.x, w.z); wantPitch = 0.f; }
+                if (!clear) {
+                    // Nothing to shoot at: face the way the feet are going and keep the
+                    // head level. Staring at the ceiling while walking into a wall is
+                    // what the bot used to do in the crypt, and it is no way to test.
+                    wantPitch = 0.f;
+                    if (botHaveWaypoint_) {
+                        glm::vec3 w = botWaypoint_ - fps_.playerPos();
+                        w.y = 0.f;
+                        if (glm::length(w) > 1e-3f) wantYaw = std::atan2(w.x, w.z);
+                    }
+                } else {
+                    // A clear shot: aim, but not further off level than a shot needs.
+                    wantPitch = std::clamp(wantPitch, -0.45f, 0.45f);
                 }
                 float dyaw = std::remainder(wantYaw - fps_.yaw(), 2.f * kPi);
                 in.lookDX = -dyaw / 0.0022f;
@@ -2742,10 +2816,10 @@ void App::update(float dt) {
                 if (usable(kPlasmaRifle)) want = kPlasmaRifle;
                 if (usable(kRocketLauncher) && len > 4.5f) want = kRocketLauncher;
                 if (want != fps_.currentWeapon()) in.selectWeapon = want;
-                if (std::getenv("REDLINE_LOG_BOT") && frameCount_ % 120 == 0)
-                    std::fprintf(stderr, "[bot] target %s at %.1fm clear=%d waypoint=%d stuck=%.1f key=%d door=%d\n",
+                if (std::getenv("REDLINE_LOG_BOT") && frameCount_ % 30 == 0)
+                    std::fprintf(stderr, "[bot] f%lld target %s at %.1fm clear=%d waypoint=%d stuck=%.1f key=%d door=%d pitch=%+.2f\n", static_cast<long long>(frameCount_),
                                  assets_.enemies[std::clamp(target->kind, 0, kEnemyKinds - 1)].name.c_str(), len, clear ? 1 : 0,
-                                 botHaveWaypoint_ ? 1 : 0, botStuckT_, fps_.hasKey() ? 1 : 0, fps_.doorOpen() ? 1 : 0);
+                                 botHaveWaypoint_ ? 1 : 0, botStuckT_, fps_.hasKey() ? 1 : 0, fps_.doorOpen() ? 1 : 0, fps_.pitch());
                 if (clear) {
                     botBlockedT_ = 0.f;
                     in.moveZ = len > 7.f ? 1.f : 0.f;
@@ -2902,12 +2976,12 @@ void App::buildEnvironment() {
         for (int t = 0; t < Assets::kCryptThemes; ++t) if (tex == assets_.cryptFloor[t]) return true;
         return false;
     };
-    auto push = [&](glm::vec3 pos, const std::string& tex, glm::vec4 color) {
+    auto push = [&](glm::vec3 pos, const std::string& tex, glm::vec4 color, glm::vec3 emissive = glm::vec3(0.f), float emissiveStrength = 0.f) {
         const render::AtlasRegion& r = assets_.region(tex);
         render::CubeInstance c;
         c.posScale = glm::vec4(pos, 1.f);
         c.color = color;
-        c.emissive = glm::vec4(0.f);
+        c.emissive = glm::vec4(emissive, emissiveStrength);
         c.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
         const bool floor = isFloorTex(tex);
         // The floor is the glossy, reflective surface (flag bit 2): polished enough for the
@@ -2961,11 +3035,15 @@ void App::buildEnvironment() {
                     for (int y = 0; y < h; ++y) push({c.x, y + 0.5f, c.z}, assets_.cryptWall[t], wallTint);
                 }
             }
-        // The way into the boss hall: a slab of rock across the corridor while it is shut.
+        // The way into the boss hall: a door, and it has to look like one. It used to be
+        // the wall texture with a red tint, which in a dark corridor reads as wall, so
+        // players walked into it wondering what was shooting at them.
         if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.doorOpen())
             for (const auto& [ti, tj] : d.doorTiles()) {
                 const glm::vec3 c = d.tileCentre(ti, tj);
-                for (int y = 0; y < d.ceilingAt(ti, tj); ++y) push({c.x, y + 0.5f, c.z}, assets_.wall, glm::vec4(0.75f, 0.22f, 0.18f, 1.f));
+                const int h = d.ceilingAt(ti, tj);
+                for (int y = 0; y < h; ++y)
+                    push({c.x, y + 0.5f, c.z}, assets_.cryptDoor, glm::vec4(1.f, 0.85f, 0.8f, 1.f), glm::vec3(0.5f, 0.12f, 0.08f), 0.35f);
             }
         // The wall's footprint gets a floor: the passage runs across the rail and through it.
         for (float x = -Dungeon::kGateHalf + 0.5f; x < Dungeon::kGateHalf; x += 1.f) push({x, -0.5f, -2.5f}, assets_.floor, floorTint);
@@ -2975,6 +3053,7 @@ void App::buildEnvironment() {
         static const std::string none;
         if (key == assets_.floor) return assets_.floorLump;
         if (key == assets_.wall) return assets_.wallLump;
+        if (key == assets_.cryptDoor) return assets_.cryptDoorLump;
         for (int t = 0; t < Assets::kCryptThemes; ++t) {
             if (key == assets_.cryptWall[t]) return assets_.cryptWallLump[t];
             if (key == assets_.cryptFloor[t]) return assets_.cryptFloorLump[t];
@@ -3072,6 +3151,24 @@ void App::addDecor() {
     }
 }
 
+// The sealed door into the boss hall, marked so it cannot be mistaken for wall: a
+// skull on the face nearest the player, at head height and glowing.
+void App::addDoorMark() {
+    if (assets_.skull.empty() || fps_.stage() != FpsMode::Stage::Dungeon || fps_.doorOpen()) return;
+    const Dungeon& d = fps_.dungeon();
+    const glm::vec3 eye = fpsCamera().eye;
+    for (const auto& [ti, tj] : d.doorTiles()) {
+        const glm::vec3 c = d.tileCentre(ti, tj);
+        const glm::vec3 to = eye - c;
+        if (std::sqrt(to.x * to.x + to.z * to.z) > 14.f) continue;
+        // Out of the face the player is on, by a hair, so it is not inside the slab.
+        const glm::vec3 out = std::fabs(to.x) > std::fabs(to.z) ? glm::vec3(to.x > 0.f ? 0.54f : -0.54f, 0.f, 0.f)
+                                                                : glm::vec3(0.f, 0.f, to.z > 0.f ? 0.54f : -0.54f);
+        const float f = 0.75f + 0.25f * std::sin(time_ * 2.6f);
+        billboard(assets_.skull, c + out + glm::vec3(0.f, 1.25f, 0.f), 0.024f, glm::vec4(1.6f * f, 0.5f * f, 0.35f * f, 1.f), false, false);
+    }
+}
+
 // The brawlers beside the board, drawn like enemies.
 void App::addAmbient() {
     for (const Brawler& b : ambient_.brawlers()) {
@@ -3151,9 +3248,16 @@ void App::addHealthBars(float W, float H, float s, float lh) {
         panel(lx, y + lh * 0.75f, bw, bh, glm::vec4(0.f, 0.f, 0.f, 0.7f));
         panel(lx, y + lh * 0.75f, bw * frac, bh, col);
         y += lh * 1.35f;
-        // Floating bar over the head.
+        // Floating bar over the head, only when the head can actually be seen. It used
+        // to hang there through walls and doors, which told the player something was
+        // visible when it was not.
+        const glm::vec3 head = e.pos + glm::vec3(0.f, e.height + 0.35f, 0.f);
+        const glm::vec3 eye = fps_.eye();
+        const glm::vec3 toHead = head - eye;
+        const float headLen = glm::length(toHead);
+        const bool visible = headLen < 0.01f || fps_.rayBlockDistance(eye, toHead / headLen, headLen, *game_) >= headLen - 0.05f;
         float sx, sy;
-        if (projectToScreen(e.pos + glm::vec3(0.f, e.height + 0.35f, 0.f), sx, sy)) {
+        if (visible && projectToScreen(head, sx, sy)) {
             float fw = 90.f * s * 0.5f, fh = 5.f * s * 0.5f;
             panel(sx - fw * 0.5f - 1.f, sy - 1.f, fw + 2.f, fh + 2.f, glm::vec4(0.f, 0.f, 0.f, 0.75f));
             panel(sx - fw * 0.5f, sy, fw * frac, fh, col);
@@ -3450,6 +3554,12 @@ void App::addLights() {
                 float pulse = 0.8f + 0.2f * std::sin(time_ * 6.f + c * 0.7f + r);
                 cands.push_back({glm::length(p - cam), {p, 3.5f, {1.f, 0.15f, 0.05f}, 1.2f * pulse}});
             }
+    if (fps_.stage() == FpsMode::Stage::Dungeon && !fps_.doorOpen())
+        for (const auto& [ti, tj] : fps_.dungeon().doorTiles()) {
+            const glm::vec3 c = fps_.dungeon().tileCentre(ti, tj) + glm::vec3(0.f, 1.4f, 0.f);
+            const float pulse = 0.8f + 0.2f * std::sin(time_ * 2.6f);
+            cands.push_back({glm::length(c - cam) - 6.f, {c, 6.f, {1.f, 0.3f, 0.18f}, 1.6f * pulse}});
+        }
     for (const BrawlProjectile& p : ambient_.projectiles())
         cands.push_back({glm::length(p.pos - cam) - 4.f, {p.pos, 5.f, {1.f, 0.5f, 0.1f}, 2.2f}});   // the brawlers' fireballs light their corner too
     for (const Brawler& b : ambient_.brawlers())
@@ -4773,6 +4883,7 @@ void App::buildScene() {
 
     addBoard();
     addDecor();
+    addDoorMark();
     if (!ambient_.empty() && (mode_ == Mode::Title || mode_ == Mode::Blocks || mode_ == Mode::Alert || (mode_ == Mode::Paused && pausedFrom_ == Mode::Blocks) || (mode_ == Mode::GameOver && !diedInFps_))) {
         addAmbient();
         if (brutalActive()) { size_t i = 0; for (const Decal& d : brawlDecals_) drawDecal(d, i++); }
