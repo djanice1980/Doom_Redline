@@ -603,7 +603,12 @@ it server-side. `stats_test` covers the round trip across two machines.
   fire from a wall. It is drawn with a real Doom door texture
   (`Assets::cryptDoor`, BIGDOOR7 and friends), a dim emissive, a point light and
   a glowing skull billboard on whichever face the player is on (`addDoorMark`).
-  Walking within two metres of a door tile with the key opens it.
+  Walking within two metres of a door tile with the key opens it. The door is one
+  quad the width of the gap and the height of the ceiling, drawn flat on the face
+  the player is on (`addDoorMark`), because a cube carries a whole texture on each
+  face and painting the door on the slab gave a grid of little doors with the
+  marker floating in front of each one. `REDLINE_AT_DOOR=1` opens the crypt with
+  the player in front of the door, key in hand.
 - `moveWithCollision` counts how many of the eight probes around a body are in
   something solid and allows a move that leaves the count no worse. The old
   "refuse any move whose probes touch anything" rule wedged wide bodies for

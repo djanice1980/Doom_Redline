@@ -738,7 +738,9 @@ shows the new-version sticker for that version, `REDLINE_SPLASH=1` keeps the
 title card in a scripted capture (which otherwise starts past it) and
 `REDLINE_FAREWELL=1` keeps the page shown on the way out, and
 `REDLINE_LOG_BOT=1` prints what the test bot is doing frame by frame, and
-`REDLINE_LOG_BOSS=1` prints where the big monsters are and how far they moved.
+`REDLINE_LOG_BOSS=1` prints where the big monsters are and how far they moved,
+and `REDLINE_AT_DOOR=1` starts the crypt standing in front of the sealed door
+with the key, which is otherwise a long walk to look at.
 
 ## Layout
 

@@ -4,6 +4,9 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.7.3 (2026-09-21)
+- The door into the boss hall is one door now, not a grid of little ones with skulls floating in front of it. Doom's own skull door is drawn across the whole opening.
+
 ## 0.7.2 (2026-09-21)
 - The big demons can move again. A cyberdemon or a spider mastermind standing near the edge of the board was wedged there for the rest of the fight: the collision test refused every move it tried, in every direction, because part of its body was already inside the frame.
 - A demon too wide to walk between blocks now shoves them out of the way, and the big ones clear a space around themselves as they rise.

@@ -1433,6 +1433,22 @@ void FpsMode::openDungeon(core::Game& game) {
     ex.duration = 0.7f;
     explosions_.push_back(ex);
     populateDungeon();
+    // REDLINE_AT_DOOR=1: stand three metres in front of the sealed door, facing it,
+    // with the key in hand. The door is the one piece of the crypt that is hard to
+    // photograph by playing towards it, and it is worth being able to look at.
+    if (std::getenv("REDLINE_AT_DOOR") && !dungeon_.doorTiles().empty()) {
+        const auto& [ti, tj] = dungeon_.doorTiles().front();
+        const glm::vec3 c = dungeon_.tileCentre(ti, tj);
+        const bool openZ = dungeon_.floorAt(c.x, c.z + 1.f) || dungeon_.floorAt(c.x, c.z - 1.f);
+        const float sign = openZ ? (dungeon_.floorAt(c.x, c.z + 1.f) ? 1.f : -1.f)
+                                 : (dungeon_.floorAt(c.x + 1.f, c.z) ? 1.f : -1.f);
+        playerPos_ = openZ ? glm::vec3(c.x, 0.f, c.z + sign * 2.6f) : glm::vec3(c.x + sign * 2.6f, 0.f, c.z);
+        yaw_ = std::atan2(c.x - playerPos_.x, c.z - playerPos_.z);
+        pitch_ = 0.f;
+        hasKey_ = true;
+        std::fprintf(stderr, "[door] standing at %.1f,%.1f looking at the door at %.1f,%.1f\n",
+                     playerPos_.x, playerPos_.z, c.x, c.z);
+    }
     push(FpsEvent::Type::DungeonOpen, glm::vec3(0.f, 1.f, Dungeon::kZTop));
     if (std::getenv("REDLINE_LOG_DUNGEON")) {   // the layout, top down (the gate at the top, x to the right)
         for (int j = 0; j < dungeon_.depth(); ++j) {

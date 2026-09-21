@@ -3043,7 +3043,7 @@ void App::buildEnvironment() {
                 const glm::vec3 c = d.tileCentre(ti, tj);
                 const int h = d.ceilingAt(ti, tj);
                 for (int y = 0; y < h; ++y)
-                    push({c.x, y + 0.5f, c.z}, assets_.cryptDoor, glm::vec4(1.f, 0.85f, 0.8f, 1.f), glm::vec3(0.5f, 0.12f, 0.08f), 0.35f);
+                    push({c.x, y + 0.5f, c.z}, assets_.wall, glm::vec4(0.25f, 0.2f, 0.2f, 1.f));   // the door itself is drawn over this
             }
         // The wall's footprint gets a floor: the passage runs across the rail and through it.
         for (float x = -Dungeon::kGateHalf + 0.5f; x < Dungeon::kGateHalf; x += 1.f) push({x, -0.5f, -2.5f}, assets_.floor, floorTint);
@@ -3151,22 +3151,46 @@ void App::addDecor() {
     }
 }
 
-// The sealed door into the boss hall, marked so it cannot be mistaken for wall: a
-// skull on the face nearest the player, at head height and glowing.
+// The sealed door into the boss hall. The slab behind this is a row of cubes, and
+// a cube carries a whole texture on each face, so painting the door on them gave a
+// grid of little doors. This lays one door across the opening instead: a single
+// quad the width of the gap and the height of the ceiling, flat on the face the
+// player is standing on.
 void App::addDoorMark() {
-    if (assets_.skull.empty() || fps_.stage() != FpsMode::Stage::Dungeon || fps_.doorOpen()) return;
+    if (fps_.stage() != FpsMode::Stage::Dungeon || fps_.doorOpen()) return;
     const Dungeon& d = fps_.dungeon();
-    const glm::vec3 eye = fpsCamera().eye;
-    for (const auto& [ti, tj] : d.doorTiles()) {
+    const auto& tiles = d.doorTiles();
+    if (tiles.empty()) return;
+    float minX = 1e9f, maxX = -1e9f, minZ = 1e9f, maxZ = -1e9f;
+    int high = 0;
+    for (const auto& [ti, tj] : tiles) {
         const glm::vec3 c = d.tileCentre(ti, tj);
-        const glm::vec3 to = eye - c;
-        if (std::sqrt(to.x * to.x + to.z * to.z) > 14.f) continue;
-        // Out of the face the player is on, by a hair, so it is not inside the slab.
-        const glm::vec3 out = std::fabs(to.x) > std::fabs(to.z) ? glm::vec3(to.x > 0.f ? 0.54f : -0.54f, 0.f, 0.f)
-                                                                : glm::vec3(0.f, 0.f, to.z > 0.f ? 0.54f : -0.54f);
-        const float f = 0.75f + 0.25f * std::sin(time_ * 2.6f);
-        billboard(assets_.skull, c + out + glm::vec3(0.f, 1.25f, 0.f), 0.024f, glm::vec4(1.6f * f, 0.5f * f, 0.35f * f, 1.f), false, false);
+        minX = std::min(minX, c.x - 0.5f); maxX = std::max(maxX, c.x + 0.5f);
+        minZ = std::min(minZ, c.z - 0.5f); maxZ = std::max(maxZ, c.z + 0.5f);
+        high = std::max(high, d.ceilingAt(ti, tj));
     }
+    const glm::vec3 eye = fpsCamera().eye;
+    const glm::vec3 centre((minX + maxX) * 0.5f, static_cast<float>(high) * 0.5f, (minZ + maxZ) * 0.5f);
+    const glm::vec3 to = eye - centre;
+    if (std::sqrt(to.x * to.x + to.z * to.z) > 22.f) return;
+    const bool alongX = (maxX - minX) >= (maxZ - minZ);   // the gap runs east-west
+    const glm::vec3 normal = alongX ? glm::vec3(0.f, 0.f, to.z > 0.f ? 1.f : -1.f)
+                                    : glm::vec3(to.x > 0.f ? 1.f : -1.f, 0.f, 0.f);
+    const float width = alongX ? (maxX - minX) : (maxZ - minZ);
+    const render::AtlasRegion& r = assets_.region(assets_.cryptDoor);
+    render::QuadInstance q;
+    q.pos = glm::vec4(centre + normal * 0.505f, 0.f);
+    q.size = glm::vec4(width, static_cast<float>(high), normal.x, normal.z);
+    q.uvRect = glm::vec4(r.u0, r.v0, r.u1, r.v1);
+    const float f = 0.85f + 0.15f * std::sin(time_ * 2.2f);   // breathes with the light on it
+    q.color = glm::vec4(1.1f * f, 0.95f * f, 0.9f * f, 1.f);
+    q.params = glm::vec4(3.f, 1.f, 0.f, 0.f);   // wall-aligned, lit
+    worldQuads_.push_back(q);
+    // Doom's own door has a skull pile painted on it. A WAD without one gets a skull
+    // laid on the middle of the door so the page still says "locked".
+    if (assets_.cryptDoorLump.empty() && !assets_.skull.empty())
+        decal(assets_.skull, centre + normal * 0.52f + glm::vec3(0.f, 0.2f, 0.f), normal, width * 0.35f, 0.f,
+              glm::vec4(1.5f * f, 0.45f * f, 0.3f * f, 1.f));
 }
 
 // The brawlers beside the board, drawn like enemies.
