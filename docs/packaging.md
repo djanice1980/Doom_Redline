@@ -53,7 +53,8 @@ for testing.
 
 `packaging/build-release.sh` (run on Linux) produces the tarball, the `.deb`,
 the Arch package, the AppImage, the Windows zip and the Windows installer. It
-needs Docker and nothing else: the four Linux artefacts are built by
+builds and tests on this machine first, then needs Docker: the four Linux
+artefacts are built by
 `packaging/linux/container-build.sh` in `archlinux:base-devel`, and the Windows
 ones in `fedora:42` with mingw-w64 plus the `amake/innosetup` image, which runs
 Inno Setup's compiler under Wine. `--no-windows` skips the Windows half.
@@ -71,7 +72,7 @@ this before it starts and prints `x86 ISA needed` for the finished binaries at
 the end; both must say `x86-64-baseline` and nothing else.
 
 The `.deb` is written by CPack with an explicit dependency list
-(`libsdl3-0, libvorbisfile3, libvulkan1, libcurl4`) because `dpkg` is not on an
+(`libsdl3-0, libvorbisfile3, libvulkan1, libcurl4t64 | libcurl4`) because `dpkg` is not on an
 Arch machine; the AppImage is an installed tree (`cmake --install --prefix /usr`
 into `build/AppDir`) with the shared libraries bundled by linuxdeploy, and the
 game finds its data folders through `bin/../share/redline` inside it.
@@ -109,7 +110,9 @@ Linux tools are involved. Total download is a few GB.
 6. **Inno Setup 6**: https://jrsoftware.org/isdl.php. Install it, open
    `packaging\windows\redline.iss` and press *Compile* (or run
    `"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging\windows\redline.iss`).
-   The result is `build-win\redline-0.3.0-setup.exe`.
+   The result is `build-win\redline-<version>-setup.exe`. The version in
+   `redline.iss` is a hard-coded `AppVersion` and has to be bumped with the one
+   in `CMakeLists.txt`.
 
 What the installer does: copies the staged files to `C:\Program Files\REDLINE`,
 adds Start-menu and optional desktop shortcuts, and shows a **Doom game data**
@@ -174,7 +177,7 @@ Packages, from the build folder:
 
 ```bash
 cd build
-cpack -G TGZ          # redline-0.3.0-Linux.tar.gz (bin/, share/ layout; unpack anywhere)
+cpack -G TGZ          # redline-<version>-Linux.tar.gz (bin/, share/ layout; unpack anywhere)
 cpack -G DEB          # on Debian/Ubuntu: dependencies are computed by dpkg-shlibdeps
 cpack -G RPM          # on Fedora, needs rpm-build
 ```
@@ -200,8 +203,8 @@ files, and the live asset swap. The native file dialog was opened from the
 setup screen without errors but a file was not picked through it
 automatically.
 
-Windows: the mingw cross-build (`cross-build.sh`) compiles cleanly, all six
-test executables pass under Wine, and `redline.exe` runs under Wine with
+Windows: the mingw cross-build (`cross-build.sh`) compiles cleanly, the test
+executables pass under Wine (`REDLINE_STAGE_TESTS=1` stages them), and `redline.exe` runs under Wine with
 Vulkan on the host GPU: it found the Steam WAD passed on the command line,
 indexed extras.wad, ran a level-3 fight and wrote a screenshot; without a
 WAD it showed the first-run chooser. Not yet verified: the same binary on a

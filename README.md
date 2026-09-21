@@ -126,7 +126,7 @@ from Linux in one command with Docker (`packaging/windows/cross-build.sh`).
 Everything needed is a pacman package:
 
 ```bash
-sudo pacman -S --needed cmake ninja gcc vulkan-headers vulkan-icd-loader shaderc sdl3 glm vulkan-radeon
+sudo pacman -S --needed cmake ninja gcc vulkan-headers vulkan-icd-loader shaderc sdl3 glm libvorbis curl vulkan-radeon
 ```
 
 Then, from this directory:
@@ -162,9 +162,10 @@ The game looks for an IWAD in this order and uses the first that exists:
 5. `./wads/*.wad` and `<exe folder>/wads/*.wad` (git-ignored; drop or symlink a WAD there)
 6. The Steam / GOG install of Ultimate Doom / Doom II on Linux or Windows
 
-REDLINE never touches the network: there is no update check, no telemetry
-and no online score submission in this build (the plan for an opt-in
-leaderboard is in `docs/online-and-releases.md`).
+REDLINE talks to one service and only about the game: the update check at
+launch, and, for players who have set an address and approved it, the score
+upload and the leaderboard. Turn the second half off with OPTIONS > ONLINE.
+What is stored and how is under [Online leaderboard](#online-leaderboard).
 
 To see the game without any of it, OPTIONS > DOOM ART switches to the
 procedural placeholder set on the spot (and back), remembered per player;
@@ -220,8 +221,8 @@ The 2024 rerelease ships two more soundtracks in `extras.wad` next to the
 IWAD, and the game streams them straight out of that file: **Modern** (Andrew
 Hulshult's 2023 recordings, `H_*`) and **SC-55** (the original score recorded
 on a Roland SC-55, `O_*`, covering most Doom II and a few Doom tracks).
-Cycle Classic / SC-55 / Modern with the N key or the MUSIC item on the title
-and pause menus; the choice is remembered in `settings.txt` next to the high
+Cycle Classic / SC-55 / Modern with the N key or the MUSIC SET row under
+OPTIONS; the choice is remembered in `settings.txt` next to the high
 scores. `--music classic|sc55|modern` sets it from the command line. If the
 file is not next to the IWAD, point at it with OPTIONS > SOUNDTRACK WAD (a
 file browser; the choice is saved), `--extras /path/extras.wad`,
@@ -472,7 +473,8 @@ green torches, candelabras, column lamps and barrels around the floor. While
 you stack blocks, a few monsters brawl on the floor either side of the board:
 they fight each other, respawn when killed, and vanish the moment a red line
 tips the board over. In the fight, the three toughest living demons get named
-health bars in the top-right corner and a bar over their heads.
+health bars in the top-right corner, and a bar over the head of any of them
+you can actually see.
 
 ## The dungeon
 
@@ -482,7 +484,8 @@ blocks in front of it), and behind it is a crypt: rooms joined by corridors on
 a tile grid, generated fresh for every fight the way Diablo 2 lays out its
 levels (rectangular rooms placed at random, each joined to the nearest room
 already reachable, a loop or two, a big hall at the far end). Level 1 is
-three rooms and the hall; by level 9 it is eight rooms on a 64 x 79 grid.
+three rooms and the hall; by level 9 it is seven rooms on a 68 x 81 grid, and
+eight from level 11.
 Rooms and corridors are four cubes high, the hall six, so a cyberdemon
 stands up straight in it.
 
@@ -655,8 +658,8 @@ F12 saves a numbered screenshot and Alt+Enter toggles fullscreen.
   cacodemons ~3.5 s, barons every ~2.5 s and three blocks at a time. Blocks are
   cover for a limited time only.
 - Leave a monster alive too long (about 20 s at level 1, one second less per
-  level, floor 8 s) and there is a 75 % chance it absorbs every normal block
-  within 2.5 cells and comes back one class bigger at full health, all the way
+  level, floor 8 s) and it absorbs every normal block within 2.5 cells and
+  comes back one class bigger at full health, all the way
   up to spider mastermind. It pulses red for the last four seconds and the HUD
   warns you (a top-tier monster never warns, because it cannot grow).
 - Wounded monsters sometimes (12 %, at most once per 2.5 s each) shed ammo
@@ -691,12 +694,12 @@ F12 saves a numbered screenshot and Alt+Enter toggles fullscreen.
 
 ```
 --wad <file>        --no-wad           --size WxH        --fullscreen
---igpu              --seed <n>         --scenario title|blocks|redline|fps|dungeon
+--igpu              --seed <n>         --scenario title|blocks|redline|fps|dungeon|corrupt|prize
 --screenshot <png>  --frames <n>       --bot              --mute
 --level <n>         --absorb <sec>     --god              --arsenal <n>
 --keys <chord>@<frame>[x<hold>]        --stack <rows>     --profile <name>
 --voxels-dir <dir>  --voxels           --sprites          --reload-wad <file>
---extras <file>     --rt 0|1|2         --record <file.rgba> --record-every <n>
+--extras <file>     --rt 0|1|2|3       --record <file.rgba> --record-every <n>
 ```
 
 A Windows test build can be cross-compiled from Linux with Docker:
@@ -751,10 +754,10 @@ src/render    Vulkan context, atlas packer, instanced renderer
 src/game      assets (WAD -> atlas/sounds), FPS simulation, ambient brawlers, KVX voxel meshing, app/modes/HUD
 src/audio     SDL3 stream mixer, MUS sequencer, GENMIDI, OPL3 emulator, FluidSynth backend
 shaders       GLSL, compiled by glslc at build time and embedded
-tests         tetris_test, wad_test, opl_test, music_test, kvx_test
+tests         tetris, wad, opl, music, stats, json, kvx, ktx2 and png tests (nine targets)
 tools         wadinfo, embed.cmake, musrender
-packaging     linux (desktop entry, icon), windows (Inno Setup script, icon), arch (PKGBUILD)
-docs          design.md (rules and scene layout), packaging.md (installers), online-and-releases.md (GitHub releases + leaderboard notes), remix.md (RTX Remix plan)
+packaging     build-release.sh (every artefact), linux (desktop entry, icon, container-build.sh), windows (cross-build.sh, Inno Setup script), arch (PKGBUILD)
+docs          design.md (rules and scene layout), packaging.md (installers), online-and-releases.md (the service and how releases are built), remix.md (RTX Remix plan), pretty.md (look and feel)
 ```
 
 ## RTX Remix

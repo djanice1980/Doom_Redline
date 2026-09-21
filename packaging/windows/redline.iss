@@ -12,7 +12,7 @@
 ; answer just makes the game ask on first launch instead.
 
 #define AppName "REDLINE"
-#define AppVersion "0.7.3"
+#define AppVersion "0.7.4"
 #define AppPublisher "David Janice"
 #define StageDir "..\..\build-win\install\bin"
 

@@ -7,10 +7,10 @@
 #   build-win/redline-<v>-win64.zip           Windows portable zip (Docker + mingw cross-build)
 #   build-win/redline-<v>-setup.exe           Windows installer (Inno Setup via Docker + Wine)
 #
-# Needs: a configured Release build in build/ (cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release),
-# makepkg (Arch), docker, and linuxdeploy-x86_64.AppImage (from
-# https://github.com/linuxdeploy/linuxdeploy/releases/tag/continuous) either on PATH or
-# pointed at by LINUXDEPLOY=/path/to/linuxdeploy-x86_64.AppImage. Pass --no-windows to skip Docker.
+# Needs: a configured build in build/ (cmake -S . -B build -G Ninja), which it builds
+# and tests here first, and docker for everything after that. makepkg, linuxdeploy and
+# the mingw toolchain all live inside the containers. Pass --no-windows to skip the
+# Windows half.
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 cd "$here"

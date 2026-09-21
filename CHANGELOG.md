@@ -4,6 +4,9 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.7.4 (2026-09-21)
+- Anything the keyboard could trigger while stacking can be triggered on a controller now.
+
 ## 0.7.3 (2026-09-21)
 - The door into the boss hall is one door now, not a grid of little ones with skulls floating in front of it. Doom's own skull door is drawn across the whole opening.
 

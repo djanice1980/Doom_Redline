@@ -62,12 +62,14 @@ and references them by path.
 
 ## What the native Vulkan backend can do meanwhile
 
-The Radeon 8060S and the RTX 5070 Ti both expose `VK_KHR_ray_query`
-(`VkContext::rayQuerySupported()`), so ray-traced shadows and reflections for
-the cube scene are a natural next step for the Linux build: one BLAS for the
-unit cube, a TLAS rebuilt per frame from the instance list, and a ray query in
-`cube.frag` for sun/emissive-block shadows. That keeps the look converging with
-the path-traced Windows target.
+*Done 2026-09-16.* The Radeon 8060S and the RTX 5070 Ti both expose
+`VK_KHR_ray_query` (`VkContext::rayQuerySupported()`), and the Linux build now
+uses it: one BLAS for the unit cube plus one per voxel mesh, a TLAS rebuilt per
+frame from the instance lists, and a ray query in `common.glsl`'s `shade()`,
+reached through `cube_rt.frag`, `mesh_rt.frag` and `quad_rt.vert`. OPTIONS >
+RAY TRACING picks between the shadow map, sun shadows, all lights, and all
+lights plus floor reflections. The look is converging with the path-traced
+Windows target.
 
 ## RTX-class features worth adding (assessed 2026-09-16)
 
@@ -76,9 +78,11 @@ can be an OPTIONS toggle that only appears on a ray-tracing GPU (RTX 20+,
 Radeon RX 6000+/RDNA3 iGPUs such as the 8060S, Intel Arc) with the current
 renderer as the fallback. In order of payoff per day of work:
 
-1. **Ray-traced shadows for every light** (2-3 days). Today only the sun casts
-   shadows, through a 2048^2 shadow map; the torches, lamps, muzzle flashes,
-   fireballs and glowing red blocks light things but cast nothing. One BLAS
+1. **Ray-traced shadows for every light** (2-3 days). *Done 2026-09-16: RAY
+   TRACING mode 2 shadows every point light that contributes more than 0.015 of
+   attenuation.* Before it, only the sun cast shadows, through a 2048^2 shadow
+   map; the torches, lamps, muzzle flashes, fireballs and glowing red blocks lit
+   things but cast nothing. One BLAS
    for the unit cube plus one per voxel-mesh frame, a TLAS rebuilt each frame
    from the instance lists (a few thousand instances, cheap), and a ray query
    per light in `common.glsl`'s `shade()`: hard shadows from torches on the
@@ -144,9 +148,10 @@ and 3 above:
 Licensing: the `rt/` assets carry no licence text. The `_remix_` maps look
 generated from id's textures with the RTX Remix Toolkit's AI PBR tool, which
 makes them derivatives of id Software art. So: **do not bundle them**. Treat
-them like extras.wad: an optional pack found on the player's disk
-(`REDLINE_MATERIALS=<gzdoom-rt folder>/rt/mat`, or the Steam-style folder
-search) and loaded when present. The fallback that keeps the feature
+them like extras.wad: an optional pack found on the player's disk and loaded
+when present. *(That is not what happened; see the decision below. The maps
+ship with the game and `REDLINE_NO_MATERIALS=1` turns them off.)* The fallback
+that keeps the feature
 available to everyone is to generate our own maps from the albedo at load
 time (height from luminance, normal from its gradient, roughness from
 inverse local contrast), which is a few dozen lines and has no licensing

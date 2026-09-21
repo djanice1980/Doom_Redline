@@ -192,7 +192,7 @@ instanced draw.
   0.75 s), chaingun (12 dmg hitscan, 0.1 s, 60 rounds per pickup, 200 max),
   rocket launcher (projectile 22 m/s, 110 dmg, 2.2 m splash that also clears
   normal blocks within a cell of the impact and hurts the player, 4 per
-  pickup), plasma rifle (bolts 28 m/s, 22 dmg, 0.12 s, 40 per pickup). Player
+  pickup), plasma rifle (bolts 32 m/s, 20 dmg, 0.085 s, 40 per pickup). Player
   projectiles test a point against each monster's cylinder every frame. Weapon
   slots persist across fights; an empty weapon falls back to the shotgun.
 - **Loot** (`dropLoot`): each death drops `1 + tier/2` items (+1 with 25 %):
@@ -217,12 +217,14 @@ instanced draw.
   columns 3-6 of the bottom seven rows (the passage), spawns the population
   and pushes `DungeonOpen`. The fight finishes 2.5 s after the boss dies.
 - `Dungeon::generate(seed, level)`: a tile grid (`Rock`/`Floor`/`Wall`, wall =
-  rock bordering floor in the 8-neighbourhood) of `min(64, 30 + 4L)` x
-  `min(80, 34 + 5L)` tiles. Tile (0, 0) is at x = -w/2, z = -3 and the grid
+  rock bordering floor in the 8-neighbourhood) of `min(68, 32 + 4L)` x
+  `min(84, 36 + 5L)` tiles. Tile (0, 0) is at x = -w/2, z = -3 and the grid
   runs towards -z. An entrance room behind the gate (centred on x = 0), the
-  boss's hall at the far end (15-21 tiles square), then `min(8, 2 + (L+1)/2)`
-  rooms of 5-11 tiles placed by rejection sampling with a tile of rock between
-  any two. Corridors: each unlinked room joins the nearest linked room by an
+  boss's hall at the far end, sized for what will be standing in it
+  (`16 + 5*bossTier + min(4, L/3)` by `15 + 4*bossTier + min(4, L/3)`, so
+  16x15 for a baron and about 25x23 for the mastermind), then
+  `min(8, 2 + (L+1)/2)` piece-shaped rooms placed by rejection sampling with a
+  tile of rock between any two. Corridors: each unlinked room joins the nearest linked room by an
   L (2 wide; 3 into the hall), the hall last, plus one or two random loops;
   the entrance corridor is 4 wide to match the gate. `ceilingAt` is 4 cubes
   over rooms and corridors, 6 in the hall; a wall tile is as tall as the
@@ -237,12 +239,16 @@ instanced draw.
   demons spread round-robin over the ordinary rooms (`spawnSpots`), tiers
   drawn as `min(cap, floor(u^1.7 * (cap+1)))` with `cap = min(4,
   maxTierForLevel)`; flyers become hell knights or demons. The boss (tier 4 at
-  L <= 2, 5 at L <= 5, else 6) stands in the hall's centre with `hp * (1 +
-  blocks/80 + 0.1 L)`, plus `2 + L/3` guards away from the middle. One item per
+  L <= 2, 5 at L <= 5, else 6) stands in the hall's centre with
+  `hp * min(2.6, 0.6 + blocks/200 + 0.05 L)`, which can be less than its own
+  base health, plus `clamp(3 + 2L/3, 3, 10)` guards away from the middle, every
+  third of them the heaviest class the level allows. The danger in the hall is
+  the court, not the health bar. One item per
   room (medikit, bullets, rockets, cells, stim in turn), a second medikit in
   every other room, one in the hall's corner.
 - Sleepers: dungeon monsters start `dormant`; every 0.15-0.3 s one checks
-  `lineOfSight` to the player within 45 m or a distance under 3.5 m, and any
+  `lineOfSight` to the player within `hitscanRange(kind) + 4` m for the
+  hitscan classes and 45 m for the rest, or a distance under 3.5 m, and any
   damage wakes it. Waking pushes `Wake` (its sight sound) and, for the boss,
   `BossSeen` (announcement + the HUD bar). Sleepers do not count towards the
   crowd factor that slows attacks. `boardBlocks_` (non-empty cells when the
@@ -514,9 +520,9 @@ action counts, sessions, first and last played) and `machines/<install_id>.txt`
 The install id lives in `<pref>/install.txt`. `App` feeds it every frame
 (`addTime` by mode) and on each key press, mouse button and pad button, saves
 every 30 s, on profile switch and at exit. The email is optional, validated
-only for shape, lower-cased, and its verified flag resets when it changes;
-the future account feature (docs/online-and-releases.md section 7) verifies
-it server-side. `stats_test` covers the round trip across two machines.
+only for shape, lower-cased, and its verified flag resets when it changes.
+The address is verified server-side by the approve link (`OnlineClient`
+registration and the poll that follows it). `stats_test` covers the round trip across two machines.
 
 ## Profiles, trophies, gamepad (`src/game/app.cpp`, `trophies.cpp`)
 
@@ -526,8 +532,9 @@ it server-side. `stats_test` covers the round trip across two machines.
   scripted scenarios default to a `PLAYER` profile.
 - Overlay screens (`screen_`): Options (music set, music and SFX volume
   (`Audio::setMasterGain`), music on, stick sensitivity, invert, rumble,
-  display, resolution, models, Doom WAD, soundtrack WAD, email, Doom art with
-  BRUTAL as a sub-row, ray tracing, anti-aliasing, bloom & haze; BACK is the
+  display, resolution, models, Doom WAD, soundtrack WAD, email, online,
+  dungeon, Doom art with BRUTAL as a sub-row, ray tracing, anti-aliasing,
+  bloom & haze; BACK is the
   last row, `n - 1`). The option rows are built as a list and only the slice
   that fits between the title and the pinned BACK is drawn (`optionsScroll_`;
   "N MORE ABOVE/BELOW" markers); keyboard and pad moves keep the selection in
@@ -561,7 +568,7 @@ it server-side. `stats_test` covers the round trip across two machines.
   (tetris, combo x3, chain), pickups (collector, arsenal), BFG, invulnerable,
   level-ups, blocks destroyed, a #1 high score (doom_slayer), and
   `rip_and_tear` (RIP AND TEAR!!!), awarded by `App::trophy` itself the moment
-  the other 19 are all held.
+  the other 20 are all held.
 - Online (`src/game/online.*`, `runrecord.*`, `net/http.*`): `OnlineClient`
   runs one worker thread; `App::pollOnline` handles replies on the main
   thread each frame. `recordRun` at game over writes the `RunRecord` (counters
@@ -569,8 +576,11 @@ it server-side. `stats_test` covers the round trip across two machines.
   on and the profile has a token, to `runs/pending/` and uploads it; the
   reply's rank goes on the game-over screen, a failure leaves the file for
   `submitPendingRuns` at the next launch. Registration: `startRegistration`
-  opens `kScreenRegister` (consent text) then `kScreenCode`; a confirmed code
-  stores the token in `identity.txt` via `PlayerStats::setVerified`. The
+  opens `kScreenRegister` (consent text) then `kScreenCode`, which is a
+  waiting screen now that there is no code to type. The token comes back with
+  the register reply and is stored at once (`setToken`), so finished games post
+  from then on; `PlayerStats::setVerified` is called later, from the poll, when
+  the service reports the emailed link approved. The
   service URL comes from `--online-server`, `REDLINE_ONLINE_URL`,
   `<pref>/online.txt`, `redline.cfg`, or the default. `REDLINE_ONLINE_ALLOW_SCRIPTED=1`
   lets a scripted run upload (tests only). ONLINE defaults on; `onlineAsked_`

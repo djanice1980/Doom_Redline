@@ -1,7 +1,7 @@
 # REDLINE online service
 
-The leaderboard site and the API the game talks to (registration by emailed
-code, run uploads, boards). Next.js on Vercel, Postgres on Supabase, mail
+The leaderboard site and the API the game talks to (registration by one
+Approve button in an email, run uploads, boards). Next.js on Vercel, Postgres on Supabase, mail
 through Microsoft Graph. The design is in `../docs/online-and-releases.md`;
 this file is the set-up guide.
 
@@ -61,7 +61,7 @@ register again).
 
 ## 4. Mail (Microsoft Graph)
 
-The confirmation codes go out as email from a mailbox in your Microsoft 365
+The approve links go out as email from a mailbox in your Microsoft 365
 tenant.
 
 1. **Entra admin center > App registrations > New registration**: any name
@@ -85,8 +85,8 @@ tenant.
 6. Set `MAIL_MODE` to `graph` in Vercel and redeploy.
 
 Until step 6, registrations are written to the mail log on the admin page
-instead of being sent, which lets you test the whole flow yourself: the code
-is in the log entry.
+instead of being sent, which lets you test the whole flow yourself: the
+approve link is in the log entry, and clicking it finishes the registration.
 
 ## 5. Point the game at it
 
@@ -102,8 +102,8 @@ tell the game:
 
 In the game ONLINE is on by default; players without a registration are
 asked once. **PLAYER EMAIL** under OPTIONS sends the registration email:
-clicking its approve link (or typing the code) completes it, the game picks
-the approval up by polling, and from then on every finished game is posted
+clicking its Approve button completes it, the game picks the approval up by
+polling, and from then on every finished game is posted
 with the world rank on the game-over screen. LEADERBOARD on the title screen
 shows the boards; WHAT'S NEW shows the change list and the latest release,
 which the service reads from GitHub (`/api/version`).
@@ -112,11 +112,12 @@ which the service reads from GitHub (`/api/version`).
 
 `supabase/migrations/0002_links_and_polling.sql` adds three columns,
 `0004_linter_quiet.sql` adds explicit deny-all policies and locks Supabase's
-own `rls_auto_enable()` helper away from the REST API, and
-`0003_hardening.sql` answers Supabase's database linter (views run as the
-caller, a fixed `search_path` on the ratings function, and no privileges at
-all for the REST API roles `anon` and `authenticated`). The routes apply both
-themselves on first use (`lib/schema.ts`), so nothing breaks if they are not
+own `rls_auto_enable()` helper away from the REST API, `0003_hardening.sql`
+answers Supabase's database linter (views run as the caller, a fixed
+`search_path` on the ratings function, and no privileges at all for the REST
+API roles `anon` and `authenticated`), and `0005_approval.sql` adds the
+`approved` column and rebuilds every public view to show approved players
+only. The routes apply all four themselves on first use (`lib/schema.ts`), so nothing breaks if they are not
 run by hand; running them in the SQL editor is still tidy and clears the
 linter's findings straight away. The remaining "RLS enabled, no policy"
 notes are intended: no policy means no access through the REST API, which
