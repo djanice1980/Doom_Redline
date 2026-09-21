@@ -1198,6 +1198,7 @@ void App::closeGamepad() {
     SDL_CloseGamepad(pad_);
     pad_ = nullptr;
     padHeld_ = {};
+    padL3_ = padR3_ = false;
     fpsIn_.padFire = fpsIn_.padRun = false;
     fpsIn_.padMoveX = fpsIn_.padMoveZ = 0.f;
     std::fprintf(stderr, "[pad] disconnected\n");
@@ -1258,6 +1259,10 @@ void App::rumble(float low, float high, int ms) {
 
 void App::padButton(int button, bool down) {
     if (down) stats_.addInput(InputDevice::Gamepad);
+    // Both sticks pressed in is the pad's version of the B-F-G chord. Tracked here,
+    // above the menu and screen branches, so the state is right whatever is on screen.
+    if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) padL3_ = down;
+    if (button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) padR3_ = down;
     auto key = [&](SDL_Keycode k) { screenKey(k, true); };
     if (screen_ != kScreenNone) {
         if (!down) return;
@@ -1900,6 +1905,15 @@ int App::run() {
                 if (std::isalpha(static_cast<unsigned char>(ch))) k = static_cast<SDL_Keycode>(SDLK_A + (std::toupper(static_cast<unsigned char>(ch)) - 'A'));
                 else if (ch == '_') k = SDLK_DOWN; else if (ch == '^') k = SDLK_UP; else if (ch == '<') k = SDLK_LEFT; else if (ch == '>') k = SDLK_RIGHT;
                 else if (ch == '#') k = SDLK_DELETE;
+                else if (ch == '&') {   // both sticks pressed in: the pad's BFG chord
+                    for (int b : {SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_GAMEPAD_BUTTON_RIGHT_STICK}) {
+                        SDL_Event pe{};
+                        pe.type = down ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+                        pe.gbutton.button = static_cast<Uint8>(b);
+                        SDL_PushEvent(&pe);
+                    }
+                    continue;
+                }
                 else if (ch == '~') k = SDLK_RETURN; else if (ch == '`') k = SDLK_ESCAPE; else if (ch == ' ') k = SDLK_SPACE;
                 if (k == SDLK_UNKNOWN) continue;
                 ev.key.key = k;
@@ -2464,8 +2478,10 @@ void App::update(float dt) {
     if (!opts_.reloadWad.empty() && frameCount_ == 30) reloadAssets(opts_.reloadWad);
     for (Announcement& a : announcements_) a.t += dt;
     bfgFlash_ = std::max(0.f, bfgFlash_ - dt * 1.2f);
-    // The secret chord: B, F and G held together for two seconds while stacking.
-    if (mode_ == Mode::Blocks && !bfgUsed_ && keyB_ && keyF_ && keyG_) {
+    // The secret chord: B, F and G held together for two seconds while stacking, or
+    // both sticks pressed in on a pad, which has no letters to hold.
+    const bool bfgChord = (keyB_ && keyF_ && keyG_) || (padL3_ && padR3_);
+    if (mode_ == Mode::Blocks && !bfgUsed_ && bfgChord) {
         if (bfgHoldT_ == 0.f) play("bfg", 1.f);   // the charge-up whine starts with the hold
         bfgHoldT_ += dt;
         if (bfgHoldT_ >= 2.f) {

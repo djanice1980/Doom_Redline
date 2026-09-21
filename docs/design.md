@@ -58,14 +58,16 @@ with `RedLine` and `GameOver` as terminal-until-resumed states.
 - **Levels.** `linesPerLevel` defaults to 0: only `resumeAfterRedLine` raises
   the level.
 - **Secret: BFG9000.** Holding B, F and G together for two seconds while
-  stacking (`App::bfgHoldT_`, once per playthrough via `bfgUsed_`; a green
-  glow builds while charging and resets if a key is released) calls
+  stacking, or both sticks pressed in on a pad, which has no letters to hold
+  (`App::bfgHoldT_`, once per playthrough via `bfgUsed_`; a green
+  glow builds while charging and resets if the chord is released) calls
   `Game::purgeRed()`: every red
   block is erased, all flickering and spawning stops, the red minos of the
   falling and next pieces become normal, and the whole stack collapses to the
   floor (Settling with `collapseAll_`, the post-fight collapse; the falling
   piece waits and resumes). Green flash, DSBFG, "BFG SPENT" in
-  the side panel afterwards. Not mentioned in the README or in-game hints.
+  the side panel afterwards. Not mentioned in the README, the CONTROLS page or
+  any in-game hint. `--keys &@<frame>` presses both sticks in a scripted run.
 - **Evil spawn.** `evilSpawnCandidates()` lists empty cells whose four
   neighbours are all red or corrupting: the floor and side walls count as red,
   the cell above must be a real block (open sky disqualifies), and at least

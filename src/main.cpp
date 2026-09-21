@@ -31,6 +31,7 @@ void usage() {
         "  --god                Player takes no damage (testing)\n"
         "  --arsenal N          Start a fight holding weapon N with every weapon owned (testing)\n"
         "  --keys <letters>@<frame>[x<hold>]  Hold letters from a frame for <hold> frames (default 150), e.g. --keys BFG@30x150\n"
+        "                       ^ _ < > are the arrows, ~ Enter, ` Esc, # Delete, & both sticks on a pad\n"
         "  --click <x>,<y>@<frame>  Testing: move the mouse there and left-click on that frame (repeatable)\n"
         "  --stack <rows>       Pre-fill that many holey rows (testing)\n"
         "  --mute               No sound at all\n"

@@ -424,6 +424,7 @@ private:
     float evilJolt_ = 0.f;
     float bannerX0_ = 0.f, bannerX1_ = 0.f, bannerY_ = 0.f;   // extent of the last banner drawn (drip origins)
     bool keyB_ = false, keyF_ = false, keyG_ = false;   // the secret chord
+    bool padL3_ = false, padR3_ = false;                // the same chord on a pad: both sticks pressed in
     float bfgHoldT_ = 0.f;       // seconds B+F+G have been held together
     bool bfgUsed_ = false;       // the BFG9000 fires once per playthrough
     float bfgFlash_ = 0.f;
