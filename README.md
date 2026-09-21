@@ -737,7 +737,8 @@ keeps fights to the arena, `REDLINE_LOG_DUNGEON=1` prints each crypt's layout
 shows the new-version sticker for that version, `REDLINE_SPLASH=1` keeps the
 title card in a scripted capture (which otherwise starts past it) and
 `REDLINE_FAREWELL=1` keeps the page shown on the way out, and
-`REDLINE_LOG_BOT=1` prints what the test bot is doing frame by frame.
+`REDLINE_LOG_BOT=1` prints what the test bot is doing frame by frame, and
+`REDLINE_LOG_BOSS=1` prints where the big monsters are and how far they moved.
 
 ## Layout
 

@@ -604,6 +604,18 @@ it server-side. `stats_test` covers the round trip across two machines.
   (`Assets::cryptDoor`, BIGDOOR7 and friends), a dim emissive, a point light and
   a glowing skull billboard on whichever face the player is on (`addDoorMark`).
   Walking within two metres of a door tile with the key opens it.
+- `moveWithCollision` counts how many of the eight probes around a body are in
+  something solid and allows a move that leaves the count no worse. The old
+  "refuse any move whose probes touch anything" rule wedged wide bodies for
+  good: a spider mastermind is 1.2 m in radius, the arena is ten metres across,
+  and standing in the board's first row put one probe inside the frame for ever,
+  after which every move in every direction was refused. Two runs with a packed
+  board went from 63 logged "blocked" seconds to none.
+- Alongside it, a body of radius 0.8 or more that is stopped by blocks shoves
+  them out of existence (`shoveBlocks`, 0.35 s cooldown), and one that rises in
+  the arena clears a disc around itself (`clearAround`). `REDLINE_LOG_BOSS=1`
+  prints where the big ones are, how far they moved in the last second, how far
+  away the player is, and whether they are blocked.
 - Hitscan reach: `hitscanRange(kind)` in fps_mode.cpp, 16 m for a zombieman,
   24 m for a chaingunner, 45 m for the mastermind, 30 m otherwise. Past it they
   hold fire and close in, and they do not wake from beyond it either. Doom had

@@ -277,8 +277,10 @@ void FpsMode::begin(core::Game& game, int level, const core::Prizes& prizes) {
                 e.moveDir = glm::vec3(std::sin(e.yaw), 0.f, std::cos(e.yaw));
             }
             // The region's cells become the monster's body: clear them so the
-            // pocket it stands in is open.
+            // pocket it stands in is open. A wide monster needs more than its own
+            // cells, or it rises already wedged into the stack around it.
             for (auto [c, r] : cells) game.clearCell(c, r);
+            if (st.radius >= 0.8f) clearAround(e.pos, st.radius + 0.7f, game);
             enemies_.push_back(e);
         }
     }
@@ -356,21 +358,35 @@ bool FpsMode::lineOfSight(glm::vec3 a, glm::vec3 b, const core::Game& game) cons
 }
 
 // Circle-vs-grid slide: resolve X and Z separately so we glide along blocks.
+//
+// The test counts how many of the eight probes around the body are inside
+// something solid, and a move is allowed when it leaves that count no worse than
+// it already was. The straightforward "reject any move whose probes touch
+// anything" version wedges a wide body permanently: a spider mastermind is 1.2 m
+// in radius and the arena is only ten metres across, so standing in the first row
+// of the board puts one probe inside the frame for ever, and from then on every
+// move it tries, in any direction, is refused. Letting it move as long as it does
+// not push further in gets it out along the wall, which is what a body that big
+// would do.
 void FpsMode::moveWithCollision(glm::vec3& pos, glm::vec3 delta, float radius, const core::Game& game) const {
-    auto blocked = [&](glm::vec3 p) {
+    auto blockedCount = [&](glm::vec3 p) {
+        int n = 0;
         const float offs[4][2] = {{radius, 0.f}, {-radius, 0.f}, {0.f, radius}, {0.f, -radius}};
         for (auto& o : offs)
-            if (solidAt(glm::vec3(p.x + o[0], 0.5f, p.z + o[1]), game)) return true;
+            if (solidAt(glm::vec3(p.x + o[0], 0.5f, p.z + o[1]), game)) ++n;
         const float dg = radius * 0.7071f;
         const float diag[4][2] = {{dg, dg}, {-dg, dg}, {dg, -dg}, {-dg, -dg}};
         for (auto& o : diag)
-            if (solidAt(glm::vec3(p.x + o[0], 0.5f, p.z + o[1]), game)) return true;
-        return false;
+            if (solidAt(glm::vec3(p.x + o[0], 0.5f, p.z + o[1]), game)) ++n;
+        return n;
     };
-    glm::vec3 nx = pos + glm::vec3(delta.x, 0.f, 0.f);
-    if (!blocked(nx)) pos = nx;
-    glm::vec3 nz = pos + glm::vec3(0.f, 0.f, delta.z);
-    if (!blocked(nz)) pos = nz;
+    int here = blockedCount(pos);
+    auto step = [&](glm::vec3 to) {
+        const int there = blockedCount(to);
+        if (there == 0 || there <= here) { pos = to; here = there; }
+    };
+    step(pos + glm::vec3(delta.x, 0.f, 0.f));
+    step(pos + glm::vec3(0.f, 0.f, delta.z));
 }
 
 void FpsMode::spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red, int colorIndex) {
@@ -820,6 +836,42 @@ void FpsMode::breakCell(int c, int r, core::Game& game) {
     explosions_.push_back(ex);
 }
 
+// Every normal block whose centre falls inside a disc, gone. Returns how many.
+int FpsMode::clearAround(glm::vec3 pos, float radius, core::Game& game) {
+    int c, r;
+    if (!flatToCell(glm::vec3(pos.x, 0.5f, pos.z), c, r)) {
+        // Outside the board: work from the nearest column and row instead.
+        c = std::clamp(static_cast<int>(std::floor(pos.x + core::kBoardW * 0.5f)), 0, core::kBoardW - 1);
+        r = std::clamp(static_cast<int>(std::floor(pos.z)), 0, core::kBoardH - 1);
+    }
+    const int span = static_cast<int>(std::ceil(radius));
+    int count = 0;
+    for (int y = r - span; y <= r + span; ++y)
+        for (int x = c - span; x <= c + span; ++x) {
+            if (x < 0 || x >= core::kBoardW || y < 0 || y >= core::kBoardH) continue;
+            if (game.at(x, y).kind != core::CellKind::Normal) continue;
+            const glm::vec3 cell = flatCellCentre(x, y);
+            const float dx = cell.x - pos.x, dz = cell.z - pos.z;
+            if (dx * dx + dz * dz > radius * radius) continue;
+            breakCell(x, y, game);
+            ++count;
+        }
+    return count;
+}
+
+// The arena is ten metres across and a spider mastermind is two and a half of
+// them. Walking it around the tipped-over stack one cell at a time does not work,
+// so when the big ones are stopped by blocks they go through them instead.
+void FpsMode::shoveBlocks(Enemy& e, core::Game& game) {
+    if (e.shoveT > 0.f) return;
+    e.shoveT = 0.35f;
+    const glm::vec3 ahead = e.pos + e.moveDir * (e.radius * 0.8f);
+    const int count = clearAround(ahead, e.radius + 0.35f, game);
+    if (count > 0) push(FpsEvent::Type::BlockBroken, ahead + glm::vec3(0.f, 0.5f, 0.f), e.tier, count);
+    if (count > 0 && std::getenv("REDLINE_LOG_BOSS"))
+        std::fprintf(stderr, "[boss] %s shoves %d blocks out of the way at %.1f,%.1f\n", enemyStats(e.kind).name, count, ahead.x, ahead.z);
+}
+
 void FpsMode::breakBlock(Enemy& e, core::Game& game) {
     const EnemyStats& st = enemyStats(e.kind);
     std::uniform_real_distribution<float> u(0.f, 1.f);
@@ -1010,6 +1062,21 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
             }
         }
         if (e.alive() && e.state != Enemy::State::Emerging && health_ > 0.f) {
+            e.shoveT -= dt;
+            // REDLINE_LOG_BOSS=1: where the big ones are and whether they are moving,
+            // which is the only way to tell a wedged mastermind from a patient one.
+            if (e.radius >= 0.8f && std::getenv("REDLINE_LOG_BOSS")) {
+                e.logT -= dt;
+                if (e.logT <= 0.f) {
+                    e.logT = 1.f;
+                    const float moved = glm::length(e.pos - e.logPos);
+                    std::fprintf(stderr, "[boss] %s at %.1f,%.1f moved %.2f m, player %.1f m away%s\n",
+                                 enemyStats(e.kind).name, e.pos.x, e.pos.z, moved,
+                                 glm::length(glm::vec2(playerPos_.x - e.pos.x, playerPos_.z - e.pos.z)),
+                                 e.blocked ? ", blocked" : "");
+                    e.logPos = e.pos;
+                }
+            }
             e.breakTimer -= dt;
             if (e.breakTimer <= 0.f) {
                 e.breakTimer = st.breakInterval * cadence * (0.8f + 0.4f * u(rng_));
@@ -1058,7 +1125,11 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                     const glm::vec3 before = e.pos;
                     if (st.flies && !e.inDungeon) e.pos += delta;
                     else moveWithCollision(e.pos, delta, e.radius, game);
-                    if (!st.flies && glm::length(e.pos - before) < 0.3f * glm::length(delta)) { e.blocked = true; e.moveCount = 0.f; }
+                    if (!st.flies && glm::length(e.pos - before) < 0.3f * glm::length(delta)) {
+                        e.blocked = true;
+                        e.moveCount = 0.f;
+                        if (!e.inDungeon && e.radius >= 0.8f) shoveBlocks(e, game);   // too wide to squeeze past
+                    }
                     turnTowards(e.yaw, std::atan2(e.moveDir.x, e.moveDir.z), kChaseTurnRate * dt);
                 }
             }

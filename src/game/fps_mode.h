@@ -131,6 +131,9 @@ struct Enemy {
     glm::vec3 moveDir{0.f, 0.f, 1.f};
     float moveCount = 0.f;   // seconds left before the chase direction is re-picked
     bool blocked = false;    // last move made no progress: sidestep next time
+    float shoveT = 0.f;      // big monsters: cooldown on shouldering blocks out of the way
+    float logT = 0.f;        // REDLINE_LOG_BOSS: seconds to the next position line
+    glm::vec3 logPos{0.f};   // where it was when that line was last printed
     // Arch-vile: its flame, placed on the player while it can see them (fireT < 0 = none).
     float fireT = -1.f;
     glm::vec3 firePos{0.f};
@@ -328,6 +331,11 @@ private:
     void spawnPickup(PickupKind kind, glm::vec3 from, glm::vec3 home);
     void applyPickup(const Pickup& p);
     void breakBlock(Enemy& e, core::Game& game);
+    // A monster too wide to walk between blocks pushes the ones in its way out of
+    // existence. Without it a spider mastermind spends the fight wedged.
+    void shoveBlocks(Enemy& e, core::Game& game);
+    // Opens a disc of blocks around a monster, for the big ones as they rise.
+    int clearAround(glm::vec3 pos, float radius, core::Game& game);
     void tryAbsorb(Enemy& e, core::Game& game);
     void breakCell(int c, int r, core::Game& game);
     void rocketBlast(glm::vec3 pos, float radius, float damage, core::Game& game);
