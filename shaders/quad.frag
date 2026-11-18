@@ -7,7 +7,7 @@ layout(location = 1) in vec4 vColor;
 layout(location = 2) in vec3 vLight;
 layout(location = 3) in vec3 vWorldPos;
 layout(location = 4) in float vMode;
-layout(location = 5) in float vFlags;
+layout(location = 5) flat in float vFlags;   // flat: decoded with int(), see cube.vert
 
 layout(location = 0) out vec4 outColor;
 

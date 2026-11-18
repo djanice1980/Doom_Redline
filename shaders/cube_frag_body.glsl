@@ -6,7 +6,7 @@ layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec2 vUV;
 layout(location = 3) in vec4 vColor;
 layout(location = 4) in vec4 vEmissive;
-layout(location = 5) in vec4 vParams;
+layout(location = 5) flat in vec4 vParams;   // flat: see cube.vert
 layout(location = 6) in vec3 vTangent;
 layout(location = 7) in vec2 vFaceUV;
 

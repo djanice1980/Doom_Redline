@@ -12,7 +12,7 @@ layout(location = 1) out vec4 vColor;
 layout(location = 2) out vec3 vLight;   // precomputed lighting multiplier for lit billboards
 layout(location = 3) out vec3 vWorldPos;
 layout(location = 4) out float vMode;
-layout(location = 5) out float vFlags;   // bit 2 (4): soft alpha, no cutoff (smoke, dust)
+layout(location = 5) flat out float vFlags;   // bit 2 (4): soft alpha, no cutoff (smoke, dust)
 
 const vec2 corners[6] = vec2[6](vec2(0,0), vec2(1,0), vec2(1,1), vec2(0,0), vec2(1,1), vec2(0,1));
 

@@ -19,7 +19,8 @@ layout(location = 1) out vec3 vNormal;
 layout(location = 2) out vec2 vUV;
 layout(location = 3) out vec4 vColor;
 layout(location = 4) out vec4 vEmissive;
-layout(location = 5) out vec4 vParams;
+// flat: the flags are decoded with int(), and an interpolated 2.0 can arrive as 1.9999.
+layout(location = 5) flat out vec4 vParams;
 layout(location = 6) out vec3 vTangent;
 layout(location = 7) out vec2 vFaceUV;   // 0..1 across the face: material maps tile once per cube
 
