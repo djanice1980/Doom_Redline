@@ -4,6 +4,14 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.8.0 (2026-11-18)
+- Mist lies on the floor of the crypt, and a thinner layer on the arena. It behaves like water: you and every demon push it aside and leave a wake, a rocket tears a furrow through it, and an explosion throws it outward. It always flows back and settles.
+- Left alone it is never quite still. It drifts, it gathers into banks and drains away, and slow swells roll across it. Walls and shut doors hold it in.
+- GROUND FOG in OPTIONS switches it off.
+- A bright disc of torchlight no longer shines on a crypt wall from round a corner when every light casts ray-traced shadows.
+- Torches no longer hang inside the stone where a room's corner met another wall.
+- With ray-traced reflections on, the floor reflects evenly. Every few rows used to skip the reflection, which striped the floor and sliced the reflected torches.
+
 ## 0.7.4 (2026-09-21)
 - Anything the keyboard could trigger while stacking can be triggered on a controller now.
 
