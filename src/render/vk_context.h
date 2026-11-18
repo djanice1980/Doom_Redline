@@ -92,8 +92,6 @@ public:
     uint32_t findMemoryType(uint32_t typeBits, VkMemoryPropertyFlags props) const;
     VkShaderModule createShader(const uint32_t* words, size_t bytes);
 
-    // Reads back the last presented swapchain image (call after endFrame + waitIdle).
-    std::vector<uint8_t> readbackImage(VkImage image, uint32_t w, uint32_t h, VkFormat fmt);
 
 private:
     void createInstance();

@@ -25,6 +25,8 @@ layout(set = 0, binding = 0, std140) uniform FrameUBO {
     vec4 shadow;        // x = texel size, y = bias, z = strength (0 = off), w = normal offset
     vec4 misc;          // xy = atlas size in texels, z = colour grade amount
     mat4 invViewProj;   // clip -> world, for the volumetric pass
+    vec4 groundFog[3];  // [0] x0, z0, 1/cell, strength (0 = off); [1] cells w, h, layer height, glow; [2] light gain, sun gain
+    vec4 lightClear[MAX_LIGHTS / 4];   // light i: how far short of it a shadow ray stops, [i / 4][i % 4]
 } u;
 
 layout(set = 0, binding = 1) uniform sampler2D atlas;
@@ -33,13 +35,18 @@ layout(set = 0, binding = 2) uniform sampler2DShadow shadowMap;
 
 #ifdef RT_SHADOWS
 layout(set = 0, binding = 3) uniform accelerationStructureEXT tlas;
+// Instance masks (Renderer::buildTlas): 1 = ordinary geometry, 2 = light sources (torch
+// models, their embers), which point lights shine straight through.
+const uint kMaskAll = 0xFFu;
+const uint kMaskSolid = 0x01u;
 // 1 = nothing between origin and origin + dir * tmax, 0 = occluded. Opaque geometry only.
-float rtVisibility(vec3 origin, vec3 dir, float tmax) {
+float rtVisibility(vec3 origin, vec3 dir, float tmax, uint mask) {
     rayQueryEXT q;
-    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.01, dir, tmax);
+    rayQueryInitializeEXT(q, tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, mask, origin, 0.01, dir, tmax);
     while (rayQueryProceedEXT(q)) {}
     return rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT ? 1.0 : 0.0;
 }
+float rtVisibility(vec3 origin, vec3 dir, float tmax) { return rtVisibility(origin, dir, tmax, kMaskAll); }
 #endif
 
 #ifdef RT_SHADOWS
@@ -119,9 +126,14 @@ vec3 shade(vec3 P, vec3 N, vec3 albedo, float roughness, float metallic) {
         vec3 c = u.lightColor[i].rgb * u.lightColor[i].w * att;
 #ifdef RT_SHADOWS
         // Torches, lamps, muzzle flashes and glowing blocks cast shadows too. The ray stops
-        // short of the light so an emitter sitting inside a block (a red cell) does not
-        // shadow itself; only lights that matter to this fragment are traced.
-        if (u.counts.y > 1 && ndl > 0.0 && att > 0.015) c *= rtVisibility(P + N * 0.04, L, max(0.05, dist - 0.6));
+        // short of the light by the light's own clearance, so an emitter sitting inside a
+        // block (a red cell) does not shadow itself, while a torch flame (clearance near
+        // zero) is still blocked by the wall corner beside it. Torch models and their
+        // embers are skipped by mask instead. Only lights that matter here are traced.
+        if (u.counts.y > 1 && ndl > 0.0 && att > 0.015) {
+            float clearance = u.lightClear[i >> 2][i & 3];
+            c *= rtVisibility(P + N * 0.04, L, max(0.05, dist - clearance), kMaskSolid);
+        }
 #endif
         diffuse += albedo * ndl * c;
         vec3 H = normalize(L + V);

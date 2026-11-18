@@ -76,6 +76,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (opts_.brutal >= 0) brutal_ = opts_.brutal != 0;
     fps_.setBrutal(brutalActive());
     if (opts_.bloom >= 0) bloom_ = opts_.bloom != 0;
+    if (opts_.groundFog >= 0) groundFogOn_ = opts_.groundFog != 0;
     ctx_ = std::make_unique<render::VkContext>(window_, opts_.preferIntegrated);
     renderer_ = std::make_unique<render::Renderer>(*ctx_);
 
@@ -1423,6 +1424,7 @@ void App::adjustOption(int dir) {
     case 17: if (renderer_->rayTracingAvailable()) { rtShadows_ = (rtShadows_ + 4 + dir) % 4; saveDisplaySettings(); } break;
     case 18: if (renderer_->msaaAvailable()) { msaa_ = !msaa_; renderer_->setMsaa(msaa_); saveDisplaySettings(); } break;
     case 19: bloom_ = !bloom_; saveDisplaySettings(); break;
+    case 20: groundFogOn_ = !groundFogOn_; saveDisplaySettings(); break;
     case 8: {
         if (resolutions_.empty()) break;
         int idx = 0;
@@ -1689,6 +1691,7 @@ void App::loadDisplaySettings() {
             else if (k == "rt_shadows") rtShadows_ = std::clamp(std::atoi(v.c_str()), 0, 3);
             else if (k == "msaa") msaa_ = std::atoi(v.c_str()) != 0;
             else if (k == "bloom") bloom_ = std::atoi(v.c_str()) != 0;
+            else if (k == "ground_fog") groundFogOn_ = std::atoi(v.c_str()) != 0;
             else if (k == "height") resH_ = std::max(360, std::atoi(v.c_str()));
         }
         std::fclose(f);
@@ -1700,7 +1703,7 @@ void App::saveDisplaySettings() const {
     std::string base = pref ? pref : "";
     if (pref) SDL_free(pref);
     if (std::FILE* f = std::fopen((base + "display.txt").c_str(), "w")) {
-        std::fprintf(f, "mode=%d\nwidth=%d\nheight=%d\nrt_shadows=%d\nmsaa=%d\nbloom=%d\n", displayMode_, resW_, resH_, rtShadows_, msaa_ ? 1 : 0, bloom_ ? 1 : 0);
+        std::fprintf(f, "mode=%d\nwidth=%d\nheight=%d\nrt_shadows=%d\nmsaa=%d\nbloom=%d\nground_fog=%d\n", displayMode_, resW_, resH_, rtShadows_, msaa_ ? 1 : 0, bloom_ ? 1 : 0, groundFogOn_ ? 1 : 0);
         std::fclose(f);
     }
 }
@@ -1941,8 +1944,18 @@ int App::run() {
         cubeRanges_ = envRanges_;
         if (cubes_.size() > envCubes_.size())
             cubeRanges_.push_back({static_cast<uint32_t>(envCubes_.size()), static_cast<uint32_t>(cubes_.size() - envCubes_.size()), 0});
+        // Captures are asked for before the frame is drawn: it copies itself out before it is shown.
+        const int nextFrame = frameCount_ + 1;
+        const bool recordThis = !opts_.record.empty() && opts_.frames > 0 && nextFrame % std::max(1, opts_.recordEvery) == 0;
+        const bool lastScripted = opts_.frames > 0 && nextFrame >= opts_.frames && !opts_.screenshot.empty();
+        if (recordThis || lastScripted || !pendingShot_.empty()) renderer_->requestCapture();
         renderer_->render(frame_, cubes_, worldQuads_, screenQuads_, meshes_, cubeRanges_);
         ++frameCount_;
+        if (!pendingShot_.empty()) {   // F12
+            const bool ok = renderer_->screenshot(pendingShot_);
+            std::fprintf(stderr, "[app] screenshot %s%s\n", pendingShot_.c_str(), ok ? "" : ": FAILED");
+            pendingShot_.clear();
+        }
         if (!opts_.record.empty() && opts_.frames > 0 && frameCount_ % std::max(1, opts_.recordEvery) == 0) {   // the video recorder
             static std::FILE* rec = nullptr;
             if (!rec) rec = std::fopen(opts_.record.c_str(), "wb");
@@ -2098,8 +2111,7 @@ void App::handleEvents() {
                     name = "redline-screenshot-" + std::string(n < 10 ? "00" : n < 100 ? "0" : "") + std::to_string(n) + ".png";
                     if (!std::filesystem::exists(name, ec)) break;
                 }
-                renderer_->screenshot(name);
-                std::fprintf(stderr, "[app] screenshot %s\n", name.c_str());
+                pendingShot_ = name;   // taken from the next frame drawn (see the main loop)
                 break;
             }
             if (k == SDLK_RETURN && (e.key.mod & SDL_KMOD_ALT) && !e.key.repeat) {
@@ -2305,6 +2317,7 @@ void App::handleFpsEvents() {
             if (brutalActive() && assets_.brExplodeSounds) play("br_explode" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brExplodeSounds)), 1.f);
             else play("rocket_hit", 1.f);
             shakeT_ = 0.35f; rumble(0.8f, 0.6f, 300);
+            groundFog_.blast(ev.pos, 3.5f);
             fightStats_.blocks += ev.a; gameBlocks_ += ev.a;
             if (gameBlocks_ >= 50) trophy("demolition");
             break;
@@ -2347,7 +2360,10 @@ void App::handleFpsEvents() {
             if (ev.a && assets_.brShellSounds) play("shell" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brShellSounds)), 0.5f, 1.f, 30);
             else if (!ev.a && assets_.brCasingSounds) play("casing" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brCasingSounds)), 0.35f, 1.f, 30);
             break;
-        case FpsEvent::Type::EnemyDied: if (!ev.a) play(art.deathSound, 1.f); break;   // a = 1: gibbed, the slop plays instead
+        case FpsEvent::Type::EnemyDied:
+            if (!ev.a) play(art.deathSound, 1.f);   // a = 1: gibbed, the slop plays instead
+            groundFog_.blast(ev.pos, 1.4f + 0.3f * static_cast<float>(ev.tier), 0.35f);   // a body hits the floor
+            break;
         case FpsEvent::Type::EnemyGibbed:
             if (assets_.brGibSounds) play("gibdeath" + std::to_string(1 + rng_() % static_cast<unsigned>(assets_.brGibSounds)), 1.f);
             else play("gib", 1.f);
@@ -2363,12 +2379,14 @@ void App::handleFpsEvents() {
             break;
         case FpsEvent::Type::VileBlast:   // A_VileAttack plays the barrel explosion
             play("explode", 1.f); shakeT_ = 0.45f; rumble(0.9f, 0.6f, 300);
+            groundFog_.blast(ev.pos, 3.f);
             // Smoke, not a flash: the default 1.3 white tint left a glowing pale ball hanging
             // in the air for half a second after every fireball had gone out.
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke, glm::vec4(0.34f, 0.30f, 0.28f, 0.38f)});
             break;
         case FpsEvent::Type::Explosion:
             play("explode", 1.f); shakeT_ = 0.3f + 0.1f * ev.tier; rumble(0.7f, 0.5f, 250);
+            groundFog_.blast(ev.pos, 2.5f + 0.4f * static_cast<float>(ev.tier));
             // Smoke, not a flash: the default 1.3 white tint left a glowing pale ball hanging
             // in the air for half a second after every fireball had gone out.
             if (!assets_.brSmoke.empty()) bursts_.push_back({ev.pos + glm::vec3(0.f, 0.6f, 0.f), 0.f, 1.1f, 0.028f, &assets_.brSmoke, glm::vec4(0.34f, 0.30f, 0.28f, 0.38f)});
@@ -2416,6 +2434,11 @@ void App::handleFpsEvents() {
             break;
         case FpsEvent::Type::DoorOpened:
             std::fprintf(stderr, "[dungeon] the hall is open\n");
+            if (!fps_.dungeon().doorTiles().empty()) {   // the hall breathes out through the doorway
+                glm::vec3 c(0.f);
+                for (const auto& [i, j] : fps_.dungeon().doorTiles()) c += fps_.dungeon().tileCentre(i, j);
+                groundFog_.blast(c / static_cast<float>(fps_.dungeon().doorTiles().size()), 3.f, 0.5f);
+            }
             play("levelup", 0.9f, 0.8f);
             shakeT_ = std::max(shakeT_, 0.3f);
             announce("THE HALL OPENS", glm::vec4(1.f, 0.8f, 0.4f, 1.f), 1.4f);
@@ -2459,6 +2482,7 @@ void App::update(float dt) {
         if (!fightMode && fps_.stage() != FpsMode::Stage::Arena) fps_.closeDungeon();
         if (static_cast<int>(fps_.stage()) != envStage_ || envDungeon_ != !fps_.dungeon().empty() || envDoorOpen_ != fps_.doorOpen()) { buildEnvironment(); buildProps(); }
     }
+    updateGroundFog(dt);
     if (mode_ == Mode::Blocks || mode_ == Mode::Alert || mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut) run_.duration += dt;
     pollOnline();
     if (dialogDone_) {
@@ -2967,6 +2991,119 @@ App::Camera App::currentCamera() const {
 }
 
 // ---------------------------------------------------------------------------
+void App::syncGroundFog() {
+    const bool fight = mode_ == Mode::FlyIn || mode_ == Mode::Countdown || mode_ == Mode::Fps || mode_ == Mode::FlyOut
+                    || (mode_ == Mode::Paused && (pausedFrom_ == Mode::Fps || pausedFrom_ == Mode::Countdown)) || (mode_ == Mode::GameOver && diedInFps_);
+    if (!groundFogOn_ || !fight) {
+        if (!groundFog_.empty()) groundFog_.clear();
+        fogKey_ = -1;
+        return;
+    }
+    const Dungeon& dg = fps_.dungeon();
+    const bool crypt = fps_.stage() != FpsMode::Stage::Arena && !dg.empty();
+    const int key = crypt ? 1 + dg.width() * 1000 + dg.depth() : 0;
+    const int solidKey = key * 2 + (fps_.doorOpen() ? 1 : 0);
+    // Walls: the fog flows like water now, so it must not run through them. The
+    // arena's walls, the gate until it falls, the crypt's rock, and the hall's door
+    // until it opens.
+    auto syncSolid = [&] {
+        const bool gateOpen = fps_.stage() != FpsMode::Stage::Arena;
+        const bool doorOpen = fps_.doorOpen();
+        groundFog_.setSolid([&](float x, float z) {
+            if (z >= Dungeon::kZTop) {
+                if (z >= -2.f) return std::fabs(x) > 15.f || z > 23.f;          // the arena floor
+                return !(gateOpen && std::fabs(x) < Dungeon::kGateHalf);      // the back wall, and the gate in it
+            }
+            int i, j;
+            if (dg.empty() || !dg.worldToTile(x, z, i, j)) return true;
+            const auto t = dg.tile(i, j);
+            return !(t == Dungeon::Floor || (t == Dungeon::Door && doorOpen));
+        });
+        fogSolidKey_ = solidKey;
+    };
+    if (key == fogKey_ && !groundFog_.empty()) {
+        if (solidKey != fogSolidKey_) syncSolid();
+        return;
+    }
+    // The arena gets a thin layer over the board; the crypt is thick with it. The field
+    // keeps what it had when the crypt opens, and the crypt's part starts full.
+    float x0 = -17.f, x1 = 17.f, z0 = -4.f;
+    const float z1 = 25.f;
+    if (crypt) {
+        x0 = std::min(x0, dg.originX() - 1.f);
+        x1 = std::max(x1, dg.originX() + static_cast<float>(dg.width()) + 1.f);
+        z0 = dg.zMin() - 1.f;
+    }
+    const bool first = groundFog_.empty();
+    groundFog_.setBounds(x0, z0, x1, z1);
+    groundFog_.setRest([](float, float z) { return z < Dungeon::kZTop + 0.5f ? 1.f : 0.22f; }, first);
+    groundFog_.setSwell(1.f);
+    syncSolid();
+    fogKey_ = key;
+    fogPlayerPrev_ = fps_.playerPos();
+    fogEnemyPrev_.clear();
+}
+
+void App::updateGroundFog(float dt) {
+    syncGroundFog();
+    if (groundFog_.empty() || mode_ == Mode::Paused || dt <= 0.f) return;   // paused: frozen, still drawn
+    groundFog_.clearBodies();
+    if (mode_ == Mode::Countdown || mode_ == Mode::Fps) {
+        // Velocities from how far things moved since the last frame; a jump of metres in
+        // one frame is a teleport (respawn, the bot's placement), not a dash.
+        auto velocity = [dt](glm::vec3 now, glm::vec3 before) {
+            glm::vec3 v = (now - before) / dt;
+            v.y = 0.f;
+            return glm::length(v) > 25.f ? glm::vec3(0.f) : v;
+        };
+        const glm::vec3 pp = fps_.playerPos();
+        groundFog_.addBody(pp, velocity(pp, fogPlayerPrev_), 0.7f);
+        fogPlayerPrev_ = pp;
+        const auto& enemies = fps_.enemies();
+        if (fogEnemyPrev_.size() != enemies.size()) {
+            fogEnemyPrev_.resize(enemies.size());
+            for (size_t i = 0; i < enemies.size(); ++i) fogEnemyPrev_[i] = enemies[i].pos;
+        }
+        for (size_t i = 0; i < enemies.size(); ++i) {
+            const Enemy& e = enemies[i];
+            const glm::vec3 v = velocity(e.pos, fogEnemyPrev_[i]);
+            fogEnemyPrev_[i] = e.pos;
+            if (e.state == Enemy::State::Dead || e.pos.y > 1.2f) continue;   // the dead lie still; fliers ride above it
+            groundFog_.addBody(e.pos, v, e.radius + 0.2f);
+        }
+        // The crypt's fog was sealed in behind the wall: for a moment after it opens, it
+        // rolls out through the gateway into the arena.
+        if (fps_.stage() == FpsMode::Stage::Dungeon && fps_.stageT() < 3.5f)
+            groundFog_.gust(-Dungeon::kGateHalf, Dungeon::kZTop - 3.f, Dungeon::kGateHalf, Dungeon::kZTop + 3.f, glm::vec2(0.f, 6.f));
+        // Shots drag a wind behind them: a rocket skimming the floor ploughs a furrow, one
+        // at head height still shoves the fog aside, less and less the higher it flies.
+        for (const Projectile& p : fps_.projectiles()) {
+            const float over = p.pos.y - 0.6f;                       // metres above the layer's typical top
+            const float strength = std::clamp(1.f - over / 2.f, 0.f, 1.f);
+            if (strength <= 0.f) continue;
+            const bool rocket = p.type == kProjRocket;
+            const float r = (rocket ? 1.3f : 0.7f) + 0.4f * std::max(over, 0.f);   // the wake spreads on the way down
+            groundFog_.addBody(p.pos, glm::vec3(p.vel.x, 0.f, p.vel.z), r, strength * (rocket ? 1.f : 0.6f));
+        }
+    }
+    groundFog_.update(dt);
+    static const char* dump = std::getenv("REDLINE_FOG_DUMP");   // testing: the field as a greyscale PGM, rewritten every frame
+    if (dump) {
+        if (std::FILE* f = std::fopen(dump, "wb")) {
+            // The depth channel (0..255 = 0..2 deep), side by side with the wisps.
+            const int w = groundFog_.width(), h = groundFog_.height();
+            std::fprintf(f, "P5\n%d %d\n255\n", w * 2, h);
+            std::vector<uint8_t> row(static_cast<size_t>(w) * 2);
+            for (int j = 0; j < h; ++j) {
+                const uint8_t* src = groundFog_.pixels().data() + static_cast<size_t>(j) * w * 2;
+                for (int i = 0; i < w; ++i) { row[static_cast<size_t>(i)] = src[2 * i]; row[static_cast<size_t>(w + i)] = src[2 * i + 1]; }
+                std::fwrite(row.data(), 1, row.size(), f);
+            }
+            std::fclose(f);
+        }
+    }
+}
+
 void App::cube(glm::vec3 pos, float scale, glm::vec4 color, const std::string& tex, glm::vec3 emissive, float emissiveStrength, float flags, float phase, float rotX) {
     const render::AtlasRegion& r = assets_.region(tex);
     render::CubeInstance c;
@@ -3156,7 +3293,10 @@ void App::addDecor() {
         const std::string& key = animFrame(*p.anim, time_ + p.phase, true, &flip);
         // Flames and lamps sit above 1.0 so they bloom; barrels and candelabras stay plain.
         const bool glows = p.anim == &assets_.torchRed || p.anim == &assets_.torchBlue || p.anim == &assets_.torchGreen || p.anim == &assets_.lamp;
+        const size_t meshesBefore = meshes_.size();
         if (!key.empty()) actor(key, p.pos, p.px, glows ? glm::vec4(1.5f, 1.5f, 1.5f, 1.f) : glm::vec4(1.f), true, flip, 0.f);
+        // The prop's own light shines out through its model (the flame sits inside it).
+        if (p.lightRadius > 0.f && meshes_.size() > meshesBefore) meshes_.back().lightSource = true;
         // A soft flare disc over each flame, flickering with the light (community pack).
         const int flare = p.anim == &assets_.torchRed ? 0 : p.anim == &assets_.torchBlue ? 2 : p.anim == &assets_.torchGreen ? 3 : p.anim == &assets_.lamp ? 4 : p.anim == &assets_.candelabra ? 1 : -1;
         if (flare >= 0 && !assets_.brFlare[flare].empty()) {
@@ -3584,7 +3724,10 @@ void App::addLights() {
         float f = 0.82f + 0.12f * std::sin(time_ * 9.f + p.phase) + 0.06f * std::sin(time_ * 23.f + p.phase * 3.f);
         // With ray-traced shadows the torches can burn brighter: nothing bleeds through walls any more.
         float boost = (renderer_->rayTracingAvailable() && rtShadows_ >= 2) ? 1.5f : 1.f;
-        cands.push_back({glm::length(p.pos - cam) - 2.f, {p.pos + glm::vec3(0.f, p.lightHeight, 0.f), p.lightRadius * 1.3f, p.lightColor, 2.4f * f * boost}});
+        // The flame hangs in the open (its model and embers are masked out of point-light
+        // shadows), so the shadow ray runs nearly all the way: a wall corner half a metre
+        // from a torch still stops its light.
+        cands.push_back({glm::length(p.pos - cam) - 2.f, {p.pos + glm::vec3(0.f, p.lightHeight, 0.f), p.lightRadius * 1.3f, p.lightColor, 2.4f * f * boost, 0.05f}});
     }
     // Every red (or turning) cell glows.
     for (int r = 0; r < core::kBoardH; ++r)
@@ -3739,7 +3882,7 @@ void App::addBursts() {
     // Embers: tiny glowing cubes; rings: an expanding, fading shockwave in the board plane.
     for (const Ember& e : embers_) {
         const float k = std::clamp(e.ttl / e.life, 0.f, 1.f);
-        cube(e.pos, e.size * (0.5f + 0.5f * k), glm::vec4(e.col * k, 1.f), assets_.white, e.col, 3.5f * k);
+        cube(e.pos, e.size * (0.5f + 0.5f * k), glm::vec4(e.col * k, 1.f), assets_.white, e.col, 3.5f * k, 4.f);   // flag 4: a light source, no shadow
     }
     for (const Ring& r : rings_) {
         const float k = r.t / 0.55f;
@@ -4332,6 +4475,7 @@ void App::addHud() {
             rows.push_back({"RAY TRACING", !renderer_->rayTracingAvailable() ? "NONE  (NO RAY TRACING ON THIS GPU)" : rtShadows_ == 0 ? "OFF  (SHADOW MAP)" : rtShadows_ == 1 ? "SUN SHADOWS" : rtShadows_ == 2 ? "SUN + ALL LIGHTS" : "SUN + ALL LIGHTS + REFLECTIONS"});
             rows.push_back({"ANTI-ALIASING", !renderer_->msaaAvailable() ? "NONE  (NOT SUPPORTED)" : msaa_ ? "4X MSAA" : "OFF"});
             rows.push_back({"BLOOM & HAZE", bloom_ ? "ON" : "OFF"});
+            rows.push_back({"GROUND FOG", groundFogOn_ ? "ON  (STIRS AS YOU MOVE THROUGH IT)" : "OFF"});
             const int nRows = static_cast<int>(rows.size());   // BACK is index nRows (see screenKey)
             const float rowH = lh * 1.08f, top = H * 0.125f;
             const float bottom = H - lh * 1.1f - lh * 1.2f - lh * 1.3f;   // above the hint line, the status line and BACK
@@ -4904,6 +5048,23 @@ void App::buildScene() {
     frame_.rtShadows = renderer_->rayTracingAvailable() ? rtShadows_ : 0;
     frame_.bloom = bloom_ ? 0.4f : 0.f;
     frame_.volumetric = bloom_ ? 1.f : 0.f;   // the BLOOM row also covers the light haze
+    frame_.groundFog = {};
+    if (!groundFog_.empty()) {
+        render::FrameParams::GroundFog& gf = frame_.groundFog;
+        gf.cells = groundFog_.pixels().data();
+        gf.w = groundFog_.width();
+        gf.h = groundFog_.height();
+        gf.x0 = groundFog_.x0();
+        gf.z0 = groundFog_.z0();
+        gf.cell = groundFog_.cell();
+        // Tuned on the crypt's torch-lit rooms: thick at the floor, clear by knee height, pale
+        // rather than torch-coloured so it reads as mist.
+        gf.strength = 1.2f;
+        gf.height = 0.7f;
+        gf.glow = 1.2f;
+        gf.lightGain = 0.025f;
+        gf.sunGain = inDungeon ? 0.f : 0.15f;   // the crypt's ceiling keeps the sun off it
+    }
     frame_.exposure = 1.f;
     float tilt = boardTilt();
     frame_.sunIntensity = glm::mix(0.9f, 0.55f, tilt);

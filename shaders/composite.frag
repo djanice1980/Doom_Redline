@@ -6,7 +6,7 @@ layout(set = 0, binding = 0) uniform sampler2D hdr;
 layout(set = 0, binding = 1) uniform sampler2D bloom0;   // half res
 layout(set = 0, binding = 2) uniform sampler2D bloom1;   // quarter
 layout(set = 0, binding = 3) uniform sampler2D bloom2;   // eighth
-layout(set = 0, binding = 4) uniform sampler2D fog;      // volumetric light, half res
+layout(set = 0, binding = 4) uniform sampler2D fog;      // volumetric light (rgb) and what of the scene shows through the ground fog (a), half res
 layout(push_constant) uniform PC { vec4 p; } pc;   // x exposure, y bloom strength, z knee, w colour grade amount
 layout(location = 0) in vec2 vUV;
 layout(location = 0) out vec4 outColor;
@@ -20,7 +20,8 @@ void main() {
         vec3 b = texture(bloom0, vUV).rgb * 0.35 + texture(bloom1, vUV).rgb * 0.6 + texture(bloom2, vUV).rgb * 1.0;
         c += b * pc.p.y;
     }
-    c += texture(fog, vUV).rgb;
+    vec4 f = texture(fog, vUV);
+    c = c * f.a + f.rgb;
     c = max(c * pc.p.x, 0.0);
     c = knee(c, clamp(pc.p.z, 0.1, 0.99));
     // Colour grade: a warm Doom palette lean (reds and browns up, blues down), a touch more

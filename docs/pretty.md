@@ -20,6 +20,9 @@ Effort is a rough estimate. Tick items off here as they land, with the commit.
       TLITE flats) as a trim row along the walls, emissive plus point lights.
 - [x] **Volumetric light** (done 2026-09-16: half-res ray march, sun through the shadow map plus torch haze, under BLOOM & HAZE). Sun shafts through the open roof and haze
       around torches, ray-marched against the shadow map.
+- [x] **Interactive ground fog** (done 2026-11-18: a shallow-water field over the floor on the CPU, drawn by the volumetric march, its own OPTIONS row). Bodies
+      plough it with a bow wave and a wake, rockets drag a wind through it, blasts throw it into a ring that slides back,
+      walls hold it, and it swirls and swells by itself; the crypt's fog rolls out when the wall falls.
 - [x] **Ray-traced ambient occlusion** (done 2026-09-16: three rays per pixel in the full ray-tracing mode). Contact shadows where blocks
       meet the floor and between a monster's voxels; needs a temporal blend.
 - [x] **Baked voxel AO** (done 2026-09-16, in the KVX mesher). Per-vertex darkening in crevices when a

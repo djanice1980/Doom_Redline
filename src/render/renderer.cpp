@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "core/png.h"
@@ -45,7 +46,10 @@ struct Renderer::Ubo {
     glm::vec4 shadow;
     glm::vec4 misc;   // x, y = atlas size in texels; z = colour grade amount
     glm::mat4 invViewProj;
+    glm::vec4 groundFog[3];   // [0] x0, z0, 1/cell, strength; [1] cells w, h, layer height, glow; [2] light gain, sun gain
+    glm::vec4 lightClear[kMaxLights / 4];   // light i's shadow-ray clearance is [i / 4][i % 4]
 };
+static_assert(kMaxLights % 4 == 0, "lightClear packs four lights per vec4");
 
 namespace {
 struct CubeVertex {
@@ -104,6 +108,30 @@ Renderer::Renderer(VkContext& ctx) : ctx_(ctx), rt_(ctx.rayQuerySupported()) {
         pi.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
         pi.addressModeU = pi.addressModeV = pi.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         vkCheck(vkCreateSampler(ctx_.device(), &pi, nullptr, &postSampler_), "vkCreateSampler(post)");
+    }
+    {
+        // Two channels: fog depth and the wisp streaks (see GroundFog::pixels).
+        std::vector<uint8_t> zero(static_cast<size_t>(kGroundFogSize) * kGroundFogSize * 2, 0);
+        for (Texture& t : groundFog_) {
+            t = ctx_.createTexture2D(kGroundFogSize, kGroundFogSize, VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+            ctx_.uploadTexture(t, zero.data(), zero.size());
+        }
+    }
+    for (uint32_t i = 0; i < kFramesInFlight; ++i)
+        groundFogStage_[i] = ctx_.createBuffer(static_cast<VkDeviceSize>(kGroundFogSize) * kGroundFogSize * 2, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
+    if (const char* e = std::getenv("REDLINE_GPU_TIMES"); e && *e && *e != '0') {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(ctx_.physicalDevice(), &props);
+        timestampPeriod_ = props.limits.timestampPeriod;
+        if (props.limits.timestampComputeAndGraphics && timestampPeriod_ > 0.f) {
+            VkQueryPoolCreateInfo qi{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            qi.queryCount = 4 * kFramesInFlight;
+            vkCheck(vkCreateQueryPool(ctx_.device(), &qi, nullptr, &timeQueries_), "vkCreateQueryPool");
+        } else {
+            std::fprintf(stderr, "[gpu] timestamps not supported on this queue\n");
+        }
     }
     createDescriptors();
     createPostDescriptors();   // the post pipeline layout must exist before createPipelines()
@@ -238,6 +266,10 @@ Renderer::~Renderer() {
     if (rt_) { destroyBlas(cubeBlas_); for (Tlas& t : tlas_) destroyTlas(t); }
     ctx_.destroyTexture(atlas_);
     ctx_.destroyTexture(shadowMap_);
+    for (Texture& t : groundFog_) ctx_.destroyTexture(t);
+    ctx_.destroyBuffer(capture_);
+    for (Buffer& b : groundFogStage_) ctx_.destroyBuffer(b);
+    if (timeQueries_) vkDestroyQueryPool(d, timeQueries_, nullptr);
     ctx_.destroyTexture(defNormal_);
     ctx_.destroyTexture(defRough_);
     for (int i = 0; i < kMaxMaterials; ++i) { ctx_.destroyTexture(matNormal_[i]); ctx_.destroyTexture(matRough_[i]); }
@@ -321,18 +353,21 @@ void Renderer::createDescriptors() {
     depthBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     depthBinding.descriptorCount = 1;
     depthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding groundBinding = depthBinding;   // the ground fog field
+    groundBinding.binding = 9;
     std::vector<VkDescriptorSetLayoutBinding> all = {bindings[0], bindings[1], bindings[2]};
     if (rt_) all.push_back(tlasBinding);
     all.push_back(matBindings[0]);
     all.push_back(matBindings[1]);
     if (rt_) { all.push_back(ssbo[0]); all.push_back(ssbo[1]); }
     all.push_back(depthBinding);
+    all.push_back(groundBinding);
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     lci.bindingCount = static_cast<uint32_t>(all.size());
     lci.pBindings = all.data();
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (3 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
+    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (4 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight;
     pci.poolSizeCount = rt_ ? 4 : 2;
@@ -459,7 +494,14 @@ void Renderer::writeDescriptors() {
             ni[m] = {matSampler_, matNormal_[m].view ? matNormal_[m].view : defNormal_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             ri[m] = {matSampler_, matRough_[m].view ? matRough_[m].view : defRough_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         }
-        VkWriteDescriptorSet w[5]{};
+        VkDescriptorImageInfo gi{postSampler_, groundFog_[i].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w[6]{};
+        w[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[5].dstSet = sets_[i];
+        w[5].dstBinding = 9;
+        w[5].descriptorCount = 1;
+        w[5].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[5].pImageInfo = &gi;
         w[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[3].dstSet = sets_[i];
         w[3].dstBinding = 4;
@@ -487,7 +529,7 @@ void Renderer::writeDescriptors() {
         w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w[1].pImageInfo = &ii;
-        vkUpdateDescriptorSets(ctx_.device(), 5, w, 0, nullptr);
+        vkUpdateDescriptorSets(ctx_.device(), 6, w, 0, nullptr);
     }
 }
 
@@ -832,12 +874,14 @@ void Renderer::buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeI
     inst.reserve(cubes.size() + meshes.size());
     // Custom index tells a reflection ray what it hit: cube i, or mesh entry j | 0x800000
     // (j indexes the mesh info table filled in render(), same alive filter and order).
-    auto put = [&](const glm::mat4& M, VkDeviceAddress blas, uint32_t custom) {
+    // Mask 1: ordinary geometry. Mask 2: light sources (torch models, embers), which
+    // point-light shadow rays pass through (see rtVisibility in common.glsl).
+    auto put = [&](const glm::mat4& M, VkDeviceAddress blas, uint32_t custom, bool lightSource) {
         VkAccelerationStructureInstanceKHR in{};
         for (int r = 0; r < 3; ++r)
             for (int c = 0; c < 4; ++c) in.transform.matrix[r][c] = M[c][r];
         in.instanceCustomIndex = custom & 0xFFFFFFu;
-        in.mask = 0xFF;
+        in.mask = lightSource ? 0x02 : 0x01;
         in.instanceShaderBindingTableRecordOffset = 0;
         in.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
         in.accelerationStructureReference = blas;
@@ -849,11 +893,11 @@ void Renderer::buildTlas(VkCommandBuffer cmd, uint32_t fi, std::span<const CubeI
         M = glm::rotate(M, c.rot.x, glm::vec3(1.f, 0.f, 0.f));
         M = glm::rotate(M, c.rot.y, glm::vec3(0.f, 1.f, 0.f));
         M = glm::scale(M, glm::vec3(c.posScale.w));
-        put(M, cubeBlas_.addr, static_cast<uint32_t>(i));
+        put(M, cubeBlas_.addr, static_cast<uint32_t>(i), (static_cast<int>(c.params.w) & 4) != 0);
     }
     uint32_t j = 0;
     for (const MeshInstance& mi : meshes)
-        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive && mi.color.a >= 0.999f) put(mi.model, meshes_[mi.mesh].blas.addr, 0x800000u | j++);
+        if (mi.mesh < meshes_.size() && meshes_[mi.mesh].alive && mi.color.a >= 0.999f) put(mi.model, meshes_[mi.mesh].blas.addr, 0x800000u | j++, mi.lightSource);
     const uint32_t n = static_cast<uint32_t>(inst.size());
 
     if (n > t.instCap) {
@@ -980,10 +1024,20 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     for (int i = 0; i < nl; ++i) {
         u.lightPos[i] = glm::vec4(params.lights[i].pos, params.lights[i].radius);
         u.lightColor[i] = glm::vec4(params.lights[i].color, params.lights[i].intensity);
+        u.lightClear[i / 4][i % 4] = params.lights[i].clearance;
     }
     u.counts = glm::ivec4(nl, rt_ ? params.rtShadows : 0, 0, 0);
     u.misc = glm::vec4(static_cast<float>(atlas_.width), static_cast<float>(atlas_.height), params.grade, 0.f);
     u.invViewProj = glm::inverse(u.viewProj);
+    const FrameParams::GroundFog& gf = params.groundFog;
+    const bool groundFog = gf.cells && gf.strength > 0.f && gf.w > 1 && gf.h > 1 && gf.w <= kGroundFogSize && gf.h <= kGroundFogSize;
+    if (groundFog) {
+        u.groundFog[0] = glm::vec4(gf.x0, gf.z0, 1.f / gf.cell, gf.strength);
+        u.groundFog[1] = glm::vec4(static_cast<float>(gf.w), static_cast<float>(gf.h), gf.height, gf.glow);
+        u.groundFog[2] = glm::vec4(gf.lightGain, gf.sunGain, 0.f, 0.f);
+        auto* dst = static_cast<uint8_t*>(groundFogStage_[fi].mapped);
+        for (int j = 0; j < gf.h; ++j) std::memcpy(dst + static_cast<size_t>(j) * kGroundFogSize * 2, gf.cells + static_cast<size_t>(j) * gf.w * 2, static_cast<size_t>(gf.w) * 2);
+    }
     {
         glm::vec3 dir = glm::normalize(params.sunDir);
         glm::vec3 up = std::fabs(dir.y) > 0.95f ? glm::vec3(0.f, 0.f, 1.f) : glm::vec3(0.f, 1.f, 0.f);
@@ -1004,6 +1058,57 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     if (!quadScratch_.empty()) std::memcpy(qdst + worldQuads.size(), quadScratch_.data(), quadScratch_.size() * sizeof(QuadInstance));
 
     VkCommandBuffer cmd = frame.cmd;
+    if (timeQueries_) {
+        // This frame slot's fence has been waited on, so its last results are ready.
+        if (timesPending_[fi]) {
+            uint64_t ts[4]{};
+            if (vkGetQueryPoolResults(ctx_.device(), timeQueries_, 4 * fi, 4, sizeof(ts), ts, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+                const double ns = static_cast<double>(timestampPeriod_);
+                timeFrame_ += static_cast<double>(ts[3] - ts[0]) * ns * 1e-6;
+                timeWorld_ += static_cast<double>(ts[1] - ts[0]) * ns * 1e-6;
+                timeVolume_ += static_cast<double>(ts[2] - ts[1]) * ns * 1e-6;
+                if (++timeSamples_ == 240) {
+                    const double n = timeSamples_;
+                    std::fprintf(stderr, "[gpu] frame %.2f ms: shadows + world %.2f, volumetric + ground fog %.2f, post %.2f (mean of %d)\n",
+                                 timeFrame_ / n, timeWorld_ / n, timeVolume_ / n, (timeFrame_ - timeWorld_ - timeVolume_) / n, timeSamples_);
+                    timeFrame_ = timeWorld_ = timeVolume_ = 0.0;
+                    timeSamples_ = 0;
+                }
+            }
+        }
+        vkCmdResetQueryPool(cmd, timeQueries_, 4 * fi, 4);
+        vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, timeQueries_, 4 * fi);
+        timesPending_[fi] = true;
+    }
+    if (groundFog) {
+        // Into this frame slot's field texture. Its last reader was this slot's previous
+        // frame, which the fence wait in beginFrame has already seen finish.
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = VK_PIPELINE_STAGE_2_NONE;
+        b.srcAccessMask = 0;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        b.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.image = groundFog_[fi].image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+        VkBufferImageCopy region{};
+        region.bufferRowLength = kGroundFogSize;
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {static_cast<uint32_t>(gf.w), static_cast<uint32_t>(gf.h), 1};
+        vkCmdCopyBufferToImage(cmd, groundFogStage_[fi].buffer, groundFog_[fi].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        b.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    }
     if (rt_) {
         // The top-level structure is rebuilt whenever ray-traced shadows are on (and once
         // regardless, so the descriptor always points at a valid structure).
@@ -1241,15 +1346,18 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, quadPipe_);
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &quadInst_[fi].buffer, &off);
-        vkCmdSetDepthTestEnable(cmd, VK_FALSE);
-        vkCmdSetDepthWriteEnable(cmd, VK_FALSE);
+        // They sit at depth 0 and write it (always passing), so the fog pass sees them as
+        // nearer than everything and leaves the weapon unfogged.
+        vkCmdSetDepthTestEnable(cmd, VK_TRUE);
+        vkCmdSetDepthWriteEnable(cmd, VK_TRUE);
         vkCmdDraw(cmd, 6, static_cast<uint32_t>(hdrQuads), 0, static_cast<uint32_t>(worldQuads.size()));
     }
     vkCmdEndRendering(cmd);
     imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
     imageBarrier(tg_.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
 
-    // --- Volumetric light at half res (main set: lights, shadow map, depth) -----------
+    // --- Volumetric light and ground fog at half res (main set: lights, shadow map, depth, fog field)
+    if (timeQueries_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timeQueries_, 4 * fi + 1);
     {
         Texture& t = tg_.fog;
         imageBarrier(t.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
@@ -1276,6 +1384,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdEndRendering(cmd);
         imageBarrier(t.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
     }
+    if (timeQueries_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timeQueries_, 4 * fi + 2);
 
     // --- Post: bloom chain, then composite + HUD into the swapchain image -------------
     auto fullscreen = [&](VkImageView view, VkExtent2D size, VkPipeline pipe, VkDescriptorSet set, glm::vec4 pc) {
@@ -1323,25 +1432,66 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdSetViewport(cmd, 0, 1, &viewport);
         vkCmdSetScissor(cmd, 0, 1, &scissor);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, quadLdrPipe_);
+        // The post pipelines bound since the world pass have no dynamic depth state, which
+        // throws away what was set there; this pass has no depth attachment, so: off.
+        vkCmdSetDepthTestEnable(cmd, VK_FALSE);
+        vkCmdSetDepthWriteEnable(cmd, VK_FALSE);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
         VkDeviceSize off = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &quadInst_[fi].buffer, &off);
         vkCmdDraw(cmd, 6, static_cast<uint32_t>(quadScratch_.size() - hdrQuads), 0, static_cast<uint32_t>(worldQuads.size() + hdrQuads));
     }
     vkCmdEndRendering(cmd);
-    lastImage_ = frame.image;
+    if (captureNext_) {
+        // Copy the finished image out while this frame still owns it; endFrame then moves it
+        // from colour attachment to present as usual.
+        captureNext_ = false;
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(ext.width) * ext.height * 4;
+        if (!capture_.buffer || capture_.size < bytes) {
+            ctx_.waitIdle();
+            ctx_.destroyBuffer(capture_);
+            capture_ = ctx_.createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
+        }
+        imageBarrier(frame.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        VkBufferImageCopy region{};
+        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.imageExtent = {ext.width, ext.height, 1};
+        vkCmdCopyImageToBuffer(cmd, frame.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, capture_.buffer, 1, &region);
+        VkBufferMemoryBarrier2 hb{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};   // visible to the host after the fence
+        hb.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        hb.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        hb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+        hb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+        hb.buffer = capture_.buffer;
+        hb.size = VK_WHOLE_SIZE;
+        VkDependencyInfo hdep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        hdep.bufferMemoryBarrierCount = 1;
+        hdep.pBufferMemoryBarriers = &hb;
+        vkCmdPipelineBarrier2(cmd, &hdep);
+        imageBarrier(frame.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        captureExtent_ = ext;
+        captured_ = true;
+    }
+    if (timeQueries_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timeQueries_, 4 * fi + 3);
     ctx_.endFrame(frame);
     return true;
 }
 
 bool Renderer::readbackFrame(std::vector<uint8_t>& rgba, int& w, int& h) {
-    if (!lastImage_) return false;
-    ctx_.waitIdle();
-    VkExtent2D ext = ctx_.extent();
-    rgba = ctx_.readbackImage(lastImage_, ext.width, ext.height, ctx_.swapchainFormat());
-    for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;
-    w = static_cast<int>(ext.width);
-    h = static_cast<int>(ext.height);
+    if (!captured_) return false;
+    ctx_.waitIdle();   // the captured frame's copy has finished
+    const size_t bytes = static_cast<size_t>(captureExtent_.width) * captureExtent_.height * 4;
+    rgba.assign(static_cast<const uint8_t*>(capture_.mapped), static_cast<const uint8_t*>(capture_.mapped) + bytes);
+    const VkFormat fmt = ctx_.swapchainFormat();
+    const bool bgra = fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB;
+    for (size_t i = 0; i < bytes; i += 4) {
+        if (bgra) std::swap(rgba[i], rgba[i + 2]);
+        rgba[i + 3] = 255;
+    }
+    w = static_cast<int>(captureExtent_.width);
+    h = static_cast<int>(captureExtent_.height);
     return true;
 }
 

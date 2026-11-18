@@ -172,6 +172,9 @@ void VkContext::createDevice() {
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     f13.dynamicRendering = VK_TRUE;
     f13.synchronization2 = VK_TRUE;
+    // glslc targeting Vulkan 1.3 compiles `discard` to OpDemoteToHelperInvocation; every
+    // 1.3 device supports it (a required feature), it just has to be switched on.
+    f13.shaderDemoteToHelperInvocation = VK_TRUE;
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     f12.bufferDeviceAddress = rayQuery_ ? VK_TRUE : VK_FALSE;
     f12.pNext = &f13;
@@ -619,44 +622,6 @@ VkShaderModule VkContext::createShader(const uint32_t* words, size_t bytes) {
     VkShaderModule m;
     vkCheck(vkCreateShaderModule(device_, &ci, nullptr, &m), "vkCreateShaderModule");
     return m;
-}
-
-std::vector<uint8_t> VkContext::readbackImage(VkImage image, uint32_t w, uint32_t h, VkFormat fmt) {
-    size_t bytes = static_cast<size_t>(w) * h * 4;
-    Buffer staging = createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
-    oneTimeSubmit([&](VkCommandBuffer cmd) {
-        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-        b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        b.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        b.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        b.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        b.image = image;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-        dep.imageMemoryBarrierCount = 1;
-        dep.pImageMemoryBarriers = &b;
-        vkCmdPipelineBarrier2(cmd, &dep);
-        VkBufferImageCopy region{};
-        region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        region.imageExtent = {w, h, 1};
-        vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.buffer, 1, &region);
-        b.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-        b.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-        b.dstAccessMask = 0;
-        b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        b.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        vkCmdPipelineBarrier2(cmd, &dep);
-    });
-    std::vector<uint8_t> out(bytes);
-    std::memcpy(out.data(), staging.mapped, bytes);
-    destroyBuffer(staging);
-    // Convert BGRA -> RGBA if needed.
-    if (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB)
-        for (size_t i = 0; i < bytes; i += 4) std::swap(out[i], out[i + 2]);
-    return out;
 }
 
 }  // namespace rl::render

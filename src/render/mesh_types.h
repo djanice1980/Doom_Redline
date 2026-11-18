@@ -18,6 +18,7 @@ struct MeshInstance {
     glm::mat4 model{1.f};
     glm::vec4 color{1.f};     // tint (rgb) and alpha
     glm::vec4 emissive{0.f};  // rgb, w strength
+    bool lightSource = false; // carries a point light (a torch): point-light shadow rays pass through it
 };
 
 }  // namespace rl::render

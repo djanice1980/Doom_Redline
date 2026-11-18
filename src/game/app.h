@@ -18,6 +18,7 @@
 #include "core/tetris_bot.h"
 #include "game/assets.h"
 #include "game/fps_mode.h"
+#include "game/ground_fog.h"
 #include "game/ambient.h"
 #include "game/voxels.h"
 #include "game/playerstats.h"
@@ -68,6 +69,7 @@ struct Options {
     int msaa = -1;                     // -1 saved preference, 0 off, 1 on
     int brutal = -1;                   // -1 saved preference, 0 off, 1 on (gore, gibs, casings)
     int bloom = -1;                    // -1 saved preference, 0 off, 1 on
+    int groundFog = -1;                // -1 saved preference, 0 off, 1 on
 };
 
 class App {
@@ -343,6 +345,17 @@ private:
     int rtShadows_ = 3;                // machine setting (display.txt): 0 map, 1 sun, 2 all lights, 3 + reflections; used when the GPU can
     bool msaa_ = true;                 // machine settings (display.txt): multisampling and bloom
     bool bloom_ = true;
+    std::string pendingShot_;               // F12: the file the next frame is saved to
+    // Interactive ground fog (see ground_fog.h): simulated through a fight, drawn by the
+    // volumetric pass. The field covers the arena, and the crypt once it opens.
+    bool groundFogOn_ = true;
+    GroundFog groundFog_;
+    int fogKey_ = -1;
+    int fogSolidKey_ = -1;                       // the area the field covers: 0 arena, else the crypt's size
+    glm::vec3 fogPlayerPrev_{0.f};
+    std::vector<glm::vec3> fogEnemyPrev_;
+    void syncGroundFog();                   // fits the field to the current stage (or drops it outside a fight)
+    void updateGroundFog(float dt);
     bool hdrQuads_ = false;            // while set, screen sprites/panels go into the HDR world pass (weapon + flash)
     float viewKick_ = 0.f;             // camera pitch kick from firing (radians), decays
     float lastYaw_ = 0.f, lastPitch_ = 0.f, swayX_ = 0.f, swayY_ = 0.f;   // weapon lag behind the view

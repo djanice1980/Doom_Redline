@@ -90,6 +90,7 @@ if(REDLINE_BUILD_GAME)
       src/game/procedural.cpp
       src/game/app.cpp
       src/game/fps_mode.cpp
+      src/game/ground_fog.cpp
       src/game/dungeon.cpp
       src/game/highscores.cpp
       src/game/trophies.cpp
@@ -234,6 +235,10 @@ if(REDLINE_BUILD_GAME)
     target_include_directories(kvx_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_link_libraries(kvx_test PRIVATE glm::glm)
     add_test(NAME kvx_test COMMAND kvx_test)
+    add_executable(ground_fog_test tests/ground_fog_test.cpp src/game/ground_fog.cpp)
+    target_include_directories(ground_fog_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_link_libraries(ground_fog_test PRIVATE glm::glm)
+    add_test(NAME ground_fog_test COMMAND ground_fog_test)
     add_executable(ktx2_test tests/ktx2_test.cpp src/render/ktx2.cpp)
     target_include_directories(ktx2_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
     target_compile_definitions(ktx2_test PRIVATE REDLINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

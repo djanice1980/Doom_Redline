@@ -27,7 +27,7 @@ struct CubeInstance {
     glm::vec4 color;      // rgba
     glm::vec4 emissive;   // rgb, w strength
     glm::vec4 uvRect;     // u0 v0 u1 v1
-    glm::vec4 params;     // roughness, metallic, anim phase, flags (bit0 pulse)
+    glm::vec4 params;     // roughness, metallic, anim phase, flags (bit0 pulse, bit1 reflective, bit2 light source: point-light shadow rays pass through)
     glm::vec4 rot;        // x = rotation about X, y = about Y (radians); applied Y then X
 };
 
@@ -58,6 +58,11 @@ struct PointLight {
     float radius;
     glm::vec3 color;
     float intensity;
+    // Ray-traced shadows: the shadow ray stops this far short of the light. A light
+    // sitting inside its own geometry (a glowing block, an enemy's glow) needs room to
+    // get out; one hanging in the open (a torch flame) wants almost none, or the walls
+    // and corners right next to it stop casting shadows and it shines round them.
+    float clearance = 0.6f;
 };
 
 struct FrameParams {
@@ -85,7 +90,22 @@ struct FrameParams {
     float bloom = 0.4f;
     float grade = 0.5f;   // colour grading amount (warm Doom palette), 0 = off
     float volumetric = 1.f;   // volumetric light strength (sun shafts and torch haze), 0 = off
+    // Ground fog: a density field over the floor (y = 0), one byte per cell, row j at
+    // z = z0 + j * cell. The volumetric pass turns it into a layer that thins out with
+    // height. cells == nullptr or strength == 0: no ground fog.
+    struct GroundFog {
+        const uint8_t* cells = nullptr;   // two bytes per cell: depth (0..255 = 0..2), wisps
+        int w = 0, h = 0;            // at most kGroundFogSize each
+        float x0 = 0.f, z0 = 0.f, cell = 1.f;
+        float strength = 0.f;        // extinction per metre at full density
+        float height = 1.f;          // metres: the layer's typical depth
+        float glow = 1.f;            // how brightly the ambient light lifts it
+        float lightGain = 0.05f;     // how much of the point lights it scatters
+        float sunGain = 0.f;         // how much sunlight it scatters (0 under a roof)
+    } groundFog;
 };
+
+constexpr int kGroundFogSize = 256;
 
 class Renderer {
 public:
@@ -110,9 +130,13 @@ public:
                 std::span<const MeshInstance> meshes = {},
                 std::span<const CubeRange> cubeRanges = {});   // empty = one range, material 0
 
-    // Writes the most recently presented frame to a PNG (blocks the GPU briefly).
+    // Frame capture: call requestCapture() before render(); that frame copies its finished
+    // image out before it is presented (a presented image belongs to the display and may
+    // not be touched). readbackFrame/screenshot then return that frame, blocking until the
+    // GPU is done with it; false if no frame was captured.
+    void requestCapture() { captureNext_ = true; captured_ = false; }
     bool screenshot(const std::string& path);
-    bool readbackFrame(std::vector<uint8_t>& rgba, int& w, int& h);   // the last presented frame, RGBA8, for the recorder
+    bool readbackFrame(std::vector<uint8_t>& rgba, int& w, int& h);   // RGBA8
     VkExtent2D extent() const { return ctx_.extent(); }
     bool rayTracingAvailable() const { return rt_; }
     // 4x (or 2x) multisampling of the world pass; rebuilds the pipelines. No-op when unsupported.
@@ -190,6 +214,17 @@ private:
     Texture defNormal_, defRough_;            // 1x1 fallbacks for empty slots
     Texture matNormal_[kMaxMaterials], matRough_[kMaxMaterials];
     Texture shadowMap_;
+    // Ground fog: the field arrives from the CPU each frame through a per-frame staging
+    // buffer and is copied into that frame's texture at the top of its command buffer. One
+    // texture per frame in flight, so the copy never waits on the frame still drawing.
+    Texture groundFog_[kFramesInFlight];
+    Buffer groundFogStage_[kFramesInFlight];
+    // REDLINE_GPU_TIMES: timestamps around the frame and the volumetric pass, averaged and logged.
+    VkQueryPool timeQueries_ = VK_NULL_HANDLE;
+    float timestampPeriod_ = 0.f;
+    bool timesPending_[kFramesInFlight]{};
+    double timeFrame_ = 0.0, timeWorld_ = 0.0, timeVolume_ = 0.0;
+    int timeSamples_ = 0;
     Buffer ubo_[kFramesInFlight];
     Buffer cubeInst_[kFramesInFlight];
     Buffer quadInst_[kFramesInFlight];
@@ -197,7 +232,10 @@ private:
     size_t quadCap_[kFramesInFlight]{};
     Buffer cubeVB_, cubeIB_;
     uint32_t cubeIndexCount_ = 0;
-    VkImage lastImage_ = VK_NULL_HANDLE;
+    bool captureNext_ = false;
+    bool captured_ = false;
+    Buffer capture_;                 // host-visible copy of the captured frame (swapchain format)
+    VkExtent2D captureExtent_{};
 };
 
 }  // namespace rl::render

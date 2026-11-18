@@ -410,8 +410,9 @@ highlights off instead of clipping them; everything below the knee keeps
 the same look as before, and the HUD is drawn afterwards at full precision.
 OPTIONS > BLOOM & HAZE turns the bloom and the volumetric light off
 together; OPTIONS > ANTI-ALIASING switches 4x MSAA on the world pass (2x
-on GPUs without 4x). Both are machine settings in `display.txt`,
-overridable per run with `--bloom 0|1` and `--msaa 0|1`.
+on GPUs without 4x); OPTIONS > GROUND FOG switches the fog below. All three
+are machine settings in `display.txt`, overridable per run with
+`--bloom 0|1`, `--msaa 0|1` and `--fog 0|1`.
 
 The volumetric light is a half-resolution ray march from the camera to the
 scene depth: sunlight where the shadow map says the sky reaches, and a warm
@@ -422,6 +423,36 @@ chunky look up close without shimmering in the distance, and every flame
 sheds embers. Line clears flash and send a shockwave along the row, pieces
 puff dust when they land, and the falling piece carries its own light.
 
+### Ground fog
+
+Through a fight, mist lies on the floor: a thin layer over the arena, and
+thick in the crypt, where it hides the floor and clears by knee height. It
+moves the way the 2026 Ocarina of Time remake's fog does: like a sheet of
+water. The fog is a 2D field over the floor, depth plus a velocity, simulated
+as shallow water on the CPU at 30 Hz (`src/game/ground_fog.cpp`): deep fog
+spreads into shallow fog, so whatever is pushed aside piles into a ridge that
+rolls on, and a hole fills back in from its edges, sloshes and settles. Left
+alone it never quite stops: a slow swirl drifts it about and a swell builds
+and drains banks of it. The player and every demon plough through it with a
+bow wave and a wake; projectiles drag a wind behind them along the whole
+stretch they cover, so a rocket leaves an unbroken furrow, and one flying
+over the layer still shoves it aside, less the higher it flies; rockets and
+exploding demons throw it outward in a ring; a demon that drops puffs it out.
+Walls hold it: it does not flow or get blasted through stone, the gate or a
+shut door. When the arena wall falls the crypt's fog rolls out through the
+gateway, and the boss hall breathes out when its door opens.
+
+The volumetric pass draws it, with its samples bunched near the camera so the
+metre-deep layer gets enough of them. The deeper the simulated fog, the
+higher its top stands; banks and hollows a few metres across roll by on top
+of that, and the surface heaves with a few slow crossing swells. Inside, two
+layers of streaks drift different ways, thickened and thinned by a second
+simulated channel that the flow drags along, so the fog has depth rather than
+one even density. The top of the layer catches more light than the fog down
+at the floor, which is what makes the crests and hollows visible. On the
+Radeon 8060S at 2560x1440 it adds about 0.7 ms to the frame; the simulation
+takes a little over a millisecond per step in the largest crypt.
+
 ## Ray tracing: shadows and reflections
 
 On a GPU with Vulkan ray-query support (GeForce RTX, Radeon RX 6000 and
@@ -429,7 +460,11 @@ newer including the RDNA3 laptop chips, Intel Arc) OPTIONS > RAY TRACING
 offers OFF (shadow map), SUN SHADOWS, SUN + ALL LIGHTS, and SUN + ALL LIGHTS
 + REFLECTIONS. With all lights on, every torch, lamp, muzzle flash, fireball
 and glowing red block casts a shadow: the stack throws torchlight shadows on
-the floor and monsters shadow each other. With reflections on, the arena
+the floor and monsters shadow each other. A light that sits inside its own
+geometry (a glowing block, a demon's glow) traces its shadow rays to stop a
+little short of it; a torch flame hangs in the open, so its rays run right up
+to it (its model and embers do not count as blockers), and the wall corner
+beside it still stops its light. With reflections on, the arena
 floor becomes a glossy surface that mirrors the stack, the walls and the
 voxel monsters (one bounce per pixel, shaded with a sun shadow ray; sprite
 monsters are not in the ray-traced scene, so they cast neither shadows nor
@@ -743,7 +778,11 @@ title card in a scripted capture (which otherwise starts past it) and
 `REDLINE_LOG_BOT=1` prints what the test bot is doing frame by frame, and
 `REDLINE_LOG_BOSS=1` prints where the big monsters are and how far they moved,
 and `REDLINE_AT_DOOR=1` starts the crypt standing in front of the sealed door
-with the key, which is otherwise a long walk to look at.
+with the key, which is otherwise a long walk to look at. `REDLINE_GPU_TIMES=1`
+logs the GPU time of the frame, split into shadows and world, the volumetric
+pass and post, averaged over 240 frames, and `REDLINE_FOG_DUMP=<file.pgm>`
+rewrites the ground fog field as a greyscale image every frame (fog depth on
+the left, 255 = twice the resting depth; the wisp channel on the right).
 
 ## Layout
 

@@ -375,8 +375,37 @@ through two red lines with the shipped rules.
 - Post chain (see README "Post-processing" and "Ray tracing" for the player's
   view): the world renders to an RGBA16F target, 4x MSAA when enabled, then
   bright-pass, three Gaussian levels, a half-resolution volumetric march
-  (`volume.frag`: sun through the shadow map plus point-light haze), and
-  `composite.frag` (soft-knee tone map, warm grade). The HUD is drawn LDR
+  (`volume.frag`: sun through the shadow map, point-light haze, and the ground
+  fog), and `composite.frag` (soft-knee tone map, warm grade). The march writes
+  rgb = light added and a = transmittance through the ground fog; the
+  composite does `c * a + rgb`. HDR screen quads write depth 0 (sprite texels
+  only) so the march sees them as nearest and leaves the weapon unfogged.
+- Ground fog (`game/ground_fog.h`): a shallow-water grid over the floor (fog
+  depth, velocity, and a passive wisp channel), at most 256 cells a side
+  (0.45 m cells in the largest crypt), stepped at a fixed 30 Hz: velocity
+  relaxes (x0.975 per step) toward an idle swirl (the curl of a drifting noise
+  potential), is pushed down the depth gradient (g = 2 m/s^2 per unit depth,
+  waves at about 1.4 m/s), self-advects and blurs a little; depth and wisps
+  advect semi-Lagrangian, depth is scaled by the flow's divergence (so a push
+  piles a ridge and a hole fills from its edges), and it creeps back toward a
+  per-cell rest value (0.22 over the arena, 1.0 behind the back wall) that
+  itself heaves with a slow noise swell. The idle patterns are refreshed one
+  per step in turn. A solid mask (`setSolid`: walls, rock, the gate and the
+  door until they open) takes no flow, and blasts and body wakes stop at it
+  (a grid line-of-sight test). Bodies are registered each frame
+  (`clearBodies`/`addBody`, swept over the stretch covered in a step) and
+  applied on every step, so the effect does not depend on frame rate; blasts
+  and gusts are one-shot. `App::syncGroundFog` fits the grid to the stage
+  (arena, or arena plus crypt, carrying the old field over), refits the solid
+  mask when the gate or door opens, and drops it outside a fight.
+  The renderer copies the field (depth 0..2 and wisps, 8 bits each) into a
+  per-frame-in-flight RG8 texture (binding 9) at the top of the command
+  buffer. `volume.frag` marches with steps spaced quadratically (24 with fog,
+  14 without); at each step the layer's top is the simulated depth times a
+  drifting bank noise times a sum of three travelling swells, the inside is
+  two height-blended streak noises scaled by the wisps, and the in-scattered
+  ambient, point and sun light is brighter toward the top of the layer, with
+  extinction `groundFog[0].w` per metre. The HUD is drawn LDR
   after the composite; screen quads with `params.w` bit 1 set (weapon, muzzle
   flash) go into the HDR pass instead. Ray-query mode 3 adds floor and block
   reflections (hits resolved through the TLAS custom index into a cube SSBO
@@ -534,7 +563,7 @@ registration and the poll that follows it). `stats_test` covers the round trip a
   (`Audio::setMasterGain`), music on, stick sensitivity, invert, rumble,
   display, resolution, models, Doom WAD, soundtrack WAD, email, online,
   dungeon, Doom art with BRUTAL as a sub-row, ray tracing, anti-aliasing,
-  bloom & haze; BACK is the
+  bloom & haze, ground fog; BACK is the
   last row, `n - 1`). The option rows are built as a list and only the slice
   that fits between the title and the pinned BACK is drawn (`optionsScroll_`;
   "N MORE ABOVE/BELOW" markers); keyboard and pad moves keep the selection in

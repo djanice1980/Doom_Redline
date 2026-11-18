@@ -18,6 +18,9 @@ void main() {
     bool soft = (int(vFlags) & 4) != 0;
     if (world && !soft && tex.a < 0.5) discard;   // hard-edged Doom sprites and decals
     if (soft && a < 0.01) discard;
+    // HDR screen quads (the weapon) write depth so the fog pass leaves them alone: only
+    // where the sprite actually is.
+    if (!world && !soft && (int(vFlags) & 2) != 0 && tex.a < 0.5) discard;
     vec3 col = tex.rgb * vColor.rgb * vLight;
     if (world) col = applyFog(col, vWorldPos);
     outColor = vec4(col, a);

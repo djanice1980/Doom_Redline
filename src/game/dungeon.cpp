@@ -381,6 +381,9 @@ void Dungeon::generate(uint32_t seed, int level, const std::array<int, 7>& piece
 
     // Torches on room walls every few tiles, and along the corridors now and then.
     auto torchAt = [&](int i, int j, int ni, int nj) {   // wall tile (i,j), floor neighbour direction (ni,nj)
+        // Rooms are piece-shaped, so the tile inside the bounding-box wall is not always
+        // floor: a torch facing another wall would hang inside the stone, light and all.
+        if (tile(i + ni, j + nj) != Floor) return;
         glm::vec3 c = tileCentre(i, j);
         glm::vec3 n(static_cast<float>(ni), 0.f, -static_cast<float>(nj));
         torches_.push_back({c + n * 0.62f, n});
