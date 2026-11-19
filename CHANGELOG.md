@@ -4,6 +4,14 @@ The game reads this file (through the service) for its WHAT'S NEW screen, so
 keep the format: a `## <version> (<date>)` heading per release, `- ` bullets
 under it, newest first. Plain sentences; no links or code in the bullets.
 
+## 0.8.1 (2026-11-18)
+- The floor mist moves more slowly when nothing disturbs it, and long rolling waves pass through it: thinner in the troughs, thicker and taller on the crests, so a deep bank has depth to it.
+- The mist curls and streams around you and the demons as you push through it, and the eddies you leave keep turning for a while.
+- The mist no longer looks grainy, and no longer shows a moire pattern or vertical stripes.
+- With ray-traced reflections on, the floor no longer sparkles under the torches. Reflections are slightly glossy and settle over a few frames.
+- Bullet holes, blood and gibs no longer hang in the air of the gateway after the arena's back wall comes down. They land on the crypt's own walls and floor.
+- Starting the game once on a graphics card without ray tracing no longer switches ray tracing off for good.
+
 ## 0.8.0 (2026-11-18)
 - Mist lies on the floor of the crypt, and a thinner layer on the arena. It behaves like water: you and every demon push it aside and leave a wake, a rocket tears a furrow through it, and an explosion throws it outward. It always flows back and settles.
 - Left alone it is never quite still. It drifts, it gathers into banks and drains away, and slow swells roll across it. Walls and shut doors hold it in.
