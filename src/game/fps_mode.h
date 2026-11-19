@@ -314,6 +314,13 @@ public:
     bool solidAt(glm::vec3 p, const core::Game& game) const;
     // First distance along the ray at which a block is hit (or maxT).
     float rayBlockDistance(glm::vec3 o, glm::vec3 d, float maxT, const core::Game& game) const;
+    // The room's own surfaces, not blocks: the arena's walls and floor, its back wall with
+    // the gate open once the crypt is, and the crypt's rock. What bullet holes and blood
+    // stick to and what gibs bounce off.
+    bool wallAt(glm::vec3 p) const;
+    // First distance along the ray at which wallAt turns true, with the face's normal in n;
+    // 1e30 if it does not within maxT.
+    float wallHit(glm::vec3 o, glm::vec3 d, float maxT, glm::vec3& n) const;
 
     void spawnDebris(const glm::vec3& pos, const glm::vec3& color, int count, bool red, int colorIndex = -1);
     void spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind, int color = 0);

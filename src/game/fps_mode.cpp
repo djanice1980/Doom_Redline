@@ -410,6 +410,39 @@ constexpr float kArenaX = 15.f, kArenaZMin = -2.f, kArenaZMax = 23.f;
 constexpr size_t kMaxGore = 900, kMaxDecals = 260;
 }  // namespace
 
+bool FpsMode::wallAt(glm::vec3 p) const {
+    if (p.y < 0.f) return true;
+    if (stage_ == Stage::Dungeon && p.z < kArenaZMin) {
+        // The back wall's thickness is open only at the gate.
+        if (p.z > Dungeon::kZTop) return std::fabs(p.x) >= Dungeon::kGateHalf;
+        // A door is not wall: shut, it is hit as a block (solidAt), so no mark is left
+        // hanging in the air once it opens.
+        if (dungeon_.doorAt(p.x, p.z)) return false;
+        return !dungeon_.floorAt(p.x, p.z) && p.y <= std::max(Dungeon::kWallHeight, dungeon_.ceilingAt(p.x, p.z));
+    }
+    return std::fabs(p.x) > kArenaX || p.z > kArenaZMax || p.z < kArenaZMin;
+}
+
+float FpsMode::wallHit(glm::vec3 o, glm::vec3 d, float maxT, glm::vec3& n) const {
+    const float step = 0.05f;
+    float open = 0.f;
+    for (float t = step; t <= maxT; t += step) {
+        if (!wallAt(o + d * t)) { open = t; continue; }
+        // Close in on the face, then name it by the one axis whose crossing enters the wall.
+        float lo = open, hi = t;
+        for (int k = 0; k < 12; ++k) {
+            const float m = 0.5f * (lo + hi);
+            (wallAt(o + d * m) ? hi : lo) = m;
+        }
+        const glm::vec3 a = o + d * lo, b = o + d * hi;
+        if (wallAt(glm::vec3(b.x, a.y, a.z))) n = glm::vec3(d.x > 0.f ? -1.f : 1.f, 0.f, 0.f);
+        else if (wallAt(glm::vec3(a.x, a.y, b.z))) n = glm::vec3(0.f, 0.f, d.z > 0.f ? -1.f : 1.f);
+        else n = glm::vec3(0.f, d.y > 0.f ? -1.f : 1.f, 0.f);
+        return hi;
+    }
+    return 1e30f;
+}
+
 void FpsMode::spawnBlood(glm::vec3 pos, glm::vec3 dir, int count, float speed, int kind, int color) {
     if (!brutal_) return;
     if (gore_.size() + static_cast<size_t>(count) > kMaxGore) count = static_cast<int>(kMaxGore - gore_.size());
@@ -459,25 +492,42 @@ void FpsMode::updateGore(float dt) {
         bool gone = g.ttl <= 0.f;
         if (!g.resting) {
             g.vel.y -= (g.kind == 2 ? 10.f : 14.f) * dt;
+            const glm::vec3 from = g.pos;
             g.pos += g.vel * dt;
             const float half = g.size * 0.5f;
-            // Walls: blood sticks as a splat, chunks and casings bounce off.
+            // Walls (the room's own, see wallAt): blood sticks as a splat, chunks and casings
+            // bounce off. Each axis is tested at the leading edge, at floor height or above
+            // (the floor is handled below).
             for (int axis = 0; axis < 2 && !gone; ++axis) {
                 float& p = axis == 0 ? g.pos.x : g.pos.z;
                 float& v = axis == 0 ? g.vel.x : g.vel.z;
-                const float lo = (axis == 0 ? -kArenaX : kArenaZMin) + half, hi = (axis == 0 ? kArenaX : kArenaZMax) - half;
-                if (p < lo || p > hi) {
-                    const float side = p < lo ? -1.f : 1.f;
-                    if (g.kind == 0) {
-                        glm::vec3 n = axis == 0 ? glm::vec3(-side, 0.f, 0.f) : glm::vec3(0.f, 0.f, -side);
-                        glm::vec3 at = g.pos;
-                        (axis == 0 ? at.x : at.z) = (side < 0.f ? lo - half : hi + half) + n[axis == 0 ? 0 : 2] * 0.02f;
-                        if (at.y > 0.05f) addDecal(at, n, 0.2f + 0.2f * u(rng_), 1, g.color);
-                        gone = true;
-                    } else {
-                        p = std::clamp(p, lo, hi);
-                        v = -v * 0.4f;
-                    }
+                if (v == 0.f) continue;
+                const float side = v > 0.f ? 1.f : -1.f;
+                auto wallAlong = [&](float c) {
+                    glm::vec3 q(g.pos.x, std::max(g.pos.y, 0.01f), g.pos.z);
+                    (axis == 0 ? q.x : q.z) = c;
+                    return wallAt(q);
+                };
+                float lo = (axis == 0 ? from.x : from.z) + side * half, hi = p + side * half;
+                if (!wallAlong(hi)) continue;
+                if (wallAlong(lo)) {   // already inside the wall: nothing to land on
+                    if (g.kind == 0) gone = true;
+                    continue;
+                }
+                for (int k = 0; k < 10; ++k) {
+                    const float m = 0.5f * (lo + hi);
+                    (wallAlong(m) ? hi : lo) = m;
+                }
+                if (g.kind == 0) {
+                    glm::vec3 n(0.f);
+                    n[axis == 0 ? 0 : 2] = -side;
+                    glm::vec3 at = g.pos;
+                    (axis == 0 ? at.x : at.z) = lo - side * 0.02f;
+                    if (at.y > 0.05f) addDecal(at, n, 0.2f + 0.2f * u(rng_), 1, g.color);
+                    gone = true;
+                } else {
+                    p = lo - side * half;
+                    v = -v * 0.4f;
                 }
             }
             // Floor: blood becomes a pool, chunks and casings bounce then rest.
@@ -608,18 +658,10 @@ void FpsMode::hitscan(glm::vec3 o, glm::vec3 d, float damage, core::Game& game, 
     }
     if (!best) {
         // Nothing hit: a bullet hole where the shot meets a wall or the floor (before any block).
-        float tWall = 60.f;
+        // The room's own walls, not the arena's box: once the crypt is open a shot through the
+        // gate goes on to the crypt's rock instead of leaving a hole in the air where the wall was.
         glm::vec3 nWall(0.f, 1.f, 0.f);
-        auto plane = [&](float p0, float dir, float target, glm::vec3 n) {
-            if (std::fabs(dir) < 1e-5f) return;
-            float t = (target - p0) / dir;
-            if (t > 0.f && t < tWall) { tWall = t; nWall = n; }
-        };
-        plane(o.x, d.x, -kArenaX, {1.f, 0.f, 0.f});
-        plane(o.x, d.x, kArenaX, {-1.f, 0.f, 0.f});
-        plane(o.z, d.z, kArenaZMin, {0.f, 0.f, 1.f});
-        plane(o.z, d.z, kArenaZMax, {0.f, 0.f, -1.f});
-        plane(o.y, d.y, 0.f, {0.f, 1.f, 0.f});
+        const float tWall = wallHit(o, d, std::min(60.f, blockT + 0.05f), nWall);
         if (blockT < 60.f && blockT < tWall) spawnDebris(o + d * blockT, {0.6f, 0.6f, 0.6f}, 2, false);
         else if (tWall < 60.f) { addDecal(o + d * tWall + nWall * 0.02f, nWall, 0.12f, 2); if (brutal_) push(FpsEvent::Type::BulletHole, o + d * tWall + nWall * 0.12f, 0, nWall.y > 0.5f ? 0 : 1); }
         return;
@@ -1363,6 +1405,10 @@ void FpsMode::update(float dt, const FpsInput& in, core::Game& game) {
                         stage_ = Stage::GateFalling;
                         stageT_ = 0.f;
                         finishDelay_ = 0.f;
+                        // Marks on the stretch of wall that falls go with it.
+                        std::erase_if(decals_, [](const Decal& m) {
+                            return m.normal.z > 0.5f && m.pos.z < kArenaZMin + 0.1f && std::fabs(m.pos.x) < Dungeon::kGateHalf + m.size;
+                        });
                         for (int k = 0; k < 6; ++k) spawnDebris(glm::vec3(-1.5f + static_cast<float>(k % 4), 0.5f + static_cast<float>(k / 4) * 2.f, -2.f), {0.6f, 0.6f, 0.6f}, 6, false);   // mortar flying off the wall
                         push(FpsEvent::Type::GateFalls, glm::vec3(0.f, 1.f, -2.5f));
                     } else {
@@ -1404,6 +1450,9 @@ void FpsMode::closeDungeon() {
     stage_ = Stage::Arena;
     stageT_ = 0.f;
     dungeon_.clear();
+    // The back wall stands again: nothing that was beyond it may show through it.
+    std::erase_if(decals_, [](const Decal& m) { return m.pos.z < kArenaZMin; });
+    std::erase_if(gore_, [](const Gore& g) { return g.pos.z < kArenaZMin; });
 }
 
 void FpsMode::debugClearArena() {
