@@ -1,9 +1,11 @@
 // Ground fog field: bodies plough it, a fast body leaves an unbroken furrow, blasts
-// throw it and it flows back in, walls hold it, it keeps moving by itself, it carries
-// over when the area grows, and a full-size step stays cheap.
+// throw it and it flows back in, eddies curl on in a wake, walls hold it, it keeps
+// moving by itself, it carries over when the area grows, the texture carries the
+// flow, and a full-size step stays cheap.
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 #include "game/ground_fog.h"
 
@@ -61,6 +63,81 @@ int main() {
         run(g, 15.f);
         std::printf("rocket furrow after 15 s: %.3f\n", g.densityAt(0.f, 5.f));
         CHECK(std::fabs(g.densityAt(0.f, 5.f) - 1.f) < 0.06f);
+    }
+
+    // A wake keeps curling: with the spin fed back, the eddies a runner leaves are
+    // several times stronger a second and two seconds on than with it off, they die
+    // away in the end, and still air stays still.
+    {
+        auto peakSpin = [](const GroundFog& g) {
+            float peak = 0.f;
+            const float h = 0.2f;
+            for (float x = -9.f; x < 5.f; x += 0.2f)
+                for (float z = 7.f; z < 13.f; z += 0.2f) {
+                    const float w = (g.flowAt(x + h, z).y - g.flowAt(x - h, z).y - g.flowAt(x, z + h).x + g.flowAt(x, z - h).x) / (2.f * h);
+                    peak = std::max(peak, std::fabs(w));
+                }
+            return peak;
+        };
+        float at1[2], at2[2], late = 0.f;
+        for (int on = 0; on < 2; ++on) {
+            GroundFog g;
+            g.setBounds(-16.f, -3.f, 16.f, 24.f);
+            g.setRest([](float, float) { return 1.f; }, true);
+            g.setSwell(0.f);
+            if (!on) g.setSpinKeep(0.f);
+            glm::vec3 q(-10.f, 0.f, 10.f), qv(5.f, 0.f, 0.f);
+            for (int s = 0; s < 90; ++s) { g.clearBodies(); g.addBody(q, qv, 0.7f); g.update(GroundFog::kStep); q += qv * GroundFog::kStep; }
+            g.clearBodies();
+            run(g, 1.f); at1[on] = peakSpin(g);
+            run(g, 1.f); at2[on] = peakSpin(g);
+            if (on) { run(g, 30.f); late = g.spin(); }
+        }
+        std::printf("wake spin: 1 s on %.2f/s (off %.2f), 2 s on %.2f/s (off %.2f), 32 s %.4f\n", at1[1], at1[0], at2[1], at2[0], late);
+        CHECK(at1[1] > 3.f * at1[0] && at1[1] > 1.5f);
+        CHECK(at2[1] > 5.f * at2[0]);
+        CHECK(late < 0.005f);
+    }
+
+    // The texture carries the flow: still fog is exactly 128 in both velocity bytes, and
+    // a runner's wake shows up there.
+    {
+        GroundFog g;
+        g.setBounds(-8.f, -8.f, 8.f, 8.f);
+        g.setRest([](float, float) { return 1.f; }, true);
+        g.setSwell(0.f);
+        g.update(GroundFog::kStep);
+        CHECK(g.pixels().size() == static_cast<size_t>(g.width()) * g.height() * 4);
+        CHECK(g.pixels()[2] == 128 && g.pixels()[3] == 128);
+        glm::vec3 q(-5.f, 0.f, 0.f), qv(5.f, 0.f, 0.f);
+        for (int s = 0; s < 30; ++s) { g.clearBodies(); g.addBody(q, qv, 0.7f); g.update(GroundFog::kStep); q += qv * GroundFog::kStep; }
+        int moved = 0;
+        for (size_t k = 0; k < g.pixels().size(); k += 4) moved += std::abs(static_cast<int>(g.pixels()[k + 2]) - 128) > 10;
+        std::printf("texture: %d cells show the wake\n", moved);
+        CHECK(moved > 20);
+    }
+
+    // The wisp pattern tiles: the last column runs on into the first as smoothly as
+    // any two neighbouring columns do, and so do the rows; and it has wisps and gaps.
+    {
+        const int n = 256;
+        const std::vector<uint8_t> w = GroundFog::wispPattern(n);
+        CHECK(w.size() == static_cast<size_t>(n) * n);
+        double inside = 0.0, seamX = 0.0, seamY = 0.0, mean = 0.0;
+        int lo = 255, hi = 0;
+        for (int j = 0; j < n; ++j)
+            for (int i = 0; i < n; ++i) {
+                const int v = w[static_cast<size_t>(j * n + i)];
+                lo = std::min(lo, v); hi = std::max(hi, v); mean += v;
+                if (i + 1 < n) inside += std::abs(v - w[static_cast<size_t>(j * n + i + 1)]);
+            }
+        for (int j = 0; j < n; ++j) seamX += std::abs(w[static_cast<size_t>(j * n + n - 1)] - w[static_cast<size_t>(j * n)]);
+        for (int i = 0; i < n; ++i) seamY += std::abs(w[static_cast<size_t>((n - 1) * n + i)] - w[static_cast<size_t>(i)]);
+        inside /= static_cast<double>(n) * (n - 1);
+        seamX /= n; seamY /= n; mean /= static_cast<double>(n) * n;
+        std::printf("wisp pattern: step between columns %.2f, across the seams %.2f / %.2f, range %d..%d, mean %.0f\n", inside, seamX, seamY, lo, hi, mean);
+        CHECK(seamX < 2.5 * inside && seamY < 2.5 * inside);
+        CHECK(lo < 10 && hi > 245);
     }
 
     // A blast empties its middle and throws a ring up around it, and the fog flows

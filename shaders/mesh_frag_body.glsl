@@ -11,6 +11,7 @@ layout(location = 1) in vec3 vNormal;
 layout(location = 2) in vec4 vColor;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec4 outRefl;   // covers the floor's reflection as much as it covers the floor (see cube_frag_body.glsl)
 
 void main() {
     // Soften the axis-aligned normals towards the viewer so voxel monsters read
@@ -21,4 +22,5 @@ void main() {
     lit += pc.emissive.rgb * pc.emissive.w;
     lit = applyFog(lit, vWorldPos);
     outColor = vec4(lit, vColor.a);
+    outRefl = vec4(0.0, 0.0, 0.0, vColor.a);
 }

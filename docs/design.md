@@ -398,18 +398,34 @@ through two red lines with the shipped rules.
   and gusts are one-shot. `App::syncGroundFog` fits the grid to the stage
   (arena, or arena plus crypt, carrying the old field over), refits the solid
   mask when the gate or door opens, and drops it outside a fight.
-  The renderer copies the field (depth 0..2 and wisps, 8 bits each) into a
-  per-frame-in-flight RG8 texture (binding 9) at the top of the command
-  buffer. `volume.frag` marches with steps spaced quadratically (24 with fog,
-  14 without); at each step the layer's top is the simulated depth times a
-  drifting bank noise times a sum of three travelling swells, the inside is
-  two height-blended streak noises scaled by the wisps, and the in-scattered
-  ambient, point and sun light is brighter toward the top of the layer, with
-  extinction `groundFog[0].w` per metre. The HUD is drawn LDR
+  The idle swirl and the idle patterns run at `kIdlePace` (0.6) of their
+  original speed, so the mist creeps; pushes are not slowed.
+  The renderer copies the field (depth 0..2, wisps, flow x and z, 8 bits
+  each) into a per-frame-in-flight RGBA8 texture (binding 9) at the top of the
+  command buffer. `volume.frag` marches the ground fog in its own march clipped
+  to the layer; at each step the layer's top is the simulated depth times a
+  drifting bank noise, a sum of three travelling swells and two noise-bent
+  rolling wave trains (7 m and 4.5 m; troughs are thinner and lower, crests
+  thicker and taller), and the inside is two height-blended streak noises
+  scaled by a fine wisp texture (binding 10) dragged along the flow (a flow
+  map, two phases 2.2 s long) and read in height slices so a screen column
+  does not meet the same wisps all the way down. The in-scattered ambient,
+  point and sun light is brighter toward the top of the layer, with
+  extinction `groundFog[0].w` per metre. The march is jittered per frame and
+  `fog_resolve.frag` blends it over frames: last frame's result is
+  reprojected through the depth, clipped to this frame's 3x3 mean +- 1.25
+  sigma, and mixed in at 0.1 (1 on a cut of over 2 m). The HUD is drawn LDR
   after the composite; screen quads with `params.w` bit 1 set (weapon, muzzle
   flash) go into the HDR pass instead. Ray-query mode 3 adds floor and block
   reflections (hits resolved through the TLAS custom index into a cube SSBO
-  and a mesh-address table) and a three-ray ambient-occlusion term.
+  and a mesh-address table) and a three-ray ambient-occlusion term. The
+  reflections are glossy: one ray per pixel per frame, sampled from the GGX
+  visible-normal lobe (alpha = roughness^2 * 0.15) about the bumped normal,
+  written to a second world-pass attachment (rgb = reflection, a = ray
+  length). `refl_resolve.frag` blends them over frames, reprojecting to the
+  reflected point (the ray length past the surface along the view ray),
+  clipping in a luminance-compressed space and adding the result into the
+  HDR target.
 - Screen quads: `mode 1` HUD, `mode 2/3` floor/wall decals, `params.w` bit 2
   = soft alpha (no cutoff, no shadow). The atlas has three mip levels with
   sprite edges dilated so the sharpened bilinear sampler (`atlas_frag.glsl`)

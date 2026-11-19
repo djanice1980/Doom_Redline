@@ -124,6 +124,7 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (wad && assets_.usingWad()) wadPath_ = wad->string();
     renderer_->setAtlas(assets_.atlas().image());
     renderer_->setMsaa(msaa_);
+    renderer_->setGroundFogWisps(GroundFog::wispPattern(256), 256);
     // No ray tracing on this GPU (or REDLINE_NO_RT): it is off for this run only, the menu and
     // the frame already treat it so. Saving 0 here wiped the choice for the machine's RT GPU
     // the next time the game started there.
@@ -2755,6 +2756,16 @@ void App::update(float dt) {
         in.moveX = (fpsIn_.right ? 1.f : 0.f) - (fpsIn_.left ? 1.f : 0.f) + fpsIn_.padMoveX;
         in.lookDX = fpsIn_.dx;
         in.lookDY = fpsIn_.dy;
+        // Testing: a scripted run turns at REDLINE_TURN=<degrees a second>[@<from>[:<to>]]
+        // (positive to the left, between those frames), so it can walk into a room and then
+        // turn round to look at its own wake.
+        if (opts_.frames > 0)
+            if (static const char* turn = std::getenv("REDLINE_TURN"); turn) {
+                const char* at = std::strchr(turn, '@');
+                const char* to = at ? std::strchr(at, ':') : nullptr;
+                const bool on = (!at || frameCount_ >= std::atoi(at + 1)) && (!to || frameCount_ < std::atoi(to + 1));
+                if (on) in.lookDX -= static_cast<float>(std::atof(turn)) * 0.0174533f * dt / 0.0022f;
+            }
         in.fire = fpsIn_.fire || fpsIn_.padFire;
         in.selectWeapon = fpsIn_.select;
         in.wheel = fpsIn_.wheel;
@@ -3097,8 +3108,8 @@ void App::updateGroundFog(float dt) {
             std::fprintf(f, "P5\n%d %d\n255\n", w * 2, h);
             std::vector<uint8_t> row(static_cast<size_t>(w) * 2);
             for (int j = 0; j < h; ++j) {
-                const uint8_t* src = groundFog_.pixels().data() + static_cast<size_t>(j) * w * 2;
-                for (int i = 0; i < w; ++i) { row[static_cast<size_t>(i)] = src[2 * i]; row[static_cast<size_t>(w + i)] = src[2 * i + 1]; }
+                const uint8_t* src = groundFog_.pixels().data() + static_cast<size_t>(j) * w * 4;
+                for (int i = 0; i < w; ++i) { row[static_cast<size_t>(i)] = src[4 * i]; row[static_cast<size_t>(w + i)] = src[4 * i + 1]; }
                 std::fwrite(row.data(), 1, row.size(), f);
             }
             std::fclose(f);

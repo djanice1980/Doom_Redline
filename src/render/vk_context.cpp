@@ -134,6 +134,7 @@ void VkContext::pickDevice(bool preferIntegrated) {
         VkPhysicalDeviceFeatures f{};
         vkGetPhysicalDeviceFeatures(physical_, &f);
         bc_ = f.textureCompressionBC == VK_TRUE;
+        independentBlend_ = f.independentBlend == VK_TRUE;
         VkPhysicalDeviceProperties p{};
         vkGetPhysicalDeviceProperties(physical_, &p);
         const VkSampleCountFlags counts = p.limits.framebufferColorSampleCounts & p.limits.framebufferDepthSampleCounts;
@@ -188,6 +189,7 @@ void VkContext::createDevice() {
     f2.pNext = rayQuery_ ? static_cast<void*>(&asf) : static_cast<void*>(&f12);
     f2.features.samplerAnisotropy = VK_FALSE;
     f2.features.textureCompressionBC = bc_ ? VK_TRUE : VK_FALSE;
+    f2.features.independentBlend = independentBlend_ ? VK_TRUE : VK_FALSE;
 
     std::vector<const char*> exts = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
     if (rayQuery_) {

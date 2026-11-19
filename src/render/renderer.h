@@ -90,11 +90,11 @@ struct FrameParams {
     float bloom = 0.4f;
     float grade = 0.5f;   // colour grading amount (warm Doom palette), 0 = off
     float volumetric = 1.f;   // volumetric light strength (sun shafts and torch haze), 0 = off
-    // Ground fog: a density field over the floor (y = 0), one byte per cell, row j at
+    // Ground fog: a density field over the floor (y = 0), four bytes per cell, row j at
     // z = z0 + j * cell. The volumetric pass turns it into a layer that thins out with
     // height. cells == nullptr or strength == 0: no ground fog.
     struct GroundFog {
-        const uint8_t* cells = nullptr;   // two bytes per cell: depth (0..255 = 0..2), wisps
+        const uint8_t* cells = nullptr;   // four bytes per cell: depth (0..255 = 0..2), wisps, flow x, flow z (128 = still)
         int w = 0, h = 0;            // at most kGroundFogSize each
         float x0 = 0.f, z0 = 0.f, cell = 1.f;
         float strength = 0.f;        // extinction per metre at full density
@@ -117,6 +117,9 @@ public:
     void setAtlas(const Image& atlas);
     // Material slots 1..maps.size() (at most kMaxMaterials - 1); an empty span clears them all.
     void setMaterialMaps(std::span<const MaterialMaps> maps);
+    // The fine wisp pattern the ground fog drags along its flow: size x size bytes, one
+    // channel, tiling (GroundFog::wispPattern). size must be a power of two.
+    void setGroundFogWisps(const std::vector<uint8_t>& pattern, int size);
 
     // Static meshes (voxel models): uploaded once, drawn by id with a model matrix.
     uint32_t createMesh(std::span<const MeshVertex> verts, std::span<const uint32_t> indices);
@@ -179,14 +182,32 @@ private:
     VkPipeline brightPipe_ = VK_NULL_HANDLE;
     VkPipeline blurPipe_ = VK_NULL_HANDLE;
     VkPipeline compositePipe_ = VK_NULL_HANDLE;
-    VkPipeline volumePipe_ = VK_NULL_HANDLE;      // ray-marched light, uses the main set (lights, shadow map, depth)
+    VkPipeline volumePipe_ = VK_NULL_HANDLE;
+    VkPipeline fogResolvePipe_ = VK_NULL_HANDLE;      // ray-marched light, uses the main set (lights, shadow map, depth)
+    VkPipeline reflResolvePipe_ = VK_NULL_HANDLE;     // the floor's reflections blended over frames, added into the HDR image
     VkDescriptorSetLayout postLayout_ = VK_NULL_HANDLE;
     VkDescriptorPool postPool_ = VK_NULL_HANDLE;
     VkPipelineLayout postPipeLayout_ = VK_NULL_HANDLE;
     VkSampler postSampler_ = VK_NULL_HANDLE;
-    enum PostSet { kSetHdr, kSetB0, kSetB1, kSetB2, kSetB3, kSetB4, kSetB5, kSetComposite, kSetCount };
+    enum PostSet { kSetHdr, kSetB0, kSetB1, kSetB2, kSetB3, kSetB4, kSetB5, kSetComposite, kSetFogResolve, kSetReflResolve, kSetCount };
     VkDescriptorSet postSets_[kSetCount]{};
-    struct Targets { VkExtent2D extent{}; Texture hdr, msaaColor, msaaDepth, depth, fog; Texture bloom[6]; } tg_;   // depth: resolved scene depth (sampled by the fog pass); fog: half res
+    // depth: resolved scene depth (sampled by the fog pass); fog: this frame's fog pass,
+    // fogOut: blended with the frames before it (what the composite reads), fogHistory:
+    // a copy of fogOut kept for the next frame. All three half res.
+    // refl: the world pass's second output, the floor's reflection on its own (msaaRefl
+    // when multisampled, resolved into refl); reflOut: blended with the frames before it
+    // and added into hdr; reflHistory: a copy of reflOut for the next frame. Full res.
+    struct Targets { VkExtent2D extent{}; Texture hdr, msaaColor, msaaDepth, depth, fog, fogOut, fogHistory, refl, msaaRefl, reflOut, reflHistory; Texture bloom[6]; } tg_;
+    // The fog's blend over time: last frame's camera, whether fogHistory holds anything
+    // yet, and a frame count that moves the fog pass's samples along the ray.
+    glm::mat4 fogPrevViewProj_{1.f};
+    glm::vec3 fogPrevCam_{0.f};
+    bool fogHistoryValid_ = false;
+    uint32_t fogFrame_ = 0;
+    // The reflections' blend over time, as the fog's (the frame count is fogFrame_).
+    glm::mat4 reflPrevViewProj_{1.f};
+    glm::vec3 reflPrevCam_{0.f};
+    bool reflHistoryValid_ = false;
     VkSampleCountFlagBits msaaSamples_ = VK_SAMPLE_COUNT_1_BIT;
     std::vector<QuadInstance> quadScratch_;
     // Ray tracing: one bottom-level structure per mesh (and one for the unit cube), a
@@ -219,6 +240,7 @@ private:
     // texture per frame in flight, so the copy never waits on the frame still drawing.
     Texture groundFog_[kFramesInFlight];
     Buffer groundFogStage_[kFramesInFlight];
+    Texture groundFogWisps_;   // tiling wisp pattern, R8 with mips (binding 10)
     // REDLINE_GPU_TIMES: timestamps around the frame and the volumetric pass, averaged and logged.
     VkQueryPool timeQueries_ = VK_NULL_HANDLE;
     float timestampPeriod_ = 0.f;

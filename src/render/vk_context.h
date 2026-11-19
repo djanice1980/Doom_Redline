@@ -85,6 +85,8 @@ public:
     // Uploads every mip level (level 0 first, extents halving) of a texture created with that many levels.
     void uploadTextureLevels(Texture& t, const std::vector<std::vector<uint8_t>>& levels);
     bool bcTexturesSupported() const { return bc_; }
+    // independentBlend: a different blend per colour attachment (the world pass's reflection output).
+    bool independentBlend() const { return independentBlend_; }
     void destroyTexture(Texture& t);
     void uploadTexture(Texture& t, const void* rgba, size_t bytes);   // -> SHADER_READ_ONLY_OPTIMAL
     void uploadBuffer(Buffer& dst, const void* data, size_t bytes);   // via staging
@@ -113,6 +115,7 @@ private:
     std::string gpuName_;
     bool rayQuery_ = false;
     bool bc_ = false;                 // textureCompressionBC (BC5/BC7 material maps)
+    bool independentBlend_ = false;
     VkSampleCountFlagBits maxMsaa_ = VK_SAMPLE_COUNT_1_BIT;
     RtFuncs rt_;
     VkDeviceSize scratchAlignment_ = 256;

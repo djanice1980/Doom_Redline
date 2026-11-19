@@ -16,6 +16,11 @@ layout(set = 0, binding = 5) uniform sampler2D matRough[8];
 layout(push_constant) uniform CubePC { int material; } cpc;
 
 layout(location = 0) out vec4 outColor;
+// The reflection, kept apart from the colour so it can be blended over frames
+// (refl_resolve.frag): rgb = what it adds to the colour, fog and all; a = how far the
+// reflection ray went (0 = no reflection here), so the blend can find where the
+// reflected thing was last frame.
+layout(location = 1) out vec4 outRefl;
 
 #ifdef RT_SHADOWS
 // Ray-traced reflections: one ray per fragment of a reflective cube; the hit is shaded
@@ -54,12 +59,13 @@ vec3 shadeHit(vec3 H, vec3 N, vec3 albedo, vec3 emissive, float camDist) {
     return mix(lit, u.fogColor.rgb, clamp(f, 0.0, 1.0));
 }
 
-vec3 traceReflection(vec3 P, vec3 N, vec3 R) {
+// rgb = the light coming back along R, a = how far the ray went (80 when it hit nothing).
+vec4 traceReflection(vec3 P, vec3 N, vec3 R) {
     vec3 origin = P + N * 0.03;
     rayQueryEXT q;
     rayQueryInitializeEXT(q, tlas, gl_RayFlagsOpaqueEXT, 0xFF, origin, 0.02, R, 80.0);
     while (rayQueryProceedEXT(q)) {}
-    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) return u.fogColor.rgb;
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionNoneEXT) return vec4(u.fogColor.rgb, 80.0);
     float t = rayQueryGetIntersectionTEXT(q, true);
     vec3 H = origin + R * t;
     int custom = rayQueryGetIntersectionInstanceCustomIndexEXT(q, true);
@@ -97,7 +103,23 @@ vec3 traceReflection(vec3 P, vec3 N, vec3 R) {
         hitEmis = mi.emissive.rgb * mi.emissive.w;
     }
     if (dot(hitN, R) > 0.0) hitN = -hitN;
-    return shadeHit(H, hitN, hitAlbedo, hitEmis, length(u.cameraPos.xyz - P) + t);
+    return vec4(shadeHit(H, hitN, hitAlbedo, hitEmis, length(u.cameraPos.xyz - P) + t), t);
+}
+
+// A microfacet normal for view direction Ve (tangent space, z = the surface normal) drawn
+// from the GGX distribution of roughness a, as the view sees it (Heitz 2018). U: two
+// numbers in [0, 1).
+vec3 sampleGgxVisibleNormal(vec3 Ve, float a, vec2 U) {
+    vec3 Vh = normalize(vec3(a * Ve.x, a * Ve.y, Ve.z));
+    float lensq = Vh.x * Vh.x + Vh.y * Vh.y;
+    vec3 T1 = lensq > 0.0 ? vec3(-Vh.y, Vh.x, 0.0) * inversesqrt(lensq) : vec3(1.0, 0.0, 0.0);
+    vec3 T2 = cross(Vh, T1);
+    float r = sqrt(U.x), phi = 6.2831853 * U.y;
+    float t1 = r * cos(phi), t2 = r * sin(phi);
+    float s = 0.5 * (1.0 + Vh.z);
+    t2 = (1.0 - s) * sqrt(max(1.0 - t1 * t1, 0.0)) + s * t2;
+    vec3 Nh = t1 * T1 + t2 * T2 + sqrt(max(1.0 - t1 * t1 - t2 * t2, 0.0)) * Vh;
+    return normalize(vec3(a * Nh.x, a * Nh.y, max(Nh.z, 0.0)));
 }
 #endif
 
@@ -116,6 +138,8 @@ void main() {
         rough = clamp(rough + (texture(matRough[cpc.material], vFaceUV).r - 0.93) * 2.0, 0.03, 1.0);
     }
     vec3 lit = shade(vWorldPos, N, albedo, rough, vParams.y);
+    vec3 reflAdd = vec3(0.0);
+    float reflDist = 0.0;
 #ifdef RT_SHADOWS
     // flag bit 2: reflective surface (the arena floor). Glossiness comes from the
     // roughness (map included), the view angle adds the usual Fresnel rise at grazing angles.
@@ -126,9 +150,34 @@ void main() {
         float fres = 0.04 + 0.96 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
         float w = clamp(gloss * mix(0.5 + 0.5 * fres, 1.0, vParams.y), 0.0, 0.9);
         if (w > 0.01) {
-            vec3 R = reflect(-V, N);
-            vec3 refl = traceReflection(vWorldPos, N, R);
-            lit = mix(lit, refl * mix(vec3(1.0), albedo, vParams.y), w);
+            // A glossy reflection: one ray per pixel per frame, scattered over the gloss
+            // lobe of the surface (its roughness, map included) about the bumped normal,
+            // at a different spot each frame. One frame alone is noisy; the blend over
+            // frames (refl_resolve.frag) adds the rays up into the lobe's soft image. A
+            // single mirror ray per pixel instead threw neighbouring pixels' rays all over
+            // by the bumps, and small bright things (a torch's head, lit point-blank by
+            // its own flame) came out as scattered sparks.
+            vec3 T = normalize(abs(N.y) < 0.9 ? cross(N, vec3(0.0, 1.0, 0.0)) : cross(N, vec3(1.0, 0.0, 0.0)));
+            vec3 B = cross(N, T);
+            vec3 Ve = vec3(dot(V, T), dot(V, B), max(dot(V, N), 1e-3));
+            float h = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+            float h2 = fract(sin(dot(gl_FragCoord.xy, vec2(39.3467, 11.135))) * 24634.6345);
+            vec2 U = fract(vec2(h, h2) + u.misc.w * vec2(0.7548777, 0.5698403));
+            // The lobe is narrower than the roughness alone would make it (GGX alpha = rough^2):
+            // the full lobe smeared the floor's torch reflections into faint smudges, while
+            // a sixth of it still kills the sparks (it is the blend over frames that does
+            // that) and keeps the reflections readable.
+            float a = max(rough * rough * 0.15, 0.002);
+            vec3 Hm = sampleGgxVisibleNormal(Ve, a, U);
+            vec3 Hw = normalize(T * Hm.x + B * Hm.y + N * Hm.z);
+            vec3 R = reflect(-V, Hw);
+            // Under the surface (a grazing view through a steep microfacet): fold it back up.
+            vec3 Ng = normalize(vNormal);
+            if (dot(R, Ng) < 0.02) R = normalize(R - Ng * (2.0 * dot(R, Ng) - 0.02));
+            vec4 refl = traceReflection(vWorldPos, N, R);
+            lit *= 1.0 - w;
+            reflAdd = refl.rgb * mix(vec3(1.0), albedo, vParams.y) * w;
+            reflDist = refl.a;
         }
     }
 #endif
@@ -138,4 +187,7 @@ void main() {
     lit += vEmissive.rgb * e;
     lit = applyFog(lit, vWorldPos);
     outColor = vec4(lit, vColor.a * tex.a);
+    // The fog takes the same share of the reflection as of the rest (applyFog is a mix).
+    float fogF = clamp(1.0 - exp(-length(u.cameraPos.xyz - vWorldPos) * u.ambient.w), 0.0, 1.0);
+    outRefl = vec4(reflAdd * (1.0 - fogF), reflDist);
 }

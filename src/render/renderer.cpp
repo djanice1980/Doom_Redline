@@ -9,6 +9,7 @@
 #include "shaders/cube_frag.h"
 #include "shaders/cube_vert.h"
 #include "shaders/quad_frag.h"
+#include "shaders/quad_hud_frag.h"
 #include "shaders/quad_vert.h"
 #include "shaders/shadow_cube_vert.h"
 #include "shaders/shadow_quad_vert.h"
@@ -23,6 +24,8 @@
 #include "shaders/bright_frag.h"
 #include "shaders/blur_frag.h"
 #include "shaders/composite_frag.h"
+#include "shaders/fog_resolve_frag.h"
+#include "shaders/refl_resolve_frag.h"
 #include "shaders/volume_frag.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -110,15 +113,22 @@ Renderer::Renderer(VkContext& ctx) : ctx_(ctx), rt_(ctx.rayQuerySupported()) {
         vkCheck(vkCreateSampler(ctx_.device(), &pi, nullptr, &postSampler_), "vkCreateSampler(post)");
     }
     {
-        // Two channels: fog depth and the wisp streaks (see GroundFog::pixels).
-        std::vector<uint8_t> zero(static_cast<size_t>(kGroundFogSize) * kGroundFogSize * 2, 0);
+        // Four channels: fog depth, the wisp streaks and the flow (see GroundFog::pixels;
+        // 128 is still). Only the part a frame fills is ever sampled, but start it still.
+        std::vector<uint8_t> zero(static_cast<size_t>(kGroundFogSize) * kGroundFogSize * 4, 0);
+        for (size_t k = 0; k < zero.size(); k += 4) zero[k + 2] = zero[k + 3] = 128;
         for (Texture& t : groundFog_) {
-            t = ctx_.createTexture2D(kGroundFogSize, kGroundFogSize, VK_FORMAT_R8G8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+            t = ctx_.createTexture2D(kGroundFogSize, kGroundFogSize, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
             ctx_.uploadTexture(t, zero.data(), zero.size());
         }
     }
+    {   // A flat placeholder until the game hands over the real wisp pattern.
+        const uint8_t mid = 128;
+        groundFogWisps_ = ctx_.createTexture2D(1, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+        ctx_.uploadTexture(groundFogWisps_, &mid, 1);
+    }
     for (uint32_t i = 0; i < kFramesInFlight; ++i)
-        groundFogStage_[i] = ctx_.createBuffer(static_cast<VkDeviceSize>(kGroundFogSize) * kGroundFogSize * 2, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        groundFogStage_[i] = ctx_.createBuffer(static_cast<VkDeviceSize>(kGroundFogSize) * kGroundFogSize * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, true);
     if (const char* e = std::getenv("REDLINE_GPU_TIMES"); e && *e && *e != '0') {
         VkPhysicalDeviceProperties props{};
@@ -154,18 +164,21 @@ void Renderer::setMsaa(bool on) {
 
 void Renderer::createPostDescriptors() {
     VkDevice d = ctx_.device();
-    VkDescriptorSetLayoutBinding b[5]{};
-    for (uint32_t i = 0; i < 5; ++i) {
+    // 0 the image, 1-3 bloom levels, 4 the half-res fog, 5 the scene depth (the fog's
+    // depth-aware upsample in the composite, its reprojection in the resolve), 6 the
+    // fog's history (the resolve).
+    VkDescriptorSetLayoutBinding b[7]{};
+    for (uint32_t i = 0; i < 7; ++i) {
         b[i].binding = i;
         b[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b[i].descriptorCount = 1;
         b[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     }
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    lci.bindingCount = 5;
+    lci.bindingCount = 7;
     lci.pBindings = b;
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &postLayout_), "vkCreateDescriptorSetLayout(post)");
-    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5 * kSetCount};
+    VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7 * kSetCount};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kSetCount;
     pci.poolSizeCount = 1;
@@ -178,7 +191,7 @@ void Renderer::createPostDescriptors() {
     ai.descriptorSetCount = kSetCount;
     ai.pSetLayouts = layouts;
     vkCheck(vkAllocateDescriptorSets(d, &ai, postSets_), "vkAllocateDescriptorSets(post)");
-    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::vec4)};
+    VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::mat4) + 2 * sizeof(glm::vec4)};   // the reflection resolve uses all of it, the fog resolve a mat4 and a vec4, the composite two vec4s
     VkPipelineLayoutCreateInfo plci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     plci.setLayoutCount = 1;
     plci.pSetLayouts = &postLayout_;
@@ -194,8 +207,47 @@ void Renderer::createTargets() {
     const VkFormat hdrFmt = VK_FORMAT_R16G16B16A16_SFLOAT;
     tg_.hdr = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
     tg_.depth = ctx_.createTexture2D(ext.width, ext.height, ctx_.depthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
-    tg_.fog = ctx_.createTexture2D(std::max(1u, ext.width / 2), std::max(1u, ext.height / 2), hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    const uint32_t fw = std::max(1u, ext.width / 2), fh = std::max(1u, ext.height / 2);
+    tg_.fog = ctx_.createTexture2D(fw, fh, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    tg_.fogOut = ctx_.createTexture2D(fw, fh, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    tg_.fogHistory = ctx_.createTexture2D(fw, fh, hdrFmt, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    // The history is read every frame, so it starts out readable; what is in it is not
+    // used until a frame has written it (fogHistoryValid_).
+    ctx_.oneTimeSubmit([&](VkCommandBuffer cmd) {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.image = tg_.fogHistory.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    fogHistoryValid_ = false;
+    tg_.refl = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    tg_.reflOut = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    tg_.reflHistory = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT);
+    ctx_.oneTimeSubmit([&](VkCommandBuffer cmd) {   // readable from the start, as the fog's history
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        b.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        b.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        b.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        b.image = tg_.reflHistory.image;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    reflHistoryValid_ = false;
     if (msaaSamples_ != VK_SAMPLE_COUNT_1_BIT) {
+        tg_.msaaRefl = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1, msaaSamples_);
         tg_.msaaColor = ctx_.createTexture2D(ext.width, ext.height, hdrFmt, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1, msaaSamples_);
         tg_.msaaDepth = ctx_.createTexture2D(ext.width, ext.height, ctx_.depthFormat(), VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 1, msaaSamples_);
     }
@@ -215,16 +267,26 @@ void Renderer::destroyTargets() {
     for (Texture& t : tg_.bloom) ctx_.destroyTexture(t);
     ctx_.destroyTexture(tg_.depth);
     ctx_.destroyTexture(tg_.fog);
+    ctx_.destroyTexture(tg_.fogOut);
+    ctx_.destroyTexture(tg_.fogHistory);
+    ctx_.destroyTexture(tg_.refl);
+    ctx_.destroyTexture(tg_.msaaRefl);
+    ctx_.destroyTexture(tg_.reflOut);
+    ctx_.destroyTexture(tg_.reflHistory);
     tg_ = Targets{};
 }
 
 void Renderer::writePostDescriptors() {
     // One set per input: the HDR image, each bloom buffer, and the composite's four.
-    auto write = [&](VkDescriptorSet set, const Texture* const* tex) {
-        VkDescriptorImageInfo ii[5];
-        VkWriteDescriptorSet w[5]{};
-        for (uint32_t i = 0; i < 5; ++i) {
-            ii[i] = {postSampler_, (i < 4 ? tex[i] : &tg_.fog)->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    // Binding 4 is what the set blends or reads (the fog: the blended result for the
+    // composite, this frame's fog pass for the fog resolve; this frame's reflections for
+    // the reflection resolve), binding 6 the history that goes with it.
+    auto write = [&](VkDescriptorSet set, const Texture* const* tex, const Texture& fog = Texture{}, const Texture& history = Texture{}) {
+        VkDescriptorImageInfo ii[7];
+        VkWriteDescriptorSet w[7]{};
+        for (uint32_t i = 0; i < 7; ++i) {
+            const Texture* t = i < 4 ? tex[i] : i == 4 ? (fog.view ? &fog : &tg_.fogOut) : i == 5 ? &tg_.depth : (history.view ? &history : &tg_.fogHistory);
+            ii[i] = {postSampler_, t->view, i == 5 ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             w[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             w[i].dstSet = set;
             w[i].dstBinding = i;
@@ -232,7 +294,7 @@ void Renderer::writePostDescriptors() {
             w[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
             w[i].pImageInfo = &ii[i];
         }
-        vkUpdateDescriptorSets(ctx_.device(), 5, w, 0, nullptr);
+        vkUpdateDescriptorSets(ctx_.device(), 7, w, 0, nullptr);
     };
     const Texture* h4[4] = {&tg_.hdr, &tg_.hdr, &tg_.hdr, &tg_.hdr};
     write(postSets_[kSetHdr], h4);
@@ -242,6 +304,8 @@ void Renderer::writePostDescriptors() {
     }
     const Texture* c4[4] = {&tg_.hdr, &tg_.bloom[0], &tg_.bloom[2], &tg_.bloom[4]};
     write(postSets_[kSetComposite], c4);
+    write(postSets_[kSetFogResolve], h4, tg_.fog);
+    write(postSets_[kSetReflResolve], h4, tg_.refl, tg_.reflHistory);
 }
 
 Texture Renderer::createFlatTexture(uint8_t r, uint8_t g, uint8_t b) {
@@ -267,6 +331,7 @@ Renderer::~Renderer() {
     ctx_.destroyTexture(atlas_);
     ctx_.destroyTexture(shadowMap_);
     for (Texture& t : groundFog_) ctx_.destroyTexture(t);
+    ctx_.destroyTexture(groundFogWisps_);
     ctx_.destroyBuffer(capture_);
     for (Buffer& b : groundFogStage_) ctx_.destroyBuffer(b);
     if (timeQueries_) vkDestroyQueryPool(d, timeQueries_, nullptr);
@@ -355,6 +420,8 @@ void Renderer::createDescriptors() {
     depthBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutBinding groundBinding = depthBinding;   // the ground fog field
     groundBinding.binding = 9;
+    VkDescriptorSetLayoutBinding wispBinding = depthBinding;     // the ground fog's wisp pattern
+    wispBinding.binding = 10;
     std::vector<VkDescriptorSetLayoutBinding> all = {bindings[0], bindings[1], bindings[2]};
     if (rt_) all.push_back(tlasBinding);
     all.push_back(matBindings[0]);
@@ -362,12 +429,13 @@ void Renderer::createDescriptors() {
     if (rt_) { all.push_back(ssbo[0]); all.push_back(ssbo[1]); }
     all.push_back(depthBinding);
     all.push_back(groundBinding);
+    all.push_back(wispBinding);
     VkDescriptorSetLayoutCreateInfo lci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     lci.bindingCount = static_cast<uint32_t>(all.size());
     lci.pBindings = all.data();
     vkCheck(vkCreateDescriptorSetLayout(d, &lci, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
-    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (4 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
+    VkDescriptorPoolSize sizes[4] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kFramesInFlight * (5 + 2 * kMaxMaterials)}, {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, kFramesInFlight}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kFramesInFlight * 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = kFramesInFlight;
     pci.poolSizeCount = rt_ ? 4 : 2;
@@ -495,7 +563,14 @@ void Renderer::writeDescriptors() {
             ri[m] = {matSampler_, matRough_[m].view ? matRough_[m].view : defRough_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         }
         VkDescriptorImageInfo gi{postSampler_, groundFog_[i].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet w[6]{};
+        VkDescriptorImageInfo wi{matSampler_, groundFogWisps_.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};   // repeats, trilinear
+        VkWriteDescriptorSet w[7]{};
+        w[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w[6].dstSet = sets_[i];
+        w[6].dstBinding = 10;
+        w[6].descriptorCount = 1;
+        w[6].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[6].pImageInfo = &wi;
         w[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         w[5].dstSet = sets_[i];
         w[5].dstBinding = 9;
@@ -529,13 +604,38 @@ void Renderer::writeDescriptors() {
         w[1].descriptorCount = 1;
         w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         w[1].pImageInfo = &ii;
-        vkUpdateDescriptorSets(ctx_.device(), 6, w, 0, nullptr);
+        vkUpdateDescriptorSets(ctx_.device(), 7, w, 0, nullptr);
     }
+}
+
+void Renderer::setGroundFogWisps(const std::vector<uint8_t>& pattern, int size) {
+    if (size < 1 || (size & (size - 1)) != 0 || pattern.size() != static_cast<size_t>(size) * static_cast<size_t>(size)) return;
+    // The full mip chain, each level the 2x2 average of the one above: the pattern tiles
+    // and the size is a power of two, so every level still tiles. Far fog reads the
+    // small levels and turns to a soft haze instead of sparkling.
+    std::vector<std::vector<uint8_t>> levels{pattern};
+    for (int n = size; n > 1; n /= 2) {
+        const std::vector<uint8_t>& a = levels.back();
+        const int m = n / 2;
+        std::vector<uint8_t> b(static_cast<size_t>(m) * static_cast<size_t>(m));
+        for (int y = 0; y < m; ++y)
+            for (int x = 0; x < m; ++x) {
+                const size_t r0 = static_cast<size_t>(2 * y) * static_cast<size_t>(n) + static_cast<size_t>(2 * x), r1 = r0 + static_cast<size_t>(n);
+                b[static_cast<size_t>(y) * static_cast<size_t>(m) + static_cast<size_t>(x)] = static_cast<uint8_t>((a[r0] + a[r0 + 1] + a[r1] + a[r1 + 1] + 2) / 4);
+            }
+        levels.push_back(std::move(b));
+    }
+    ctx_.waitIdle();
+    ctx_.destroyTexture(groundFogWisps_);
+    groundFogWisps_ = ctx_.createTexture2D(static_cast<uint32_t>(size), static_cast<uint32_t>(size), VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                           VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, static_cast<uint32_t>(levels.size()));
+    ctx_.uploadTextureLevels(groundFogWisps_, levels);
+    if (atlas_.view) writeDescriptors();
 }
 
 void Renderer::destroyPipelines() {
     VkDevice d = ctx_.device();
-    for (VkPipeline* p : {&cubePipe_, &quadPipe_, &shadowCubePipe_, &shadowQuadPipe_, &meshPipe_, &meshBlendPipe_, &shadowMeshPipe_, &quadLdrPipe_, &brightPipe_, &blurPipe_, &compositePipe_, &volumePipe_}) {
+    for (VkPipeline* p : {&cubePipe_, &quadPipe_, &shadowCubePipe_, &shadowQuadPipe_, &meshPipe_, &meshBlendPipe_, &shadowMeshPipe_, &quadLdrPipe_, &brightPipe_, &blurPipe_, &compositePipe_, &volumePipe_, &fogResolvePipe_, &reflResolvePipe_}) {
         if (*p) vkDestroyPipeline(d, *p, nullptr);
         *p = VK_NULL_HANDLE;
     }
@@ -548,12 +648,14 @@ void Renderer::createPipelines() {
     VkShaderModule quadVS = rt_ ? ctx_.createShader(shaders::quad_rt_vert, shaders::quad_rt_vert_size) : ctx_.createShader(shaders::quad_vert, shaders::quad_vert_size);
     VkShaderModule quadFS = ctx_.createShader(shaders::quad_frag, shaders::quad_frag_size);
 
-    // World pass: HDR colour (multisampled when MSAA is on); HUD pass: the swapchain image.
+    // World pass: HDR colour and the floor's reflections apart (both multisampled when
+    // MSAA is on); HUD pass: the swapchain image.
     const VkFormat hdrFmt = VK_FORMAT_R16G16B16A16_SFLOAT;
+    const VkFormat worldFmts[2] = {hdrFmt, hdrFmt};
     const VkFormat swapFmt = ctx_.swapchainFormat();
     VkPipelineRenderingCreateInfo rci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    rci.colorAttachmentCount = 1;
-    rci.pColorAttachmentFormats = &hdrFmt;
+    rci.colorAttachmentCount = 2;
+    rci.pColorAttachmentFormats = worldFmts;
     rci.depthAttachmentFormat = ctx_.depthFormat();
     VkPipelineRenderingCreateInfo ldrRci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     ldrRci.colorAttachmentCount = 1;
@@ -613,9 +715,24 @@ void Renderer::createPipelines() {
         cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
         cba.alphaBlendOp = VK_BLEND_OP_ADD;
+        // The reflection output (world pass only): what blends over the floor covers its
+        // reflection as much as it covers the floor (the shaders write rgb 0 and their
+        // alpha), and leaves the ray length alone.
+        // Without independentBlend (rare) both outputs blend alike: rgb comes out the same
+        // (it is 0 * a + dst * (1 - a) either way), but a sprite over the floor then
+        // overwrites the ray length with its alpha, and the reflection there is found a
+        // little less exactly in the frame before.
+        VkPipelineColorBlendAttachmentState cbr = cba;
+        if (ctx_.independentBlend()) {
+            cbr.srcColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cbr.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            cbr.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            cbr.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        }
+        const VkPipelineColorBlendAttachmentState cbs[2] = {cba, cbr};
         VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        cb.attachmentCount = 1;
-        cb.pAttachments = &cba;
+        cb.attachmentCount = kind == 0 ? 2 : 1;
+        cb.pAttachments = cbs;
         VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
         ci.pNext = kind == 1 ? &shadowRci : kind == 2 ? &ldrRci : &rci;
         ci.stageCount = fs ? 2 : 1;
@@ -676,7 +793,9 @@ void Renderer::createPipelines() {
         vi.vertexAttributeDescriptionCount = 5;
         vi.pVertexAttributeDescriptions = a;
         quadPipe_ = makePipeline(quadVS, quadFS, vi, false, true);
-        quadLdrPipe_ = makePipeline(quadVS, quadFS, vi, false, true, false, 2);
+        VkShaderModule quadHudFS = ctx_.createShader(shaders::quad_hud_frag, shaders::quad_hud_frag_size);
+        quadLdrPipe_ = makePipeline(quadVS, quadHudFS, vi, false, true, false, 2);
+        vkDestroyShaderModule(d, quadHudFS, nullptr);
         VkShaderModule shVS = ctx_.createShader(shaders::shadow_quad_vert, shaders::shadow_quad_vert_size);
         VkShaderModule shFS = ctx_.createShader(shaders::shadow_quad_frag, shaders::shadow_quad_frag_size);
         shadowQuadPipe_ = makePipeline(shVS, shFS, vi, false, false, true);
@@ -715,8 +834,11 @@ void Renderer::createPipelines() {
         VkShaderModule brightFS = ctx_.createShader(shaders::bright_frag, shaders::bright_frag_size);
         VkShaderModule blurFS = ctx_.createShader(shaders::blur_frag, shaders::blur_frag_size);
         VkShaderModule compFS = ctx_.createShader(shaders::composite_frag, shaders::composite_frag_size);
+        VkShaderModule resolveFS = ctx_.createShader(shaders::fog_resolve_frag, shaders::fog_resolve_frag_size);
+        VkShaderModule reflResolveFS = ctx_.createShader(shaders::refl_resolve_frag, shaders::refl_resolve_frag_size);
         VkShaderModule volFS = ctx_.createShader(shaders::volume_frag, shaders::volume_frag_size);
-        auto makePost = [&](VkShaderModule fs, VkFormat fmt, VkPipelineLayout layout = VK_NULL_HANDLE) {
+        // addTo: a second output, added onto that target (the reflection resolve adds into the HDR image).
+        auto makePost = [&](VkShaderModule fs, VkFormat fmt, VkPipelineLayout layout = VK_NULL_HANDLE, VkFormat addTo = VK_FORMAT_UNDEFINED) {
             VkPipelineShaderStageCreateInfo stages[2]{};
             stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
             stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -734,14 +856,29 @@ void Renderer::createPipelines() {
             rs.lineWidth = 1.f;
             VkPipelineMultisampleStateCreateInfo pms{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
             pms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-            VkPipelineColorBlendAttachmentState cba{};
-            cba.colorWriteMask = 0xF;
+            // With a second output both outputs add (blend states must match unless
+            // independentBlend is on): the first is cleared to zero beforehand, so adding
+            // to it is just writing it, and its alpha stays 0.
+            const uint32_t outs = addTo != VK_FORMAT_UNDEFINED ? 2u : 1u;
+            VkPipelineColorBlendAttachmentState cba[2]{};
+            for (VkPipelineColorBlendAttachmentState& a : cba) {
+                a.colorWriteMask = 0xF;
+                if (outs < 2) continue;
+                a.blendEnable = VK_TRUE;
+                a.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                a.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                a.colorBlendOp = VK_BLEND_OP_ADD;
+                a.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                a.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                a.alphaBlendOp = VK_BLEND_OP_ADD;
+            }
+            const VkFormat fmts[2] = {fmt, addTo};
             VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-            cb.attachmentCount = 1;
-            cb.pAttachments = &cba;
+            cb.attachmentCount = outs;
+            cb.pAttachments = cba;
             VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-            prci.colorAttachmentCount = 1;
-            prci.pColorAttachmentFormats = &fmt;
+            prci.colorAttachmentCount = outs;
+            prci.pColorAttachmentFormats = fmts;
             VkDynamicState pdyn[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
             VkPipelineDynamicStateCreateInfo pds{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
             pds.dynamicStateCount = 2;
@@ -766,6 +903,10 @@ void Renderer::createPipelines() {
         blurPipe_ = makePost(blurFS, hdrFmt);
         compositePipe_ = makePost(compFS, swapFmt);
         volumePipe_ = makePost(volFS, hdrFmt, pipeLayout_);
+        fogResolvePipe_ = makePost(resolveFS, hdrFmt);
+        vkDestroyShaderModule(d, resolveFS, nullptr);
+        reflResolvePipe_ = makePost(reflResolveFS, hdrFmt, VK_NULL_HANDLE, hdrFmt);
+        vkDestroyShaderModule(d, reflResolveFS, nullptr);
         vkDestroyShaderModule(d, volFS, nullptr);
         vkDestroyShaderModule(d, postVS, nullptr);
         vkDestroyShaderModule(d, brightFS, nullptr);
@@ -1027,7 +1168,8 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         u.lightClear[i / 4][i % 4] = params.lights[i].clearance;
     }
     u.counts = glm::ivec4(nl, rt_ ? params.rtShadows : 0, 0, 0);
-    u.misc = glm::vec4(static_cast<float>(atlas_.width), static_cast<float>(atlas_.height), params.grade, 0.f);
+    // w: a frame count (kept small so it stays exact), which moves the reflection rays over their gloss lobe from frame to frame.
+    u.misc = glm::vec4(static_cast<float>(atlas_.width), static_cast<float>(atlas_.height), params.grade, static_cast<float>(fogFrame_ & 1023u));
     u.invViewProj = glm::inverse(u.viewProj);
     const FrameParams::GroundFog& gf = params.groundFog;
     const bool groundFog = gf.cells && gf.strength > 0.f && gf.w > 1 && gf.h > 1 && gf.w <= kGroundFogSize && gf.h <= kGroundFogSize;
@@ -1036,7 +1178,7 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         u.groundFog[1] = glm::vec4(static_cast<float>(gf.w), static_cast<float>(gf.h), gf.height, gf.glow);
         u.groundFog[2] = glm::vec4(gf.lightGain, gf.sunGain, 0.f, 0.f);
         auto* dst = static_cast<uint8_t*>(groundFogStage_[fi].mapped);
-        for (int j = 0; j < gf.h; ++j) std::memcpy(dst + static_cast<size_t>(j) * kGroundFogSize * 2, gf.cells + static_cast<size_t>(j) * gf.w * 2, static_cast<size_t>(gf.w) * 2);
+        for (int j = 0; j < gf.h; ++j) std::memcpy(dst + static_cast<size_t>(j) * kGroundFogSize * 4, gf.cells + static_cast<size_t>(j) * gf.w * 4, static_cast<size_t>(gf.w) * 4);
     }
     {
         glm::vec3 dir = glm::normalize(params.sunDir);
@@ -1262,8 +1404,10 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag | kColorOut, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
     const VkPipelineStageFlags2 kDepthTests = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
     imageBarrier(tg_.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, kFrag | kDepthTests, 0, kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    imageBarrier(tg_.refl.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag | kColorOut, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
     if (msaa) {
         imageBarrier(tg_.msaaColor.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        imageBarrier(tg_.msaaRefl.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
         imageBarrier(tg_.msaaDepth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, 0,
                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
@@ -1279,6 +1423,12 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         color.resolveImageView = tg_.hdr.view;
         color.resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     }
+    // The floor's reflections, apart (see cube_frag_body.glsl): nothing until drawn.
+    VkRenderingAttachmentInfo reflAtt = color;
+    reflAtt.imageView = msaa ? tg_.msaaRefl.view : tg_.refl.view;
+    reflAtt.clearValue.color = {{0.f, 0.f, 0.f, 0.f}};
+    if (msaa) reflAtt.resolveImageView = tg_.refl.view;
+    const VkRenderingAttachmentInfo worldColor[2] = {color, reflAtt};
     VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depth.imageView = msaa ? tg_.msaaDepth.view : tg_.depth.view;
     depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -1293,8 +1443,8 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, ext};
     ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &color;
+    ri.colorAttachmentCount = 2;
+    ri.pColorAttachments = worldColor;
     ri.pDepthAttachment = &depth;
     vkCmdBeginRendering(cmd, &ri);
 
@@ -1353,8 +1503,64 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdDraw(cmd, 6, static_cast<uint32_t>(hdrQuads), 0, static_cast<uint32_t>(worldQuads.size()));
     }
     vkCmdEndRendering(cmd);
-    imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
     imageBarrier(tg_.depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+    imageBarrier(tg_.refl.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+
+    // --- The floor's reflections blended over time (full res), added into the HDR image:
+    // this frame's and last frame's result, reprojected to where the reflected things were,
+    // into reflOut (and onto hdr); reflOut is then copied to the history. Only with
+    // ray-traced reflections on; without them the second output is all zero.
+    if (rt_ && params.rtShadows >= 3) {
+        const glm::mat4 viewProj = params.proj * params.view;
+        const bool cut = !reflHistoryValid_ || glm::distance(params.cameraPos, reflPrevCam_) > 2.f;
+        struct { glm::mat4 reproject; glm::vec4 p, q; } rpc{reflPrevViewProj_ * glm::inverse(viewProj),
+            glm::vec4(cut ? 1.f : 0.1f, params.proj[2][2], params.proj[3][2], 0.f), glm::vec4(params.proj[0][0], params.proj[1][1], 0.f, 0.f)};
+        Texture& o = tg_.reflOut;
+        imageBarrier(o.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        // hdr stays an attachment: the world pass wrote it, this adds to it.
+        imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        VkRenderingAttachmentInfo ra[2]{};
+        ra[0].sType = ra[1].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        ra[0].imageView = o.view;
+        ra[0].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ra[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;   // the pipeline adds into it (see makePost)
+        ra[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        ra[0].clearValue.color = {{0.f, 0.f, 0.f, 0.f}};
+        ra[1].imageView = tg_.hdr.view;
+        ra[1].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ra[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        ra[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rri.renderArea = {{0, 0}, ext};
+        rri.layerCount = 1;
+        rri.colorAttachmentCount = 2;
+        rri.pColorAttachments = ra;
+        vkCmdBeginRendering(cmd, &rri);
+        VkViewport rvp{0.f, 0.f, static_cast<float>(ext.width), static_cast<float>(ext.height), 0.f, 1.f};
+        vkCmdSetViewport(cmd, 0, 1, &rvp);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, reflResolvePipe_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeLayout_, 0, 1, &postSets_[kSetReflResolve], 0, nullptr);
+        vkCmdPushConstants(cmd, postPipeLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(rpc), &rpc);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+        vkCmdEndRendering(cmd);
+        const VkPipelineStageFlags2 kCopy = VK_PIPELINE_STAGE_2_COPY_BIT;
+        imageBarrier(o.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kCopy, VK_ACCESS_2_TRANSFER_READ_BIT);
+        imageBarrier(tg_.reflHistory.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kFrag, VK_ACCESS_2_SHADER_READ_BIT, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkImageCopy region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = region.srcSubresource;
+        region.extent = {o.width, o.height, 1};
+        vkCmdCopyImage(cmd, o.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tg_.reflHistory.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        imageBarrier(tg_.reflHistory.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+        reflPrevViewProj_ = viewProj;
+        reflPrevCam_ = params.cameraPos;
+        reflHistoryValid_ = true;
+    } else {
+        reflHistoryValid_ = false;
+    }
+    imageBarrier(tg_.hdr.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
 
     // --- Volumetric light and ground fog at half res (main set: lights, shadow map, depth, fog field)
     if (timeQueries_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timeQueries_, 4 * fi + 1);
@@ -1378,7 +1584,8 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdSetScissor(cmd, 0, 1, &vsc);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, volumePipe_);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &sets_[fi], 0, nullptr);
-        const glm::vec4 vpc(params.volumetric * 0.0006f, params.volumetric * 0.009f, 14.f, 0.f);   // faint air, glow that hugs the flames
+        // w: the frame count, which moves the samples along the ray from frame to frame.
+        const glm::vec4 vpc(params.volumetric * 0.0006f, params.volumetric * 0.009f, 14.f, static_cast<float>(fogFrame_ & 0xFFFFu));   // faint air, glow that hugs the flames
         vkCmdPushConstants(cmd, pipeLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::vec4), &vpc);
         vkCmdDraw(cmd, 3, 1, 0, 0);
         vkCmdEndRendering(cmd);
@@ -1387,7 +1594,8 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
     if (timeQueries_) vkCmdWriteTimestamp2(cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, timeQueries_, 4 * fi + 2);
 
     // --- Post: bloom chain, then composite + HUD into the swapchain image -------------
-    auto fullscreen = [&](VkImageView view, VkExtent2D size, VkPipeline pipe, VkDescriptorSet set, glm::vec4 pc) {
+    // pc and pc2 are the push constants, unless `push` hands over a block of its own.
+    auto fullscreen = [&](VkImageView view, VkExtent2D size, VkPipeline pipe, VkDescriptorSet set, glm::vec4 pc, glm::vec4 pc2 = glm::vec4(0.f), const void* push = nullptr, uint32_t pushSize = 0) {
         VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         att.imageView = view;
         att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1405,7 +1613,9 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdSetScissor(cmd, 0, 1, &psc);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeLayout_, 0, 1, &set, 0, nullptr);
-        vkCmdPushConstants(cmd, postPipeLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(glm::vec4), &pc);
+        const glm::vec4 both[2] = {pc, pc2};
+        if (push) vkCmdPushConstants(cmd, postPipeLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, pushSize, push);
+        else vkCmdPushConstants(cmd, postPipeLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(both), both);
         vkCmdDraw(cmd, 3, 1, 0, 0);
     };
     auto bloomPass = [&](int dst, VkPipeline pipe, VkDescriptorSet set, glm::vec4 pc) {
@@ -1415,6 +1625,34 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
         vkCmdEndRendering(cmd);
         imageBarrier(t.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
     };
+    // --- The fog blended over time (half res): this frame's fog pass and last frame's
+    // result, reprojected, into fogOut; fogOut is then copied to the history for the
+    // next frame. No history on the first frame, after a resize, or when the camera
+    // jumps (a respawn, a new stage): then fogOut is just this frame.
+    {
+        const glm::mat4 viewProj = params.proj * params.view;
+        const bool cut = !fogHistoryValid_ || glm::distance(params.cameraPos, fogPrevCam_) > 2.f;
+        struct { glm::mat4 reproject; glm::vec4 p; } rpc{fogPrevViewProj_ * glm::inverse(viewProj), glm::vec4(cut ? 1.f : 0.1f, 0.f, 0.f, 0.f)};
+        Texture& o = tg_.fogOut;
+        imageBarrier(o.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, kFrag, 0, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        fullscreen(o.view, {o.width, o.height}, fogResolvePipe_, postSets_[kSetFogResolve], glm::vec4(0.f), glm::vec4(0.f), &rpc, static_cast<uint32_t>(sizeof(rpc)));
+        vkCmdEndRendering(cmd);
+        const VkPipelineStageFlags2 kCopy = VK_PIPELINE_STAGE_2_COPY_BIT;
+        imageBarrier(o.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, kColorOut, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, kCopy, VK_ACCESS_2_TRANSFER_READ_BIT);
+        imageBarrier(tg_.fogHistory.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kFrag, VK_ACCESS_2_SHADER_READ_BIT, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkImageCopy region{};
+        region.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        region.dstSubresource = region.srcSubresource;
+        region.extent = {o.width, o.height, 1};
+        vkCmdCopyImage(cmd, o.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tg_.fogHistory.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+        imageBarrier(tg_.fogHistory.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kCopy, VK_ACCESS_2_TRANSFER_WRITE_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+        imageBarrier(o.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, kCopy, VK_ACCESS_2_TRANSFER_READ_BIT, kFrag, VK_ACCESS_2_SHADER_READ_BIT);
+        fogPrevViewProj_ = viewProj;
+        fogPrevCam_ = params.cameraPos;
+        fogHistoryValid_ = true;
+        ++fogFrame_;
+    }
+
     const bool bloom = params.bloom > 0.f;
     if (bloom) {
         auto step = [&](int i) { return glm::vec4(1.f / tg_.bloom[i].width, 1.f / tg_.bloom[i].height, 0.f, 0.f); };
@@ -1426,7 +1664,10 @@ bool Renderer::render(const FrameParams& params, std::span<const CubeInstance> c
             bloomPass(a, blurPipe_, postSets_[kSetB0 + b], glm::vec4(0.f, step(a).y, 0.f, 0.f));
         }
     }
-    fullscreen(frame.imageView, ext, compositePipe_, postSets_[bloom ? kSetComposite : kSetHdr], glm::vec4(params.exposure, bloom ? params.bloom : 0.f, 0.75f, params.grade));
+    // The second block: the projection's depth terms, so the composite can turn depth
+    // back into distance (z = proj[3][2] / (depth + proj[2][2])).
+    fullscreen(frame.imageView, ext, compositePipe_, postSets_[bloom ? kSetComposite : kSetHdr], glm::vec4(params.exposure, bloom ? params.bloom : 0.f, 0.75f, params.grade),
+               glm::vec4(params.proj[2][2], params.proj[3][2], 0.f, 0.f));
     // HUD and text on top, untouched by the tone curve.
     if (quadScratch_.size() > hdrQuads) {
         vkCmdSetViewport(cmd, 0, 1, &viewport);

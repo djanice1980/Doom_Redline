@@ -10,9 +10,14 @@
 //
 // A second, passive channel carries "wisps": fine streaks of thicker and thinner fog
 // that ride the flow, so the motion shows up as streaming detail, not just thickness.
+// The flow keeps its spin: wherever it turns, the turning is fed back a little (what
+// smoke solvers call vorticity confinement), so a body leaves eddies curling behind it
+// as well as a trough. The eddies stir the wisps, not the depth: fed into the flow that
+// moves the depth, they swept the trough full. The velocity goes to the renderer as well,
+// which drags a fine wisp pattern along it: the curls far smaller than a cell.
 //
 // It runs on the CPU at a fixed 30 Hz: a 256 x 256 field steps in about a millisecond,
-// and the result is a two-channel texture the size of a small icon.
+// and the result is a four-channel texture the size of a small icon.
 #include <cstdint>
 #include <vector>
 
@@ -25,6 +30,7 @@ public:
     static constexpr int kMaxCells = 256;     // the texture the renderer samples is this square
     static constexpr float kStep = 1.f / 30.f;
     static constexpr float kMaxDepth = 2.f;   // fog depth the texture can hold (the rest value is about 1)
+    static constexpr float kMaxFlow = 5.f;    // m/s: the velocity the texture can hold, each way
 
     // Covers x in [x0, x1) and z in [z0, z1); cells are square, as small as the
     // kMaxCells cap allows (never under `minCell` metres). What was already
@@ -78,8 +84,15 @@ public:
     // Advances the simulation by `dt` seconds in fixed steps.
     void update(float dt);
 
-    // Two bytes per cell, row j = z0 + j * cell, width() x height(): fog depth
-    // (0..kMaxDepth scaled to 0..255), then the wisp channel (0..1 scaled to 0..255).
+    // The fine wisp pattern the renderer drags along the flow: size x size bytes, one
+    // channel, tiling seamlessly in both directions. Domain-warped gradient noise (the
+    // noise looked up at a place pushed about by more noise, twice over), which curls
+    // the way smoke does instead of lying in blobs. 0 = a gap, 255 = the thick of a wisp.
+    static std::vector<uint8_t> wispPattern(int size);
+
+    // Four bytes per cell, row j = z0 + j * cell, width() x height(): fog depth
+    // (0..kMaxDepth scaled to 0..255), the wisp channel (0..1 scaled to 0..255), then
+    // the velocity along x and along z (-kMaxFlow..kMaxFlow scaled to 0..255, 128 still).
     const std::vector<uint8_t>& pixels() const { return pixels_; }
     int width() const { return w_; }
     int height() const { return h_; }
@@ -89,6 +102,9 @@ public:
     float densityAt(float x, float z) const;   // bilinear, for tests and logging
     float meanDensity() const;                 // over the open cells
     float speedAt(float x, float z) const;     // m/s, for tests
+    glm::vec2 flowAt(float x, float z) const;  // m/s along x and z, bilinear, for tests
+    float spin() const;                        // mean |curl| of the flow over the open cells, 1/s, for tests
+    void setSpinKeep(float k) { spinKeep_ = k; }   // how hard the eddies are fed (0 = not at all), for tests
 
 private:
     size_t idx(int i, int j) const { return static_cast<size_t>(j) * static_cast<size_t>(w_) + static_cast<size_t>(i); }
@@ -97,7 +113,7 @@ private:
     void step();
     struct Body { glm::vec3 pos, vel; float radius, strength; };
     void stir(const Body& b);
-    void advect(std::vector<float>& f);
+    void advect(std::vector<float>& f, const std::vector<float>& ux, const std::vector<float>& uz);
     void diffuse(std::vector<float>& f, float amount);
     void settleSolid();   // solid cells: no motion, depth copied from the open cells beside them
     bool clearPath(float ci, float cj, int i, int j) const;   // no solid cell on the line from (ci, cj) to cell (i, j)
@@ -106,7 +122,8 @@ private:
 
     int w_ = 0, h_ = 0;
     float x0_ = 0.f, z0_ = 0.f, cell_ = 1.f;
-    std::vector<float> d_, vx_, vz_, wisp_, tmp_, rest_, nx_, nz_;
+    std::vector<float> d_, vx_, vz_, wisp_, tmp_, rest_, nx_, nz_, curl_;
+    std::vector<float> sx_, sz_, tx_, tz_;   // the spin layer (see step) and scratch for it
     // The idle patterns (swirl potential, heaving rest depth, streak pattern): they drift
     // slowly, so each is refreshed every third step, in turn.
     std::vector<float> psi_, swellRest_, wispIdle_;
@@ -117,6 +134,7 @@ private:
     float acc_ = 0.f;
     float time_ = 0.f;
     float swell_ = 1.f;
+    float spinKeep_ = 4.f;   // per cell: see step()
     std::vector<Body> bodies_;
 };
 
