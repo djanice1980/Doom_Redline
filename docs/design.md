@@ -681,8 +681,10 @@ registration and the poll that follows it). `stats_test` covers the round trip a
   first, then walks at the door, because a solid door cannot be pathed through.
   `REDLINE_LOG_BOT=1` prints the frame, target, distance, whether the shot is
   clear, the waypoint, the stuck timer and the pitch.
-- Ray tracing: `rtShadows_` defaults to 3 but is forced to 0 (and saved) on a
-  GPU without ray queries, so the setting file reflects what runs.
+- Ray tracing: `rtShadows_` defaults to 3. On a GPU without ray queries (or
+  with `REDLINE_NO_RT`) the frame and the OPTIONS row treat it as off, but the
+  saved value is left alone: display.txt is per machine, and saving 0 there
+  turned ray tracing off on the next start on the GPU that has it.
 - Level card: 4 s after the fly-out; block gravity pauses while a piece would
   be falling, the collapse still animates.
 - Gamepad: SDL3 gamepad API; axes polled per frame with an 18 % dead zone and

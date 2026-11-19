@@ -124,7 +124,9 @@ App::App(Options opts) : opts_(std::move(opts)) {
     if (wad && assets_.usingWad()) wadPath_ = wad->string();
     renderer_->setAtlas(assets_.atlas().image());
     renderer_->setMsaa(msaa_);
-    if (!renderer_->rayTracingAvailable() && rtShadows_ != 0) { rtShadows_ = 0; saveDisplaySettings(); }   // ray tracing is on by default only on GPUs that have it
+    // No ray tracing on this GPU (or REDLINE_NO_RT): it is off for this run only, the menu and
+    // the frame already treat it so. Saving 0 here wiped the choice for the machine's RT GPU
+    // the next time the game started there.
     loadMaterials();
     buildEnvironment();
     buildProps();
